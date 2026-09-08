@@ -8,13 +8,18 @@ from pydantic import BaseModel, ConfigDict
 
 from stock_research_ai.application.ports import (
     CompanyRepository,
+    ContextRepository,
     DocumentAcquirer,
     DocumentNormalizer,
     DocumentRepository,
     ExtractionRepository,
+    MacroAcquirer,
+    MacroParser,
     MarketNormalizer,
     MarketRepository,
     MarketSource,
+    PublicationAcquirer,
+    PublicationParser,
     RawArtifactStore,
     SourceAcquirer,
     SourceNormalizer,
@@ -22,8 +27,14 @@ from stock_research_ai.application.ports import (
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.macro import MacroObservation, MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
+from stock_research_ai.domain.publications import (
+    PublicationHit,
+    PublicationRequest,
+    PublicationSnapshot,
+)
 
 
 class Capabilities(BaseModel):
@@ -59,6 +70,16 @@ class MarketServices:
     repository: MarketRepository
 
 
+@dataclass(frozen=True)
+class ContextServices:
+    publications: PublicationAcquirer
+    publication_parser: PublicationParser
+    macro: MacroAcquirer
+    macro_parser: MacroParser
+    artifacts: RawArtifactStore
+    repository: ContextRepository
+
+
 class ResearchEngine:
     def __init__(
         self,
@@ -66,11 +87,13 @@ class ResearchEngine:
         extraction: ExtractionServices | None = None,
         documents: DocumentServices | None = None,
         market: MarketServices | None = None,
+        context: ContextServices | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
         self._documents = documents
         self._market = market
+        self._context = context
 
     async def get_capabilities(self) -> Capabilities:
         return Capabilities()
@@ -112,7 +135,7 @@ class ResearchEngine:
         services = self._documents
         if services is None:
             raise RuntimeError("Document services are not configured")
-        if await self._repository.get(request.company_id) is None:
+        if request.company_id is None or await self._repository.get(request.company_id) is None:
             raise ValueError("Register the company before ingesting documents")
         identity = await services.repository.bind_document(request)
         payload = await services.source.acquire(request)
@@ -181,3 +204,58 @@ class ResearchEngine:
         if self._market is None:
             raise RuntimeError("Market services are not configured")
         return await self._market.repository.market_history(instrument_id)
+
+    async def ingest_publication(self, request: PublicationRequest) -> PublicationSnapshot:
+        services = self._context
+        if services is None:
+            raise RuntimeError("Context services not configured")
+        payload = await services.publications.acquire(request)
+        artifact = await services.artifacts.put(payload) if payload.content is not None else None
+        await services.repository.record_evidence(payload.retrieval, artifact)
+        content = await services.artifacts.read(artifact) if artifact else None
+        result = services.publication_parser.normalize(
+            request, payload.retrieval, artifact, content
+        )
+        await services.repository.save_publication(result)
+        return result
+
+    async def ingest_macro(self, request: MacroRequest) -> MacroSnapshot:
+        services = self._context
+        if services is None:
+            raise RuntimeError("Context services not configured")
+        evidence = []
+        for payload in await services.macro.acquire(request):
+            artifact = (
+                await services.artifacts.put(payload) if payload.content is not None else None
+            )
+            await services.repository.record_evidence(payload.retrieval, artifact)
+            content = await services.artifacts.read(artifact) if artifact else None
+            evidence.append((payload.retrieval, artifact, content))
+        result = services.macro_parser.normalize(request, tuple(evidence))
+        await services.repository.save_macro(result)
+        return result
+
+    async def publication_history(self, publication_id: UUID) -> tuple[PublicationSnapshot, ...]:
+        if self._context is None:
+            raise RuntimeError("Context services not configured")
+        return await self._context.repository.publication_history(publication_id)
+
+    async def macro_history(self, series_id: UUID) -> tuple[MacroSnapshot, ...]:
+        if self._context is None:
+            raise RuntimeError("Context services not configured")
+        return await self._context.repository.macro_history(series_id)
+
+    async def search_publications(self, query: str, limit: int = 20) -> tuple[PublicationHit, ...]:
+        if self._context is None:
+            raise RuntimeError("Context services not configured")
+        if not query.strip() or not 1 <= limit <= 100:
+            raise ValueError("Invalid search")
+        return await self._context.repository.search_publications(query, limit)
+
+    async def lookup_macro(self, series_id: UUID, period: str) -> tuple[MacroObservation, ...]:
+        return tuple(
+            o
+            for s in await self.macro_history(series_id)
+            for o in s.observations
+            if o.reference_period == period
+        )

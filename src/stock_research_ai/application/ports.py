@@ -11,8 +11,14 @@ from stock_research_ai.domain.documents import (
     ParsedDocument,
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketInstrument, MarketRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
+from stock_research_ai.domain.publications import (
+    PublicationHit,
+    PublicationRequest,
+    PublicationSnapshot,
+)
 
 
 class CompanyRepository(Protocol):
@@ -111,3 +117,40 @@ class MarketRepository(Protocol):
     async def save_market(self, result: MarketExtractionResult) -> None: ...
     async def get_market(self, extraction_id: UUID) -> MarketExtractionResult | None: ...
     async def market_history(self, instrument_id: UUID) -> tuple[MarketExtractionResult, ...]: ...
+
+
+class PublicationAcquirer(Protocol):
+    async def acquire(self, request: PublicationRequest) -> AcquiredPayload: ...
+
+
+class PublicationParser(Protocol):
+    def normalize(
+        self,
+        request: PublicationRequest,
+        retrieval: SourceRetrieval,
+        artifact: RawArtifact | None,
+        content: bytes | None,
+    ) -> PublicationSnapshot: ...
+
+
+class MacroAcquirer(Protocol):
+    async def acquire(self, request: MacroRequest) -> tuple[AcquiredPayload, ...]: ...
+
+
+class MacroParser(Protocol):
+    def normalize(
+        self,
+        request: MacroRequest,
+        evidence: tuple[tuple[SourceRetrieval, RawArtifact | None, bytes | None], ...],
+    ) -> MacroSnapshot: ...
+
+
+class ContextRepository(Protocol):
+    async def record_evidence(
+        self, retrieval: SourceRetrieval, artifact: RawArtifact | None
+    ) -> None: ...
+    async def save_publication(self, snapshot: PublicationSnapshot) -> None: ...
+    async def save_macro(self, snapshot: MacroSnapshot) -> None: ...
+    async def publication_history(self, identity_id: UUID) -> tuple[PublicationSnapshot, ...]: ...
+    async def macro_history(self, series_id: UUID) -> tuple[MacroSnapshot, ...]: ...
+    async def search_publications(self, query: str, limit: int) -> tuple[PublicationHit, ...]: ...

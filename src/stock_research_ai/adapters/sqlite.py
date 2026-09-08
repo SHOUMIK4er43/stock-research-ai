@@ -25,8 +25,13 @@ from stock_research_ai.domain.documents import (
     ParsedDocument,
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult
+from stock_research_ai.domain.macro import MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult
 from stock_research_ai.domain.provenance import RawArtifact, SourceRetrieval
+from stock_research_ai.domain.publications import (
+    PublicationHit,
+    PublicationSnapshot,
+)
 
 
 class DatabaseNotReadyError(RuntimeError):
@@ -147,6 +152,7 @@ class SQLiteDatabase:
         self.extractions = SQLiteExtractionRepository(sessions)
         self.documents = SQLiteDocumentRepository(sessions)
         self.market = SQLiteMarketRepository(sessions)
+        self.context = SQLiteContextRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -526,3 +532,124 @@ class SQLiteMarketRepository:
                 .order_by(_MarketExtractionRow.created_at, _MarketExtractionRow.id)
             )
             return tuple(MarketExtractionResult.model_validate(row.payload) for row in rows)
+
+
+class _PublicationRow(_Base):
+    __tablename__ = "publications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class _PublicationSnapshotRow(_Base):
+    __tablename__ = "publication_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    identity_id: Mapped[str] = mapped_column(ForeignKey("publications.id"), index=True)
+    retrieved_at: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class _MacroSeriesRow(_Base):
+    __tablename__ = "macro_series"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class _MacroSnapshotRow(_Base):
+    __tablename__ = "macro_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    identity_id: Mapped[str | None] = mapped_column(ForeignKey("macro_series.id"), index=True)
+    retrieved_at: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteContextRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+        self.evidence = SQLiteExtractionRepository(sessions)
+
+    async def record_evidence(
+        self, retrieval: SourceRetrieval, artifact: RawArtifact | None
+    ) -> None:
+        await self.evidence.record_evidence(retrieval, artifact)
+
+    async def save_publication(self, snapshot: PublicationSnapshot) -> None:
+        async with self.sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            key = str(snapshot.identity.id)
+            if await session.get(_PublicationRow, key) is None:
+                session.add(
+                    _PublicationRow(id=key, payload=snapshot.identity.model_dump(mode="json"))
+                )
+                await session.flush()
+            session.add(
+                _PublicationSnapshotRow(
+                    id=str(snapshot.id),
+                    identity_id=key,
+                    retrieved_at=snapshot.retrieved_at.isoformat(),
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def save_macro(self, snapshot: MacroSnapshot) -> None:
+        async with self.sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            key = str(snapshot.series.id) if snapshot.series else None
+            if snapshot.series and await session.get(_MacroSeriesRow, key) is None:
+                session.add(
+                    _MacroSeriesRow(id=key, payload=snapshot.series.model_dump(mode="json"))
+                )
+                await session.flush()
+            session.add(
+                _MacroSnapshotRow(
+                    id=str(snapshot.id),
+                    identity_id=key,
+                    retrieved_at=max(r.retrieved_at for r in snapshot.retrievals).isoformat(),
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def publication_history(self, identity_id: UUID) -> tuple[PublicationSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_PublicationSnapshotRow)
+                .where(_PublicationSnapshotRow.identity_id == str(identity_id))
+                .order_by(_PublicationSnapshotRow.retrieved_at, _PublicationSnapshotRow.id)
+            )
+            return tuple(PublicationSnapshot.model_validate(r.payload) for r in rows)
+
+    async def macro_history(self, series_id: UUID) -> tuple[MacroSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_MacroSnapshotRow)
+                .where(_MacroSnapshotRow.identity_id == str(series_id))
+                .order_by(_MacroSnapshotRow.retrieved_at, _MacroSnapshotRow.id)
+            )
+            return tuple(MacroSnapshot.model_validate(r.payload) for r in rows)
+
+    async def search_publications(self, query: str, limit: int) -> tuple[PublicationHit, ...]:
+        hits = []
+        async with self.sessions() as session:
+            rows = await session.stream_scalars(
+                select(_PublicationSnapshotRow).order_by(
+                    _PublicationSnapshotRow.retrieved_at.desc(), _PublicationSnapshotRow.id
+                )
+            )
+            async for row in rows:
+                snapshot = PublicationSnapshot.model_validate(row.payload)
+                for passage in snapshot.passages:
+                    if query.casefold() in passage.text.casefold():
+                        hits.append(
+                            PublicationHit(
+                                snapshot_id=snapshot.id,
+                                publication_id=snapshot.identity.id,
+                                title=snapshot.title,
+                                publisher=snapshot.identity.publisher,
+                                source_url=snapshot.identity.source_url,
+                                text=passage.text,
+                                provenance=passage.provenance,
+                                retrieval_id=snapshot.retrieval.id,
+                            )
+                        )
+                        if len(hits) >= limit:
+                            return tuple(hits)
+        return tuple(hits)

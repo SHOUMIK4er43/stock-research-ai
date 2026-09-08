@@ -68,13 +68,50 @@ def main(argv: Sequence[str] | None = None) -> None:
     market.add_argument("--synthetic", action="store_true")
     market.add_argument("--expected-sessions", help="Comma-separated caller-declared dates")
     market.add_argument("--output", type=Path, required=True)
+    publication = commands.add_parser("ingest-publication", help="Official publication evidence")
+    publication.add_argument("--request", type=Path, required=True, help="PublicationRequest JSON")
+    publication.add_argument("--output", type=Path, required=True)
+    macro = commands.add_parser("ingest-macro", help="Official CPI observation evidence")
+    macro.add_argument("--request", type=Path, required=True, help="MacroRequest JSON")
+    macro.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "ingest-market-data":
+    if args.command in {"ingest-publication", "ingest-macro"}:
+        from stock_research_ai.bootstrap import ingest_macro, ingest_publication
+        from stock_research_ai.domain.macro import MacroRequest
+        from stock_research_ai.domain.publications import PublicationRequest
+
+        try:
+            if args.command == "ingest-publication":
+                context_result = asyncio.run(
+                    ingest_publication(
+                        settings,
+                        PublicationRequest.model_validate_json(args.request.read_text()),
+                        args.output,
+                    )
+                )
+            else:
+                macro_result = asyncio.run(
+                    ingest_macro(
+                        settings,
+                        MacroRequest.model_validate_json(args.request.read_text()),
+                        args.output,
+                    )
+                )
+            state = (
+                context_result.coverage.overall
+                if args.command == "ingest-publication"
+                else macro_result.coverage.overall
+            )
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"{state}: {args.output}")
+        raise SystemExit({"COMPLETE": 0, "PARTIAL": 3, "FAILED": 1}[state])
+    elif args.command == "ingest-market-data":
         from stock_research_ai.bootstrap import ingest_market
         from stock_research_ai.domain.market import MarketRequest
 

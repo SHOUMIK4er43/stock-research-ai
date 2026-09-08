@@ -1,0 +1,9 @@
+{
+  "url":"https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=sample",
+  "source_url":"https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=sample",
+  "source_key":"rbi:synthetic",
+  "format":"RBI_HTML",
+  "replay_file":"tests/fixtures/context/rbi_synthetic.html",
+  "evidence_kind":"SYNTHETIC",
+  "subjects":[{"kind":"SECTOR","identifier":"banking","label":"Banking","basis":"CALLER_DECLARED","declaration":"Synthetic offline banking evidence selected by caller."}]
+}

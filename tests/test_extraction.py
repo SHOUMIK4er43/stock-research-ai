@@ -157,6 +157,10 @@ async def test_snapshot_history_and_identity_binding(yesbank_result, fixture_dir
             "document_extractions",
             "market_instruments",
             "market_extractions",
+            "publications",
+            "publication_snapshots",
+            "macro_series",
+            "macro_snapshots",
         }
         for table, count in {
             "companies": 1,

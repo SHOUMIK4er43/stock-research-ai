@@ -1,0 +1,6 @@
+{
+  "periods":["2025-01","2025-02"],"base_year":"2012",
+  "metadata_file":"tests/fixtures/context/cpi_metadata_synthetic.json",
+  "data_file":"tests/fixtures/context/cpi_synthetic.json",
+  "evidence_kind":"SYNTHETIC"
+}

@@ -8,27 +8,44 @@ from stock_research_ai.adapters.documents.pdf import PDFNormalizer
 from stock_research_ai.adapters.documents.source import DocumentSource
 from stock_research_ai.adapters.json_export import (
     check_output,
+    export_context,
     export_document,
     export_market,
     export_result,
 )
 from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
 from stock_research_ai.adapters.kite.source import KiteSource
+from stock_research_ai.adapters.mospi.normalizer import MacroNormalizer
+from stock_research_ai.adapters.mospi.source import MospiSource
+from stock_research_ai.adapters.publications.normalizer import PublicationNormalizer
+from stock_research_ai.adapters.publications.source import PublicationSource
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.screener.normalizer import ScreenerNormalizer
 from stock_research_ai.adapters.screener.source import ScreenerSource
 from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
+    ContextServices,
     DocumentServices,
     ExtractionServices,
     MarketServices,
     ResearchEngine,
 )
-from stock_research_ai.application.ports import DocumentAcquirer, MarketSource, SourceAcquirer
+from stock_research_ai.application.ports import (
+    DocumentAcquirer,
+    MacroAcquirer,
+    MarketSource,
+    PublicationAcquirer,
+    SourceAcquirer,
+)
 from stock_research_ai.config import Settings
 from stock_research_ai.domain.documents import DocumentRequest, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketRequest
+from stock_research_ai.domain.publications import (
+    PublicationRequest,
+    PublicationSnapshot,
+)
 
 
 @asynccontextmanager
@@ -150,6 +167,63 @@ async def ingest_market(
     async with market_engine(settings, source) as engine:
         result = await engine.ingest_market_data(request)
         await export_market(
+            result,
+            output,
+            FileRawArtifactStore(
+                settings.artifact_path or settings.database_path.parent / "artifacts"
+            ),
+        )
+        return result
+
+
+@asynccontextmanager
+async def context_engine(
+    settings: Settings,
+    publications: PublicationAcquirer | None = None,
+    macro: MacroAcquirer | None = None,
+) -> AsyncIterator[ResearchEngine]:
+    database = SQLiteDatabase(settings.database_path)
+    store = FileRawArtifactStore(
+        settings.artifact_path or settings.database_path.parent / "artifacts"
+    )
+    try:
+        await database.check_ready()
+        yield ResearchEngine(
+            database.repository,
+            context=ContextServices(
+                publications or PublicationSource(),
+                PublicationNormalizer(),
+                macro or MospiSource(),
+                MacroNormalizer(),
+                store,
+                database.context,
+            ),
+        )
+    finally:
+        await database.close()
+
+
+async def ingest_publication(
+    settings: Settings, request: PublicationRequest, output: Path
+) -> PublicationSnapshot:
+    check_output(output)
+    async with context_engine(settings) as engine:
+        result = await engine.ingest_publication(request)
+        await export_context(
+            result,
+            output,
+            FileRawArtifactStore(
+                settings.artifact_path or settings.database_path.parent / "artifacts"
+            ),
+        )
+        return result
+
+
+async def ingest_macro(settings: Settings, request: MacroRequest, output: Path) -> MacroSnapshot:
+    check_output(output)
+    async with context_engine(settings) as engine:
+        result = await engine.ingest_macro(request)
+        await export_context(
             result,
             output,
             FileRawArtifactStore(

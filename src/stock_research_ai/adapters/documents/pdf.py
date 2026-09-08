@@ -169,6 +169,7 @@ class PDFNormalizer:
         return ParsedDocument.model_validate(
             {
                 "identity": identity,
+                "subjects": request.subjects,
                 "version_id": version,
                 "created_at": datetime.now(UTC),
                 "title": title,

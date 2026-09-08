@@ -69,6 +69,8 @@ class SourceRetrieval(BaseModel):
     id: UUID
     provider: str = Field(min_length=1)
     requested_url: str
+    request_method: Literal["GET", "POST"] = "GET"
+    request_parameters: dict[str, object] | None = None
     final_url: str
     retrieved_at: AwareDatetime
     status: RetrievalStatus

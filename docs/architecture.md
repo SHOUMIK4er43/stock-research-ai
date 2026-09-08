@@ -466,3 +466,30 @@ The implementation retains unknown period boundaries, source-only metric mapping
 snapshot IDs, separate stable series keys, and section coverage independent of record totals.
 The YESBANK golden harness, INFY capture, controlled layout mutations and CLI acceptance test
 are all offline. See README for executable replay and separate manual smoke-test commands.
+
+## Implemented Part 3C evidence slice
+
+Publication and macro ingestion use separate provider-neutral Protocols and shared raw evidence
+storage. Bootstrap selects the narrow issuer/RBI publication adapters and official MoSPI CPI
+adapter. `ResearchEngine` has no source-specific parsing, URL rules or metadata mappings.
+Acquisition responses are preserved before normalization and are verified on readback.
+
+`PublicationIdentity` identifies source evidence independently of company/sector/geography
+associations. Immutable `PublicationSnapshot` carries title/date evidence, literal passages,
+attachment locators, coverage and declared subject linkage. No event or interpretation is
+inferred. The existing PDF contract gains optional subjects without changing existing company
+entry points. Literal publication search returns the original snapshot and passage provenance.
+
+`MacroSeriesIdentity` includes geography, population, frequency, unit/scale, base year and
+seasonal-adjustment semantics. Metadata mapping provenance and observation provenance point
+to distinct preserved artifacts. A snapshot contains the series plus Decimal observations,
+reference periods, source status, available release/vintage timestamps and retrieval time.
+Each new retrieval appends a snapshot; deterministic period lookup returns all captured
+vintages. A retrieval today proves system knowledge today, not historical availability.
+Unknown metadata cannot silently become a complete observation or inferred series identity.
+
+Four new tables (`publications`, `publication_snapshots`, `macro_series`, `macro_snapshots`)
+reuse `source_retrievals` and `raw_artifacts`; no subject/observation tables are added. Company
+news, RBI banking evidence and CPI use separate CLI requests, exports and offline fixtures.
+Live proof captures remain local and Git-ignored; redistribution permission is unresolved.
+See README for exact commands, verified source limitations and coverage semantics.

@@ -16,6 +16,7 @@ from stock_research_ai.domain.provenance import (
     SourceLink,
     SourceRetrieval,
 )
+from stock_research_ai.domain.subjects import EvidenceSubject
 
 
 class DocumentType(StrEnum):
@@ -40,7 +41,8 @@ class DocumentReference(BaseModel):
 
 class DocumentRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    company_id: UUID
+    company_id: UUID | None = None
+    subjects: tuple[EvidenceSubject, ...] = ()
     url: str
     document_type: DocumentType = DocumentType.OTHER
     title: str | None = None
@@ -64,7 +66,7 @@ class DocumentRequest(BaseModel):
 class DocumentIdentity(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     id: UUID
-    company_id: UUID
+    company_id: UUID | None = None
     provider: str
     source_document_key: str | None = None
     original_url: str
@@ -147,6 +149,7 @@ class DocumentCoverage(BaseModel):
 
 
 class ParsedDocument(BaseModel):
+    subjects: tuple[EvidenceSubject, ...] = ()
     """Derived evidence snapshot. The original artifact is always retained separately."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")

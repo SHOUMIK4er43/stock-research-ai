@@ -470,3 +470,75 @@ References: [REST candles](https://kite.trade/docs/connect/v3/historical/),
 [limits](https://kite.trade/docs/connect/v3/exceptions/),
 [terms](https://kite.trade/terms/),
 [adjustment policy and corporate actions](https://kite.trade/forum/discussion/15971/getting-the-right-closing-prices-adjusted-for-corporate-actions).
+
+## Part 3C: publication and macro evidence
+
+Part 3C adds provider-neutral publication identities/snapshots, evidence subjects, and macro
+series/observations/snapshots. `ResearchEngine` preserves acquired bytes, records retrievals,
+reads the stored bytes back, invokes a parser Protocol, and persists a new snapshot. Four
+additional tables hold identities and canonical JSON snapshots: `publications`,
+`publication_snapshots`, `macro_series`, `macro_snapshots`. Existing retrieval/artifact tables
+are reused. `init-db` adds these tables without a migration framework.
+
+Publication subjects support company, sector, industry, geography and macro series, with an
+explicit caller declaration or source/mapping provenance. No company record is required for
+RBI material. The Part 3A PDF contract has an optional subject extension; its existing company
+CLI remains compatible. Publications are not inferred events. Literal publication search and
+series/period lookup are available through `ResearchEngine`; lookup returns all captured
+vintages. Repeated retrievals append snapshots; changed values never replace earlier values.
+Base year and seasonal-adjustment semantics distinguish macro series identities.
+
+From the repository root, replay synthetic fixtures without network access (use new output
+directories for each run):
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/context-offline.sqlite3 init-db
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/context-offline.sqlite3 ingest-publication --request tests/fixtures/context/publication_request.json --output output/context-publication
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/context-offline.sqlite3 ingest-macro --request tests/fixtures/context/macro_request.json --output output/context-macro
+```
+
+Exit status is 0 for COMPLETE, 3 for PARTIAL, 1 for FAILED and 2 for invalid input. The synthetic
+macro example intentionally returns 3: unsupported metadata remains unknown. Each export has
+`raw/manifest.json`, exact raw bytes, `normalized/snapshot.json`, component JSON files and
+`coverage.json`. Decimal values serialize as strings. Observations reference their series for
+unit, scale, geography, frequency and base-year semantics; each retains its own period, raw
+status, release/vintage timestamps where supplied, retrieval timestamp and raw locator.
+
+The separate manual live proof uses locally retained request JSON and independently
+hand-specified expectations. It runs all three real CLI paths, checks expected values/passages,
+checks raw SHA and provenance, replays the exact bytes and checks two immutable history entries:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run python scripts/verify_context.py --company-request .local/part3c-proof/company.json --industry-request .local/part3c-proof/industry.json --macro-request .local/part3c-proof/macro.json --expected .local/part3c-proof/expected.json --output output/part3c-live-proof-next
+```
+
+These local request/expectation files are not distributed. Copy the request shapes above for
+another installation; omit replay paths for live access. The live proof expectations must be
+checked against original evidence independently of the parser. Never replace expectations to
+make a mismatch pass. `scripts/verify_context.py --help` lists the required inputs.
+
+Verified sources and limits:
+
+- YES BANK's 19 July 2025 issuer filing: issuer URLs timed out, so acquisition used a
+  [Business Standard filing mirror](https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/19072025/188b8c46-9a03-4edb-921c-af9cadb1cd84.pdf).
+  Publisher remains YES BANK; acquisition provider is separately recorded. PDF text and
+  physical-page locators use existing pypdf; no OCR or table reconstruction is added.
+- RBI's [Sectoral Deployment of Bank Credit — June 2024](https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=58400)
+  is parsed by a narrow standard-library reader for the release table. Linked attachments
+  retain original/resolved URLs and locators, and are explicitly `LINKED_NOT_ACQUIRED`.
+- MoSPI's [official structured-data bridge](https://datainnovation.mospi.gov.in/mospi-mcp)
+  supplies CPI metadata and values through JSON-RPC POST using httpx, without an LLM.
+  The direct REST endpoint failed TLS negotiation; TLS was not weakened. The adapter checks
+  metadata codes for All India / Combined / General-Overall and preserves both response
+  artifacts plus request parameters. The tested 2012-base January/February 2025 values are
+  193.4 / 192.5 index points. Seasonal adjustment, release/vintage times and the meaning of
+  opaque source status `F` remain unknown, so coverage is PARTIAL. No inflation is calculated.
+  This initial adapter reads one bounded page; pagination or missing/ambiguous data is explicit
+  incomplete coverage. It is not a general MoSPI dataset adapter.
+
+Redistribution rights for retained source payloads remain unclear. New tracked fixtures are
+synthetic, with hand-specified expectations. Live payloads, databases and proof output remain
+Git-ignored under `.local/` and `output/`; no rights to redistribute or commercialize them are
+asserted. No new dependencies, generic news scraper, embeddings, event analysis, sentiment,
+recommendations or financial calculations were added. All pytest tests block network access
+and use temporary databases and artifact storage.

@@ -6,7 +6,11 @@ from pathlib import Path
 from stock_research_ai.application.ports import RawArtifactStore
 from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
+from stock_research_ai.domain.macro import MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult
+from stock_research_ai.domain.publications import (
+    PublicationSnapshot,
+)
 
 SECTION_FILES = {
     "quarterly": Section.QUARTERLY,
@@ -134,3 +138,40 @@ async def export_market(
         },
     )
     write_json(output / "coverage.json", data["coverage"])
+
+
+async def export_context(
+    result: PublicationSnapshot | MacroSnapshot, output: Path, store: RawArtifactStore
+) -> None:
+    check_output(output)
+    artifacts = (
+        result.artifacts
+        if isinstance(result, MacroSnapshot)
+        else ((result.artifact,) if result.artifact else ())
+    )
+    raw = [(a, await store.read(a)) for a in artifacts]
+    (output / "raw").mkdir(parents=True, exist_ok=True)
+    (output / "normalized").mkdir()
+    paths = {}
+    for a, b in raw:
+        path = f"raw/{a.content_sha256}.bin"
+        (output / path).write_bytes(b)
+        paths[str(a.id)] = path
+    data = result.model_dump(mode="json")
+    write_json(
+        output / "raw/manifest.json",
+        {
+            "artifacts": [a.model_dump(mode="json") for a in artifacts],
+            "retrievals": data.get("retrievals", [data.get("retrieval")]),
+            "export_paths": paths,
+            "evidence_kind": result.request.evidence_kind,
+        },
+    )
+    write_json(output / "normalized/snapshot.json", data)
+    write_json(output / "coverage.json", data["coverage"])
+    for key in (
+        ("series", "observations")
+        if isinstance(result, MacroSnapshot)
+        else ("identity", "passages", "subjects", "attachments")
+    ):
+        write_json(output / "normalized" / f"{key}.json", data[key])

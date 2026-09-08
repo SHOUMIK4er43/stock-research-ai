@@ -44,3 +44,50 @@ def engine() -> ResearchEngine:
             return self.companies.get(company_id)
 
     return ResearchEngine(MemoryRepository())
+
+
+@pytest.fixture(autouse=True)
+def offline_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    import httpx
+
+    def blocked(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Tests must stay offline; use MockTransport or local fixtures")
+
+    original_connect = socket.socket.connect
+
+    def connect(sock: socket.socket, address: object) -> object:
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            return blocked()
+        return original_connect(sock, address)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", blocked)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", blocked)
+    monkeypatch.setattr(socket.socket, "connect", connect)
+
+
+@pytest.fixture
+def fixture_dir() -> Path:
+    return Path(__file__).parent / "fixtures/screener"
+
+
+@pytest.fixture
+async def yesbank_result(tmp_path: Path, fixture_dir: Path):
+    from stock_research_ai.bootstrap import extract_snapshot, initialize_database
+    from stock_research_ai.config import Settings
+    from stock_research_ai.domain.extraction import ExtractionRequest
+
+    settings = Settings(
+        database_path=tmp_path / "proof.sqlite3", artifact_path=tmp_path / "artifacts"
+    )
+    await initialize_database(settings)
+    return await extract_snapshot(
+        settings,
+        ExtractionRequest(
+            provider="screener",
+            url="https://www.screener.in/company/YESBANK/consolidated/",
+            replay_path=fixture_dir / "yesbank_consolidated.html",
+        ),
+        tmp_path / "export",
+    )

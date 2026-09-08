@@ -17,3 +17,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Local evidence and extraction packages (test fixtures remain tracked).
+/.local/
+/artifacts/
+/output/

@@ -1,8 +1,19 @@
 # Stock Research AI
 
-A local-first equity research foundation. Part 1 proves the path from FastAPI or
-MCP to a provider-independent `ResearchEngine` and a small SQLite company registry.
-It does not collect data, analyze securities, call an LLM, or generate reports.
+A local-first foundation for an institutional-grade equity research system serving
+research heads, portfolio managers, professional analysts, family offices, and
+sophisticated investors. The intended product combines auditable evidence,
+historical analysis, sector context, valuation, market behavior, and explicit
+investment reasoning; a single score will not replace the underlying research.
+
+Implemented today: Part 1 exposes the company registry through FastAPI and MCP.
+Part 2 acquires or replays public Screener HTML through the provider-independent
+`ResearchEngine`, preserves exact evidence, normalizes it into versioned SQLite
+snapshots, and exports JSON with explicit coverage. No analysis or LLM calls run.
+
+Part 2 is acquisition and normalization only. The longer-term data architecture
+and its institutional research requirements are documented in
+[the Part 2 design review](docs/architecture.md#part-2-design-review-institutional-research-data).
 
 ## Existing environment
 
@@ -176,7 +187,106 @@ external accounts, or LLM access. Test and tool caches are ignored by Git.
 
 ## Deferred work
 
-Source acquisition/normalization, financial persistence and calculations, sector
-analysis, document intelligence, guidance history, LLM synthesis, report exports,
-and the Chrome extension remain future phases. Authentication, migrations,
+Financial calculations, sector analysis, document intelligence, guidance history,
+LLM synthesis, research report generation, and the Chrome extension remain future phases. Authentication, migrations,
 background processing, and additional infrastructure are also deferred.
+
+
+## Part 2: evidence pipeline proof
+
+No dependencies were changed for Part 2. `init-db` explicitly adds five tables to an
+existing Part 1 database: `listings`, `company_source_keys`, `source_retrievals`,
+`raw_artifacts`, and `extractions`. Existing companies and UUIDs are retained.
+Explicit registered exchange/provider identifiers are backfilled; missing exchanges
+are not invented. Conflicting provider bindings require correction rather than a name match.
+Financial records, holdings, peers, and document references stay inside validated
+schema `2.0` JSON snapshots. Extraction snapshots are append-only through the repository.
+
+Run the offline fixture replay (choose a fresh output directory on subsequent runs):
+
+```sh
+cd /Users/shoumikganguly/stock-research-ai
+export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
+uv run stock-research-ai --database .local/part2-proof.sqlite3 init-db
+uv run stock-research-ai --database .local/part2-proof.sqlite3 extract-screener \
+  https://www.screener.in/company/YESBANK/consolidated/ \
+  --html tests/fixtures/screener/yesbank_consolidated.html \
+  --output output/yesbank-fixture
+```
+
+Exit codes: `0` complete, `3` partial, `1` failed, `2` argument usage error.
+The captured YESBANK fixture returns **3** because peers expose a loading placeholder.
+All ten expected sections have coverage; a section cannot succeed with zero records.
+`UNMAPPED_METRIC` is a warning: its original label, value and safely parsed number survive.
+Malformed cells/tables degrade coverage. Record totals alone do not determine success.
+
+Output layout:
+
+```text
+output/yesbank-fixture/
+├── raw/
+│   ├── manifest.json
+│   └── <sha256>.html
+├── normalized/
+│   ├── extraction.json
+│   ├── company.json
+│   ├── quarterly.json
+│   ├── profit_loss.json
+│   ├── balance_sheet.json
+│   ├── cashflow.json
+│   ├── ratios.json
+│   ├── shareholding.json
+│   ├── peers.json
+│   └── documents.json
+└── coverage.json
+```
+
+`extraction.json` is the canonical validated snapshot. Section files are views of that
+same snapshot, each with its extraction ID and coverage. Decimals serialize as strings.
+`company.json` includes identity, listings and top metrics. The raw manifest contains
+retrieval events, hashes, storage references and portable export paths. HTML response
+bytes are HTTP-decoded body bytes, preserved before character decoding or normalization;
+they are not compressed wire bytes. Replay preserves the exact supplied file bytes.
+Use `--final-url` with `--html` when the original capture redirected, so relative links
+resolve against its final acquired URL. External document URLs remain unchanged.
+
+The golden test checks hand-specified values in `tests/fixtures/screener/expected_yesbank.json`
+through engine, storage, normalization, snapshot persistence and export. Fixtures are
+hashed in `manifest.json`; pytest cannot make live HTTP requests. Tests include an
+INFY standalone capture, mutations, raw integrity, historical snapshots and an actual
+CLI subprocess with network connections disabled.
+
+### Manual live YESBANK smoke test (outside pytest)
+
+Run only after the offline checks pass. This verifies current compatibility, not
+historical fixture financial equality. It makes one anonymous acquisition, following
+only validated public company-page redirects; no document bodies are downloaded.
+
+```sh
+cd /Users/shoumikganguly/stock-research-ai
+export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
+uv run stock-research-ai --database .local/part2-proof.sqlite3 init-db
+uv run stock-research-ai --database .local/part2-proof.sqlite3 extract-screener \
+  https://www.screener.in/company/YESBANK/consolidated/ \
+  --output output/yesbank-live
+```
+
+Inspect `normalized/company.json`: name `Yes Bank Ltd`, provider key `3783`, consolidated
+scope, and explicitly displayed NSE/BSE identifiers. Inspect `coverage.json` for all ten
+sections and read every issue. Verify the raw hash with `shasum -a 256 output/yesbank-live/raw/*.html`
+and compare it to `raw/manifest.json`. Confirm `normalized/extraction.json` references that
+artifact and includes statements, holdings, and document references. Peers can be
+`UNAVAILABLE/NOT_ATTEMPTED` with a loading/gating reason; that yields exit 3 and is acceptable
+for this smoke test. Other missing or failed sections require inspection, even if record
+counts are large. Existing nonempty output directories are rejected before acquisition.
+
+Limits: static public HTML only, no lazy endpoint guessing, document bodies, browser,
+PDF parser or analysis. Month-only ownership dates and duration starts stay unknown;
+TTM is unanchored when the source gives no dates. Explicit `data-date-key` dates are
+retained alongside their original labels. Retrieval time is never publication time.
+Unknown metric labels are retained without invented mappings. Each retrieval/snapshot
+gets a new ID; observation IDs bind to that exact artifact event and normalizer version,
+while series keys remain stable across revisions. This does not assert official restatements.
+Content blobs are deduplicated by SHA-256. SQLite row metadata and filesystem bytes are
+not one atomic transaction; interrupted runs can leave preserved evidence without an
+extraction, and a failed export can leave a partial output folder to inspect.

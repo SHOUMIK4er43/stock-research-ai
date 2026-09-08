@@ -19,6 +19,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     commands.add_parser("init-db", help="Create the company registry if it does not exist")
     commands.add_parser("serve-http", help="Serve the local FastAPI interface")
     commands.add_parser("serve-mcp", help="Serve MCP over stdin/stdout")
+    extract = commands.add_parser(
+        "extract-screener", help="Acquire or replay a public company page"
+    )
+    extract.add_argument("url", help="Original public company URL (also required for replay)")
+    extract.add_argument(
+        "--html", type=Path, help="Replay local HTML bytes; disables network acquisition"
+    )
+    extract.add_argument("--final-url", help="Final acquired URL for replay link resolution")
+    extract.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
@@ -36,10 +45,38 @@ def main(argv: Sequence[str] | None = None) -> None:
         from stock_research_ai.interfaces.http import create_app
 
         uvicorn.run(create_app(settings=settings), host=settings.http_host, port=settings.http_port)
-    else:
+    elif args.command == "serve-mcp":
         from stock_research_ai.interfaces.mcp import create_server
 
         create_server(settings=settings).run()
+
+    else:
+        from stock_research_ai.bootstrap import extract_snapshot
+        from stock_research_ai.domain.extraction import ExtractionRequest
+
+        try:
+            result = asyncio.run(
+                extract_snapshot(
+                    settings,
+                    ExtractionRequest(
+                        provider="screener",
+                        url=args.url,
+                        replay_path=args.html,
+                        final_url=args.final_url,
+                    ),
+                    args.output,
+                )
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            logging.getLogger(__name__).error("Extraction failed: %s", exc)
+            raise SystemExit(1) from exc
+        print(f"{result.coverage.overall}: {args.output.resolve()}")
+        for section in result.coverage.sections:
+            print(
+                f"{section.section}: {section.presence}/{section.parse_status} "
+                f"({section.records} records)"
+            )
+        raise SystemExit({"COMPLETE": 0, "PARTIAL": 3, "FAILED": 1}[result.coverage.overall])
 
 
 if __name__ == "__main__":

@@ -136,3 +136,47 @@ async def test_separate_database_files_remain_isolated(
         assert await other_database.repository.get(company.id) is None
     finally:
         await other_database.close()
+
+
+async def test_part_one_upgrade_preserves_ids_and_backfills_explicit_bindings(tmp_path):
+    import json
+    import sqlite3
+    from uuid import uuid4
+
+    path = tmp_path / "legacy.sqlite3"
+    identity = uuid4()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE companies (id VARCHAR(36) PRIMARY KEY, name VARCHAR NOT NULL, "
+            "listings JSON NOT NULL, provider_identifiers JSON NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO companies VALUES (?, ?, ?, ?)",
+            (
+                str(identity),
+                "Existing",
+                json.dumps(
+                    [
+                        {"exchange": "NSE", "symbol": "EXISTING"},
+                        {"exchange": None, "symbol": "UNVERIFIED"},
+                    ]
+                ),
+                json.dumps([{"provider": "example", "identifier": "42"}]),
+            ),
+        )
+    database = SQLiteDatabase(path)
+    try:
+        with pytest.raises(DatabaseNotReadyError, match="init-db"):
+            await database.check_ready()
+        await database.initialize()
+        await database.initialize()
+        company = await database.repository.get(identity)
+        assert company.id == identity
+        assert len(company.listings) == 2
+        with sqlite3.connect(path) as connection:
+            assert connection.execute("SELECT count(*) FROM listings").fetchone()[0] == 1
+            assert connection.execute("SELECT company_id FROM company_source_keys").fetchone()[
+                0
+            ] == str(identity)
+    finally:
+        await database.close()

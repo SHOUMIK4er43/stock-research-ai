@@ -293,3 +293,16 @@ def test_calculation_lineage_requires_inputs() -> None:
             calculation_version="1",
             calculated_at=datetime(2026, 9, 1, tzinfo=UTC),
         )
+
+
+def test_snapshot_rejects_broken_provenance_and_company_identity(yesbank_result):
+    from stock_research_ai.domain.extraction import CompanyExtractionResult
+
+    payload = yesbank_result.model_dump(mode="json")
+    payload["quarterly"][0]["provenance"]["raw_artifact_id"] = str(uuid4())
+    with pytest.raises(ValidationError, match="snapshot evidence"):
+        CompanyExtractionResult.model_validate(payload)
+    payload = yesbank_result.model_dump(mode="json")
+    payload["quarterly"][0]["company_id"] = str(uuid4())
+    with pytest.raises(ValidationError, match="snapshot company"):
+        CompanyExtractionResult.model_validate(payload)

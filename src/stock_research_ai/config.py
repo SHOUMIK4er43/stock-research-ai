@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     database_path: Path = Field(
         default_factory=lambda: Path.home() / ".stock-research-ai" / "research.sqlite3"
     )
+    artifact_path: Path | None = None
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=8000, ge=1, le=65535)
 
@@ -25,3 +26,8 @@ class Settings(BaseSettings):
     @classmethod
     def absolute_database_path(cls, value: Path) -> Path:
         return value.expanduser().resolve()
+
+    @field_validator("artifact_path")
+    @classmethod
+    def absolute_artifact_path(cls, value: Path | None) -> Path | None:
+        return value.expanduser().resolve() if value is not None else None

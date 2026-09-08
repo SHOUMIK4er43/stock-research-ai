@@ -107,3 +107,82 @@ def test_core_imports_only_domain_application_pydantic_and_standard_library() ->
                             "stock_research_ai.application",
                         )
                     ), f"Forbidden core dependency in {source.name}: {module}"
+
+
+async def test_extraction_requires_complete_configured_services():
+    from stock_research_ai.domain.extraction import ExtractionRequest
+
+    with pytest.raises(RuntimeError, match="not configured"):
+        await ResearchEngine(MemoryRepository()).extract_company(
+            ExtractionRequest(provider="neutral", url="https://example.com/")
+        )
+
+
+async def test_engine_preserves_then_reads_evidence_before_normalizing(yesbank_result):
+    from stock_research_ai.application.engine import ExtractionServices
+    from stock_research_ai.domain.extraction import ExtractionRequest
+    from stock_research_ai.domain.provenance import AcquiredPayload
+
+    events = []
+    result = yesbank_result
+    artifact = result.raw_artifacts[0]
+    retrieval = result.retrievals[0]
+
+    class Source:
+        async def acquire(self, request):
+            events.append("acquire")
+            return AcquiredPayload(retrieval=retrieval, content=b"exact acquisition")
+
+    class Store:
+        async def put(self, payload):
+            assert payload.content == b"exact acquisition"
+            events.append("preserve")
+            return artifact
+
+        async def read(self, value):
+            assert value == artifact
+            events.append("verified read")
+            return b"verified evidence"
+
+    class Normalizer:
+        def identify(self, content, raw, event, company_id):
+            assert content == b"verified evidence" and raw == artifact
+            events.append("identify")
+            return result.company
+
+        def normalize(self, content, raw, event, company_id):
+            assert content == b"verified evidence" and company_id == result.company.company_id
+            events.append("normalize")
+            return result
+
+    class Repository:
+        async def record_evidence(self, event, raw):
+            events.append("record evidence")
+
+        async def bind_company(self, identity):
+            events.append("bind")
+            return identity.company_id
+
+        async def save_extraction(self, snapshot):
+            assert snapshot == result
+            events.append("persist snapshot")
+
+    engine = ResearchEngine(
+        MemoryRepository(), ExtractionServices(Source(), Store(), Normalizer(), Repository())
+    )
+    assert (
+        await engine.extract_company(
+            ExtractionRequest(provider="neutral", url="https://example.com/")
+        )
+        == result
+    )
+    assert events == [
+        "acquire",
+        "preserve",
+        "record evidence",
+        "verified read",
+        "identify",
+        "bind",
+        "normalize",
+        "persist snapshot",
+    ]

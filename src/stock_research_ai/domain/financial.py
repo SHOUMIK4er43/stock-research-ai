@@ -7,6 +7,7 @@ from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -15,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from stock_research_ai.domain.metrics import MetricMappingStatus
 from stock_research_ai.domain.provenance import CalculationProvenance, ObservationProvenance
 
 
@@ -34,11 +36,27 @@ ExactDecimal = Annotated[
 class ReportingScope(StrEnum):
     STANDALONE = "standalone"
     CONSOLIDATED = "consolidated"
+    UNKNOWN = "unknown"
 
 
 class PeriodKind(StrEnum):
     INSTANT = "instant"
     DURATION = "duration"
+
+
+class PeriodFrequency(StrEnum):
+    ANNUAL = "annual"
+    QUARTERLY = "quarterly"
+    TTM = "ttm"
+    POINT_IN_TIME = "point_in_time"
+    IRREGULAR = "irregular"
+
+
+class DateResolution(StrEnum):
+    EXACT = "exact"
+    DERIVED = "derived"
+    PARTIAL = "partial"
+    UNRESOLVED = "unresolved"
 
 
 class FinancialPeriod(BaseModel):
@@ -48,24 +66,39 @@ class FinancialPeriod(BaseModel):
 
     kind: PeriodKind
     fiscal_label: str = Field(min_length=1)
-    end_date: date
+    end_date: date | None = None
+    frequency: PeriodFrequency = PeriodFrequency.IRREGULAR
+    date_resolution: DateResolution = DateResolution.EXACT
+    derivation_rule: str | None = None
+    derivation_inputs: tuple[str, ...] = ()
+    original_date_key: str | None = None
+    fiscal_year: int | None = None
+    fiscal_quarter: int | None = Field(default=None, ge=1, le=4)
     start_date: date | None = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> Self:
         if self.kind == PeriodKind.INSTANT and self.start_date is not None:
             raise ValueError("An instant period must not have a start date")
-        if self.kind == PeriodKind.DURATION:
+        if self.date_resolution == DateResolution.DERIVED and (
+            not self.derivation_rule or not self.derivation_inputs
+        ):
+            raise ValueError("Derived dates require a rule and inputs")
+        if self.date_resolution == DateResolution.EXACT and self.end_date is None:
+            raise ValueError("Exact periods require an end date")
+        if self.kind == PeriodKind.DURATION and self.date_resolution == DateResolution.EXACT:
             if self.start_date is None:
                 raise ValueError("A duration period requires a start date")
-            if self.start_date > self.end_date:
-                raise ValueError("A period's start date must not follow its end date")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("A period's start date must not follow its end date")
         return self
 
 
 class UnitKind(StrEnum):
+    UNKNOWN = "unknown"
     MONEY = "money"
     NUMBER = "number"
+    DAYS = "days"
     SHARES = "shares"
     PERCENT = "percent"
     RATIO = "ratio"
@@ -92,6 +125,26 @@ class FinancialUnit(BaseModel):
 class ValueStatus(StrEnum):
     AVAILABLE = "available"
     MISSING = "missing"
+    BLANK = "blank"
+    NOT_REPORTED = "not_reported"
+    NOT_APPLICABLE = "not_applicable"
+    PARSE_ERROR = "parse_error"
+    UNAVAILABLE = "unavailable"
+
+
+class ParsedValue(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    original: str
+    value: ExactDecimal | None
+    status: ValueStatus
+    unit: FinancialUnit
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        if (self.status == ValueStatus.AVAILABLE) != (self.value is not None):
+            raise ValueError("Only available values may be non-null")
+        return self
 
 
 class FinancialObservation(BaseModel):
@@ -103,6 +156,12 @@ class FinancialObservation(BaseModel):
     id: UUID
     company_id: UUID
     metric: str = Field(min_length=1)
+    metric_id: str | None = None
+    mapping_status: MetricMappingStatus = MetricMappingStatus.UNMAPPED
+    original_label: str | None = None
+    series_key: str | None = None
+    publication_at: AwareDatetime | None = None
+    source_revision: str | None = None
     value: ExactDecimal | None
     value_status: ValueStatus
     unit: FinancialUnit
@@ -120,7 +179,7 @@ class FinancialObservation(BaseModel):
             self.original_value is None or self.original_unit is None
         ):
             raise ValueError("An available observation requires its original value and unit")
-        if self.value_status == ValueStatus.MISSING and self.value is not None:
+        if self.value_status != ValueStatus.AVAILABLE and self.value is not None:
             raise ValueError("A missing observation must have a null value")
         return self
 

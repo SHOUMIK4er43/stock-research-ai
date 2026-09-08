@@ -25,6 +25,7 @@ from stock_research_ai.domain.documents import (
     ParsedDocument,
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult
+from stock_research_ai.domain.market import MarketExtractionResult
 from stock_research_ai.domain.provenance import RawArtifact, SourceRetrieval
 
 
@@ -145,6 +146,7 @@ class SQLiteDatabase:
         self._repository = SQLiteCompanyRepository(sessions)
         self.extractions = SQLiteExtractionRepository(sessions)
         self.documents = SQLiteDocumentRepository(sessions)
+        self.market = SQLiteMarketRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -458,3 +460,69 @@ class SQLiteDocumentRepository:
                         if len(hits) >= limit:
                             return tuple(hits)
         return tuple(hits)
+
+
+class _MarketInstrumentRow(_Base):
+    __tablename__ = "market_instruments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    exchange: Mapped[str] = mapped_column(String)
+    symbol: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)
+
+
+class _MarketExtractionRow(_Base):
+    __tablename__ = "market_extractions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    instrument_id: Mapped[str | None] = mapped_column(
+        ForeignKey("market_instruments.id"), index=True
+    )
+    created_at: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteMarketRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+        self._evidence = SQLiteExtractionRepository(sessions)
+
+    async def record_evidence(
+        self, retrieval: SourceRetrieval, artifact: RawArtifact | None
+    ) -> None:
+        await self._evidence.record_evidence(retrieval, artifact)
+
+    async def save_market(self, result: MarketExtractionResult) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            instrument = result.instrument
+            if instrument and await session.get(_MarketInstrumentRow, str(instrument.id)) is None:
+                session.add(
+                    _MarketInstrumentRow(
+                        id=str(instrument.id),
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        kind=instrument.kind,
+                    )
+                )
+                await session.flush()
+            session.add(
+                _MarketExtractionRow(
+                    id=str(result.id),
+                    instrument_id=str(instrument.id) if instrument else None,
+                    created_at=result.created_at.isoformat(),
+                    payload=result.model_dump(mode="json"),
+                )
+            )
+
+    async def get_market(self, extraction_id: UUID) -> MarketExtractionResult | None:
+        async with self._sessions() as session:
+            row = await session.get(_MarketExtractionRow, str(extraction_id))
+            return MarketExtractionResult.model_validate(row.payload) if row else None
+
+    async def market_history(self, instrument_id: UUID) -> tuple[MarketExtractionResult, ...]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(_MarketExtractionRow)
+                .where(_MarketExtractionRow.instrument_id == str(instrument_id))
+                .order_by(_MarketExtractionRow.created_at, _MarketExtractionRow.id)
+            )
+            return tuple(MarketExtractionResult.model_validate(row.payload) for row in rows)

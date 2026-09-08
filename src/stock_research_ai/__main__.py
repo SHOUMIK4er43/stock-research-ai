@@ -55,13 +55,54 @@ def main(argv: Sequence[str] | None = None) -> None:
     search.add_argument("--company", type=UUID, required=True)
     search.add_argument("--query", required=True)
     search.add_argument("--limit", type=int, default=20)
+    market = commands.add_parser(
+        "ingest-market-data", help="Acquire or replay daily market evidence"
+    )
+    market.add_argument("--symbol", required=True)
+    market.add_argument("--exchange", default="NSE")
+    market.add_argument("--kind", required=True, choices=["EQUITY", "INDEX"])
+    market.add_argument("--start", required=True)
+    market.add_argument("--end", required=True)
+    market.add_argument("--master-file", type=Path)
+    market.add_argument("--candles-file", type=Path)
+    market.add_argument("--synthetic", action="store_true")
+    market.add_argument("--expected-sessions", help="Comma-separated caller-declared dates")
+    market.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "init-db":
+    if args.command == "ingest-market-data":
+        from stock_research_ai.bootstrap import ingest_market
+        from stock_research_ai.domain.market import MarketRequest
+
+        try:
+            request = MarketRequest.model_validate(
+                {
+                    "symbol": args.symbol,
+                    "exchange": args.exchange,
+                    "kind": args.kind,
+                    "start": args.start,
+                    "end": args.end,
+                    "master_file": args.master_file,
+                    "candles_file": args.candles_file,
+                    "evidence_kind": "SYNTHETIC" if args.synthetic else "PROVIDER",
+                    "expected_sessions": args.expected_sessions.split(",")
+                    if args.expected_sessions
+                    else None,
+                }
+            )
+            market_result = asyncio.run(ingest_market(settings, request, args.output))
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(
+            f"{market_result.coverage.overall}: "
+            f"{len(market_result.observations)} observations; {args.output}"
+        )
+        raise SystemExit({"COMPLETE": 0, "PARTIAL": 3, "FAILED": 1}[market_result.coverage.overall])
+    elif args.command == "init-db":
         from stock_research_ai.bootstrap import initialize_database
 
         asyncio.run(initialize_database(settings))

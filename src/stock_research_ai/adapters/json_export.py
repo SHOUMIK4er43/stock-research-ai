@@ -6,6 +6,7 @@ from pathlib import Path
 from stock_research_ai.application.ports import RawArtifactStore
 from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
+from stock_research_ai.domain.market import MarketExtractionResult
 
 SECTION_FILES = {
     "quarterly": Section.QUARTERLY,
@@ -96,4 +97,40 @@ async def export_document(
             output / "normalized" / f"{field}.json",
             {"version_id": str(document.version_id), "data": data[field]},
         )
+    write_json(output / "coverage.json", data["coverage"])
+
+
+async def export_market(
+    result: MarketExtractionResult, output: Path, artifacts: RawArtifactStore
+) -> None:
+    check_output(output)
+    raw = [(a, await artifacts.read(a)) for a in result.raw_artifacts]
+    (output / "raw").mkdir(parents=True, exist_ok=True)
+    (output / "normalized").mkdir()
+    paths = {}
+    for artifact, content in raw:
+        path = f"raw/{artifact.content_sha256}.bin"
+        (output / path).write_bytes(content)
+        paths[str(artifact.id)] = path
+    data = result.model_dump(mode="json")
+    write_json(
+        output / "raw/manifest.json",
+        {
+            "retrievals": data["retrievals"],
+            "artifacts": data["raw_artifacts"],
+            "export_paths": paths,
+            "evidence_kind": result.request.evidence_kind,
+        },
+    )
+    write_json(output / "normalized/extraction.json", data)
+    write_json(output / "normalized/instrument.json", data["instrument"])
+    write_json(output / "normalized/prices.json", data["observations"])
+    write_json(
+        output / "normalized/corporate_actions.json",
+        {
+            "status": result.coverage.corporate_action_status,
+            "reason": result.coverage.corporate_actions,
+            "data": data["corporate_actions"],
+        },
+    )
     write_json(output / "coverage.json", data["coverage"])

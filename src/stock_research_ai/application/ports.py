@@ -11,6 +11,7 @@ from stock_research_ai.domain.documents import (
     ParsedDocument,
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.market import MarketExtractionResult, MarketInstrument, MarketRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 
 
@@ -81,3 +82,32 @@ class DocumentRepository(Protocol):
     async def search(
         self, company_id: UUID, query: str, limit: int
     ) -> tuple[DocumentSearchHit, ...]: ...
+
+
+class MarketSource(Protocol):
+    async def acquire_master(self, request: MarketRequest) -> AcquiredPayload: ...
+    async def acquire_prices(
+        self, request: MarketRequest, instrument: MarketInstrument
+    ) -> tuple[AcquiredPayload, ...]: ...
+
+
+class MarketNormalizer(Protocol):
+    def identify(
+        self, request: MarketRequest, content: bytes, artifact: RawArtifact
+    ) -> MarketInstrument: ...
+    def normalize(
+        self,
+        request: MarketRequest,
+        instrument: MarketInstrument | None,
+        evidence: tuple[tuple[SourceRetrieval, RawArtifact | None, bytes | None], ...],
+        identity_error: str | None = None,
+    ) -> MarketExtractionResult: ...
+
+
+class MarketRepository(Protocol):
+    async def record_evidence(
+        self, retrieval: SourceRetrieval, artifact: RawArtifact | None
+    ) -> None: ...
+    async def save_market(self, result: MarketExtractionResult) -> None: ...
+    async def get_market(self, extraction_id: UUID) -> MarketExtractionResult | None: ...
+    async def market_history(self, instrument_id: UUID) -> tuple[MarketExtractionResult, ...]: ...

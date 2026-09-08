@@ -6,7 +6,14 @@ from pathlib import Path
 
 from stock_research_ai.adapters.documents.pdf import PDFNormalizer
 from stock_research_ai.adapters.documents.source import DocumentSource
-from stock_research_ai.adapters.json_export import check_output, export_document, export_result
+from stock_research_ai.adapters.json_export import (
+    check_output,
+    export_document,
+    export_market,
+    export_result,
+)
+from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
+from stock_research_ai.adapters.kite.source import KiteSource
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.screener.normalizer import ScreenerNormalizer
 from stock_research_ai.adapters.screener.source import ScreenerSource
@@ -14,12 +21,14 @@ from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
     DocumentServices,
     ExtractionServices,
+    MarketServices,
     ResearchEngine,
 )
-from stock_research_ai.application.ports import DocumentAcquirer, SourceAcquirer
+from stock_research_ai.application.ports import DocumentAcquirer, MarketSource, SourceAcquirer
 from stock_research_ai.config import Settings
 from stock_research_ai.domain.documents import DocumentRequest, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.market import MarketExtractionResult, MarketRequest
 
 
 @asynccontextmanager
@@ -109,3 +118,42 @@ async def ingest_document(
             ),
         )
         return document
+
+
+@asynccontextmanager
+async def market_engine(
+    settings: Settings, source: MarketSource | None = None
+) -> AsyncIterator[ResearchEngine]:
+    database = SQLiteDatabase(settings.database_path)
+    store = FileRawArtifactStore(
+        settings.artifact_path or settings.database_path.parent / "artifacts"
+    )
+    try:
+        await database.check_ready()
+        yield ResearchEngine(
+            database.repository,
+            market=MarketServices(
+                source or KiteSource.from_environment(),
+                store,
+                KiteNormalizer(),
+                database.market,
+            ),
+        )
+    finally:
+        await database.close()
+
+
+async def ingest_market(
+    settings: Settings, request: MarketRequest, output: Path, source: MarketSource | None = None
+) -> MarketExtractionResult:
+    check_output(output)
+    async with market_engine(settings, source) as engine:
+        result = await engine.ingest_market_data(request)
+        await export_market(
+            result,
+            output,
+            FileRawArtifactStore(
+                settings.artifact_path or settings.database_path.parent / "artifacts"
+            ),
+        )
+        return result

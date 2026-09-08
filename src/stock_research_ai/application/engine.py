@@ -12,6 +12,9 @@ from stock_research_ai.application.ports import (
     DocumentNormalizer,
     DocumentRepository,
     ExtractionRepository,
+    MarketNormalizer,
+    MarketRepository,
+    MarketSource,
     RawArtifactStore,
     SourceAcquirer,
     SourceNormalizer,
@@ -19,6 +22,8 @@ from stock_research_ai.application.ports import (
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.market import MarketExtractionResult, MarketRequest
+from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 
 
 class Capabilities(BaseModel):
@@ -46,16 +51,26 @@ class DocumentServices:
     repository: DocumentRepository
 
 
+@dataclass(frozen=True)
+class MarketServices:
+    source: MarketSource
+    artifacts: RawArtifactStore
+    normalizer: MarketNormalizer
+    repository: MarketRepository
+
+
 class ResearchEngine:
     def __init__(
         self,
         repository: CompanyRepository,
         extraction: ExtractionServices | None = None,
         documents: DocumentServices | None = None,
+        market: MarketServices | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
         self._documents = documents
+        self._market = market
 
     async def get_capabilities(self) -> Capabilities:
         return Capabilities()
@@ -123,3 +138,46 @@ class ResearchEngine:
         if not query.strip() or not 1 <= limit <= 100:
             raise ValueError("Search requires nonempty text and a limit between 1 and 100")
         return await self._documents.repository.search(company_id, query, limit)
+
+    async def ingest_market_data(self, request: MarketRequest) -> MarketExtractionResult:
+        services = self._market
+        if services is None:
+            raise RuntimeError("Market services are not configured")
+        evidence: list[tuple[SourceRetrieval, RawArtifact | None, bytes | None]] = []
+
+        async def preserve(payload: AcquiredPayload) -> tuple[RawArtifact | None, bytes | None]:
+            artifact = (
+                await services.artifacts.put(payload) if payload.content is not None else None
+            )
+            await services.repository.record_evidence(payload.retrieval, artifact)
+            content = await services.artifacts.read(artifact) if artifact else None
+            evidence.append((payload.retrieval, artifact, content))
+            return artifact, content
+
+        master = await services.source.acquire_master(request)
+        artifact, content = await preserve(master)
+        instrument = None
+        identity_error = None
+        if master.retrieval.status == "success" and artifact is not None and content is not None:
+            try:
+                instrument = services.normalizer.identify(request, content, artifact)
+            except ValueError as exc:
+                identity_error = str(exc)
+        else:
+            identity_error = "Instrument master acquisition failed"
+        if instrument is not None:
+            for payload in await services.source.acquire_prices(request, instrument):
+                await preserve(payload)
+        result = services.normalizer.normalize(request, instrument, tuple(evidence), identity_error)
+        await services.repository.save_market(result)
+        return result
+
+    async def get_market(self, extraction_id: UUID) -> MarketExtractionResult | None:
+        if self._market is None:
+            raise RuntimeError("Market services are not configured")
+        return await self._market.repository.get_market(extraction_id)
+
+    async def market_history(self, instrument_id: UUID) -> tuple[MarketExtractionResult, ...]:
+        if self._market is None:
+            raise RuntimeError("Market services are not configured")
+        return await self._market.repository.market_history(instrument_id)

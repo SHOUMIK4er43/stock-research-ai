@@ -174,3 +174,13 @@ async def document_company(document_settings):
 
     async with research_engine(document_settings) as engine:
         return await engine.register_company(CompanyRegistration(name="YES BANK"))
+
+
+@pytest.fixture
+async def market_settings(tmp_path):
+    from stock_research_ai.bootstrap import initialize_database
+    from stock_research_ai.config import Settings
+
+    settings = Settings(database_path=tmp_path / "market.sqlite3", artifact_path=tmp_path / "raw")
+    await initialize_database(settings)
+    return settings

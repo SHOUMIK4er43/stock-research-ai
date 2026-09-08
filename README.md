@@ -376,3 +376,97 @@ attachments returned HTTP 406 and issuer/NSE requests timed out during fixture p
 Actual mirror URLs and original hashes are preserved. Tests cover selected visually verified
 pages, raw-byte readback, page/chunk lineage, persistence, search, revisions, failures and the real
 CLI. Golden expectations are hand-specified and protected by AGENTS.md; pytest stays offline.
+
+## Part 3B: market evidence (Kite, personal/local)
+
+Kite supplies acquisition; NSE identifies the source market. The engine uses neutral
+market ports. The adapter resolves a current instrument master by exchange, symbol,
+and segment; index identities do not require company registration. `instrument_token`
+and `exchange_token` remain separate. Historical symbol reuse/renaming is not resolved
+by this prototype. Current mappings do not establish historical listing validity.
+
+Market ingestion preserves exact response-body/replay bytes before normalization,
+including the instrument master. Each observation references its source artifact and
+JSON row; master identity references its CSV data-row number (one-indexed, excluding
+header). Immutable `market_extractions` JSON snapshots and `market_instruments` are
+the only new tables; retrieval/artifact tables are reused. Run `init-db` explicitly
+against existing databases to add these tables. Old snapshots remain available through
+`ResearchEngine.get_market` and `market_history`.
+
+Daily timestamps retain the supplied offset and separate trading date. Provider update
+time and currency stay null when not supplied. Index levels use INDEX_POINTS; index
+volume is preserved as reported but its meaning is UNKNOWN. Zero volume never implies
+suspension, a holiday, or absence. Missing-date reasons stay UNKNOWN. Optional expected
+sessions are explicitly CALLER_DECLARED, not a generated exchange calendar. COMPLETE
+means all declared price sessions validated, not complete corporate-action/adjustment
+coverage. Without session evidence, nonempty valid output remains PARTIAL. All-empty,
+malformed, blocked or failed output is never empty success.
+
+Kite says historical prices/volumes can be adjusted, but the candle schema lacks a
+per-record adjustment indicator and adjustments may be delayed. `adjustment_basis`
+remains UNKNOWN; `adjusted_close` stays null. No factors, actions or analytics are
+computed. Corporate-action coverage is UNAVAILABLE / NOT_PROVIDED_BY_SOURCE. Historical
+values retrieved now prove only knowledge at retrieval time, never availability on the
+historical trading date. Replay records a new retrieval event; identical bytes reuse
+content-addressed storage and deterministic observation IDs, while every ingestion
+creates a new snapshot and retains its own provenance.
+
+Offline verification (all values and provider tokens below are synthetic):
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database .local/market-proof.sqlite3 init-db
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database .local/market-proof.sqlite3 ingest-market-data \
+  --symbol YESBANK --exchange NSE --kind EQUITY \
+  --start 2025-01-02 --end 2025-01-03 \
+  --master-file tests/fixtures/market/synthetic_instruments.csv \
+  --candles-file tests/fixtures/market/synthetic_candles.json --synthetic \
+  --expected-sessions 2025-01-02,2025-01-03 --output output/market-synthetic-yesbank
+```
+
+Substitute `INFY` with EQUITY, or `"NIFTY 50"` / `"NIFTY BANK"` with INDEX and a fresh
+output directory. Exit codes: 0 COMPLETE, 3 PARTIAL, 1 FAILED, 2 invalid CLI input.
+Exports contain raw/manifest.json and byte files, normalized/extraction.json,
+instrument.json, prices.json, corporate_actions.json, and coverage.json.
+
+For manual live verification, set `KITE_API_KEY` and `KITE_ACCESS_TOKEN` using your
+local environment or Git-ignored `.env`. The adapter prefers environment values over
+`.env`. Secrets are neither domain fields nor exported request headers. Use the normal
+Kite login outside the engine; tokens expire at 6 AM the following day and invalid
+tokens are reported explicitly. No automatic login, trading endpoints, or SDK is used.
+REST requests are sequential, at most ~2.8/second per adapter instance; coordinate
+separate processes yourself to respect the account-level 3/second limit. Daily windows
+are split into spans below 2,000 days. Redirects are rejected; each response has a
+40-second total timeout and 20 MB limit. Oversize evidence is a marked incomplete
+prefix and never normalized.
+
+Only after offline checks pass, run the separate four-instrument smoke procedure:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run python scripts/verify_kite_market.py --output output/market-live-proof
+```
+
+This validates the master resolution, January 2–3 2025 candle presence, raw hashes,
+lineage and persistence. It does **not** call its own output golden truth. To verify
+actual numerical values, independently inspect the source evidence, hand-specify a
+separate local JSON file with symbols mapped to arrays of `date`, `open`, `high`,
+`low`, `close`, `volume` (numeric values as strings), and supply `--expected PATH` with
+a fresh output directory. The separate authenticated check has passed for all four instruments over January
+2–3, 2025, against expectations hand-transcribed from original Kite response bodies.
+This proves normalization fidelity to Kite, not independent exchange accuracy.
+Local expectations are in `.local/kite-market-expected.json`; evidence and the
+second-run proof are in `output/market-live-golden-proof/`, all Git-ignored.
+Automated tests never invoke this live script.
+
+Kite's general terms restrict permanent copies unless permitted, while instrument
+API documentation specifically recommends local master caching. Historical-response
+fixture retention/redistribution permission is not established. Tracked test payloads
+are wholly synthetic; no real historical payload is a permanent fixture. Personal
+live exports remain Git-ignored. Neither an active subscription nor this implementation
+grants commercial/redistribution rights. Future licensed adapters can replace Kite.
+
+References: [REST candles](https://kite.trade/docs/connect/v3/historical/),
+[instruments](https://kite.trade/docs/connect/v3/market-quotes/),
+[authentication](https://kite.trade/docs/connect/v3/user/),
+[limits](https://kite.trade/docs/connect/v3/exceptions/),
+[terms](https://kite.trade/terms/),
+[adjustment policy and corporate actions](https://kite.trade/forum/discussion/15971/getting-the-right-closing-prices-adjusted-for-corporate-actions).

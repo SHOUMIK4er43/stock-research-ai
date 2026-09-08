@@ -8,12 +8,16 @@ from pydantic import BaseModel, ConfigDict
 
 from stock_research_ai.application.ports import (
     CompanyRepository,
+    DocumentAcquirer,
+    DocumentNormalizer,
+    DocumentRepository,
     ExtractionRepository,
     RawArtifactStore,
     SourceAcquirer,
     SourceNormalizer,
 )
 from stock_research_ai.domain.company import Company, CompanyRegistration
+from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 
 
@@ -34,12 +38,24 @@ class ExtractionServices:
     repository: ExtractionRepository
 
 
+@dataclass(frozen=True)
+class DocumentServices:
+    source: DocumentAcquirer
+    artifacts: RawArtifactStore
+    normalizer: DocumentNormalizer
+    repository: DocumentRepository
+
+
 class ResearchEngine:
     def __init__(
-        self, repository: CompanyRepository, extraction: ExtractionServices | None = None
+        self,
+        repository: CompanyRepository,
+        extraction: ExtractionServices | None = None,
+        documents: DocumentServices | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
+        self._documents = documents
 
     async def get_capabilities(self) -> Capabilities:
         return Capabilities()
@@ -76,3 +92,34 @@ class ResearchEngine:
         result = services.normalizer.normalize(content, artifact, payload.retrieval, company_id)
         await services.repository.save_extraction(result)
         return result
+
+    async def ingest_document(self, request: DocumentRequest) -> ParsedDocument:
+        services = self._documents
+        if services is None:
+            raise RuntimeError("Document services are not configured")
+        if await self._repository.get(request.company_id) is None:
+            raise ValueError("Register the company before ingesting documents")
+        identity = await services.repository.bind_document(request)
+        payload = await services.source.acquire(request)
+        artifact = await services.artifacts.put(payload) if payload.content is not None else None
+        await services.repository.record_evidence(payload.retrieval, artifact)
+        content = await services.artifacts.read(artifact) if artifact else None
+        document = services.normalizer.normalize(
+            request, identity, payload.retrieval, artifact, content
+        )
+        await services.repository.save_document(document)
+        return document
+
+    async def get_document(self, version_id: UUID) -> ParsedDocument | None:
+        if self._documents is None:
+            raise RuntimeError("Document services are not configured")
+        return await self._documents.repository.get_document(version_id)
+
+    async def search_company_documents(
+        self, company_id: UUID, query: str, limit: int = 20
+    ) -> tuple[DocumentSearchHit, ...]:
+        if self._documents is None:
+            raise RuntimeError("Document services are not configured")
+        if not query.strip() or not 1 <= limit <= 100:
+            raise ValueError("Search requires nonempty text and a limit between 1 and 100")
+        return await self._documents.repository.search(company_id, query, limit)

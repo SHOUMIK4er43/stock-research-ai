@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from stock_research_ai.application.ports import RawArtifactStore
+from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
 
 SECTION_FILES = {
@@ -69,3 +70,30 @@ async def export_result(
             output / "normalized" / f"{name}.json",
             {**common, "coverage": coverage[section], "data": data[name]},
         )
+
+
+async def export_document(
+    document: ParsedDocument, output: Path, artifacts: RawArtifactStore
+) -> None:
+    check_output(output)
+    raw = await artifacts.read(document.artifact) if document.artifact else None
+    (output / "raw").mkdir(parents=True, exist_ok=True)
+    (output / "normalized").mkdir()
+    artifact = document.artifact
+    exported = None
+    if raw is not None and artifact:
+        extension = Path(artifact.content_reference).suffix
+        exported = f"raw/{artifact.content_sha256}{extension}"
+        (output / exported).write_bytes(raw)
+    data = document.model_dump(mode="json")
+    write_json(
+        output / "raw/manifest.json",
+        {"artifact": data["artifact"], "retrieval": data["retrieval"], "export_path": exported},
+    )
+    write_json(output / "normalized/document.json", data)
+    for field in ("pages", "sections", "chunks"):
+        write_json(
+            output / "normalized" / f"{field}.json",
+            {"version_id": str(document.version_id), "data": data[field]},
+        )
+    write_json(output / "coverage.json", data["coverage"])

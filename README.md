@@ -9,7 +9,9 @@ investment reasoning; a single score will not replace the underlying research.
 Implemented today: Part 1 exposes the company registry through FastAPI and MCP.
 Part 2 acquires or replays public Screener HTML through the provider-independent
 `ResearchEngine`, preserves exact evidence, normalizes it into versioned SQLite
-snapshots, and exports JSON with explicit coverage. No analysis or LLM calls run.
+snapshots, and exports JSON with explicit coverage. Part 3A adds preserved PDF documents,
+page text, deterministic chunks, version history, and literal evidence search.
+No analysis or LLM calls run.
 
 Part 2 is acquisition and normalization only. The longer-term data architecture
 and its institutional research requirements are documented in
@@ -290,3 +292,87 @@ while series keys remain stable across revisions. This does not assert official 
 Content blobs are deduplicated by SHA-256. SQLite row metadata and filesystem bytes are
 not one atomic transaction; interrupted runs can leave preserved evidence without an
 extraction, and a failed export can leave a partial output folder to inspect.
+
+
+## Part 3A: company-document evidence
+
+The only added dependency is `pypdf` (locked at 6.18.0). No other package versions were
+upgraded. `init-db` adds `documents` and `document_extractions` and preserves the existing
+six tables and data. Document snapshots reuse `source_retrievals` and `raw_artifacts`;
+pages, sections, chunks, metadata and quality reports remain inside canonical JSON snapshots.
+
+Use an existing registered company's UUID and its database:
+
+```sh
+export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
+uv run stock-research-ai --database .local/part3a-proof.sqlite3 init-db
+# Replace COMPANY_UUID with the ID returned by company registration or extraction.
+uv run stock-research-ai --database .local/part3a-proof.sqlite3 ingest-document \
+  --company COMPANY_UUID \
+  --url 'https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/19072025/188b8c46-9a03-4edb-921c-af9cadb1cd84.pdf' \
+  --type investor-presentation \
+  --file tests/fixtures/documents/yesbank_presentation.pdf \
+  --output output/document-fixture
+uv run stock-research-ai --database .local/part3a-proof.sqlite3 search-documents \
+  --company COMPANY_UUID --query 'Financial Highlights'
+```
+
+`--file` is offline replay; omit it for a separate manual live smoke test after pytest
+passes, using a new output directory. `--final-url` records a replay capture's final URL.
+Alternatively, `--reference-json` accepts a saved Part 2 `DocumentReference` object and
+preserves the source page's link locator and discovery provenance. If `--url` is also
+supplied it must match that reference. Explicit type/title hints are labelled as caller
+or reference declarations; URL words never classify documents. Unknown types remain OTHER.
+The classifier does not claim semantic confirmation of caller declarations.
+
+```text
+output/document-fixture/
+├── raw/
+│   ├── manifest.json
+│   └── <sha256>.pdf             # .bin for non-PDF/incomplete responses as applicable
+├── normalized/
+│   ├── document.json           # canonical immutable parsed-document snapshot
+│   ├── pages.json
+│   ├── sections.json
+│   └── chunks.json
+└── coverage.json
+```
+
+The raw store preserves HTTP-decoded file bytes before pypdf opens them. All pypdf text
+is derived evidence. A page records its raw artifact ID, physical page number, text hash,
+parser version and status. Pages are **one-indexed**, including exchange-cover pages;
+printed page labels can differ. Chunks contain exact character slices of one page,
+section/page/version/artifact IDs, ordinal, character count, word count and text hash.
+The validator rejects broken lineage, altered slices, gaps, overlaps and inconsistent counts.
+No table reconstruction is performed or claimed; pypdf's numeric/table-like text is retained.
+
+A document identity is bound to company, provider and an explicit source key or original URL.
+A new retrieval always produces an immutable version, even for identical bytes; identical
+content reuses the content-addressed blob. Page/chunk IDs are deterministic for that artifact,
+parser version and offsets. Historical versions remain searchable and retrievable. Search is
+case-insensitive literal substring matching within chunks, returning newest versions first;
+it does not match phrases split across chunk boundaries or perform semantic ranking.
+
+Quality distinguishes acquisition and parser status, original reported PDF page count,
+retained page count, extracted/empty/failed/low-text pages, suspected scanned pages, character
+count, metadata availability and section detection. COMPLETE means the configured text
+extraction checks passed, not perfect reading order, semantic completeness or verified tables.
+Basic section labels use explicit line headings; UNKNOWN sections preserve all their text.
+Metadata creation/modification timestamps are retained verbatim and never treated as publication
+dates. Publication/fiscal labels are accepted only as explicit caller/reference evidence.
+
+Acquisition accepts public HTTPS URLs, checks public DNS addresses on every redirect, uses a
+45-second deadline, and limits response bodies to 25 MB. Oversized prefixes are preserved with
+`complete: false`, never parsed as original complete files. Parsing caps page count at 1,500 and
+checks decoded page streams against 25 MB; pypdf may allocate memory during decompression before
+that check. This is a local evidence tool, not a sandbox for hostile PDFs or a public fetch proxy.
+Encrypted PDFs and unsupported formats fail explicitly. Empty or very sparse image-resource
+pages are flagged OCR_REQUIRED; sparse text-only pages are LOW_TEXT. This is a heuristic, not
+an exhaustive scan detector. No OCR, image decoding, table library, embeddings or AI analysis runs.
+
+Golden proof uses a public 62-page YESBANK presentation/filing and a 16-page transcript/filing.
+Business Standard's public filing mirrors were accessible; original BSE viewers/presentation
+attachments returned HTTP 406 and issuer/NSE requests timed out during fixture preparation.
+Actual mirror URLs and original hashes are preserved. Tests cover selected visually verified
+pages, raw-byte readback, page/chunk lineage, persistence, search, revisions, failures and the real
+CLI. Golden expectations are hand-specified and protected by AGENTS.md; pytest stays offline.

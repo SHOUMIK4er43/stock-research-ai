@@ -4,6 +4,12 @@ from typing import Protocol
 from uuid import UUID
 
 from stock_research_ai.domain.company import Company, SourceCompanyIdentity
+from stock_research_ai.domain.documents import (
+    DocumentIdentity,
+    DocumentRequest,
+    DocumentSearchHit,
+    ParsedDocument,
+)
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 
@@ -47,3 +53,31 @@ class ExtractionRepository(Protocol):
     async def bind_company(self, identity: SourceCompanyIdentity) -> UUID: ...
     async def save_extraction(self, result: CompanyExtractionResult) -> None: ...
     async def get_extraction(self, extraction_id: UUID) -> CompanyExtractionResult | None: ...
+
+
+class DocumentAcquirer(Protocol):
+    async def acquire(self, request: DocumentRequest) -> AcquiredPayload: ...
+
+
+class DocumentNormalizer(Protocol):
+    def normalize(
+        self,
+        request: DocumentRequest,
+        identity: DocumentIdentity,
+        retrieval: SourceRetrieval,
+        artifact: RawArtifact | None,
+        content: bytes | None,
+    ) -> ParsedDocument: ...
+
+
+class DocumentRepository(Protocol):
+    async def bind_document(self, request: DocumentRequest) -> DocumentIdentity: ...
+    async def record_evidence(
+        self, retrieval: SourceRetrieval, artifact: RawArtifact | None
+    ) -> None: ...
+    async def save_document(self, document: ParsedDocument) -> None: ...
+    async def get_document(self, version_id: UUID) -> ParsedDocument | None: ...
+    async def document_history(self, document_id: UUID) -> tuple[ParsedDocument, ...]: ...
+    async def search(
+        self, company_id: UUID, query: str, limit: int
+    ) -> tuple[DocumentSearchHit, ...]: ...

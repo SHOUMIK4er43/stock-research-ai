@@ -153,6 +153,8 @@ async def test_snapshot_history_and_identity_binding(yesbank_result, fixture_dir
             "source_retrievals",
             "raw_artifacts",
             "extractions",
+            "documents",
+            "document_extractions",
         }
         for table, count in {
             "companies": 1,

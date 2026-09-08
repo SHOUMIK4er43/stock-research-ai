@@ -17,7 +17,7 @@ class FileRawArtifactStore:
         if payload.content is None:
             raise ValueError("No acquired bytes to preserve")
         digest = hashlib.sha256(payload.content).hexdigest()
-        relative = Path("sha256") / digest[:2] / f"{digest}.html"
+        relative = Path("sha256") / digest[:2] / f"{digest}.{payload.file_extension}"
         destination = self.root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=destination.parent, prefix=".pending-")
@@ -40,7 +40,7 @@ class FileRawArtifactStore:
             {
                 "id": uuid4(),
                 "source_url": retrieval.final_url,
-                "source_type": "company_html",
+                "source_type": payload.source_type,
                 "retrieved_at": retrieval.retrieved_at,
                 "content_reference": relative.as_posix(),
                 "content_sha256": digest,
@@ -49,6 +49,7 @@ class FileRawArtifactStore:
                 "size_bytes": len(payload.content),
                 "content_type": retrieval.content_type,
                 "encoding": retrieval.encoding,
+                "complete": retrieval.complete,
                 "representation": "replay_bytes"
                 if retrieval.mode == "replay"
                 else "decoded_http_body",

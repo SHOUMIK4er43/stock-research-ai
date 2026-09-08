@@ -1,5 +1,6 @@
 """Explicitly initialized SQLite persistence for the company registry."""
 
+import json
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -16,6 +17,12 @@ from stock_research_ai.domain.company import (
     Listing,
     ProviderIdentifier,
     SourceCompanyIdentity,
+)
+from stock_research_ai.domain.documents import (
+    DocumentIdentity,
+    DocumentRequest,
+    DocumentSearchHit,
+    ParsedDocument,
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.provenance import RawArtifact, SourceRetrieval
@@ -106,7 +113,7 @@ def _check_schema(connection: Connection) -> None:
     for table in _Base.metadata.sorted_tables:
         if not inspector.has_table(table.name):
             raise DatabaseNotReadyError(
-                "Part 2 schema is absent. Run `stock-research-ai init-db` first."
+                "Required schema is absent. Run `stock-research-ai init-db` first."
             )
         columns = {column["name"] for column in inspector.get_columns(table.name)}
         if set(table.columns.keys()) - columns:
@@ -137,6 +144,7 @@ class SQLiteDatabase:
         self._sessions = sessions
         self._repository = SQLiteCompanyRepository(sessions)
         self.extractions = SQLiteExtractionRepository(sessions)
+        self.documents = SQLiteDocumentRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -325,3 +333,128 @@ async def _backfill_company(session: AsyncSession, row: _CompanyRow) -> None:
             raise ValueError(f"Provider identity {key!r} is already bound to another company")
         if existing is None:
             session.add(_SourceKeyRow(provider=key[0], source_key=key[1], company_id=row.id))
+
+
+class _DocumentRow(_Base):
+    __tablename__ = "documents"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class _DocumentExtractionRow(_Base):
+    __tablename__ = "document_extractions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
+    retrieval_id: Mapped[str] = mapped_column(ForeignKey("source_retrievals.id"), index=True)
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("raw_artifacts.id"))
+    created_at: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteDocumentRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+        self._evidence = SQLiteExtractionRepository(sessions)
+
+    async def bind_document(self, request: DocumentRequest) -> DocumentIdentity:
+        source_key = (
+            ("key", request.source_document_key)
+            if request.source_document_key
+            else ("url", request.url)
+        )
+        document_id = uuid5(
+            NAMESPACE_URL, json.dumps([str(request.company_id), request.provider, source_key])
+        )
+        async with self._sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            row = await session.get(_DocumentRow, str(document_id))
+            if row:
+                return DocumentIdentity.model_validate(row.payload)
+            identity = DocumentIdentity(
+                id=document_id,
+                company_id=request.company_id,
+                provider=request.provider,
+                source_document_key=request.source_document_key,
+                original_url=request.url,
+            )
+            session.add(
+                _DocumentRow(
+                    id=str(document_id),
+                    company_id=str(request.company_id),
+                    payload=identity.model_dump(mode="json"),
+                )
+            )
+            return identity
+
+    async def record_evidence(
+        self, retrieval: SourceRetrieval, artifact: RawArtifact | None
+    ) -> None:
+        await self._evidence.record_evidence(retrieval, artifact)
+
+    async def save_document(self, document: ParsedDocument) -> None:
+        async with self._sessions() as session, session.begin():
+            session.add(
+                _DocumentExtractionRow(
+                    id=str(document.version_id),
+                    document_id=str(document.identity.id),
+                    retrieval_id=str(document.retrieval.id),
+                    artifact_id=str(document.artifact.id) if document.artifact else None,
+                    created_at=document.created_at.isoformat(),
+                    payload=document.model_dump(mode="json"),
+                )
+            )
+
+    async def get_document(self, version_id: UUID) -> ParsedDocument | None:
+        async with self._sessions() as session:
+            row = await session.get(_DocumentExtractionRow, str(version_id))
+            return ParsedDocument.model_validate(row.payload) if row else None
+
+    async def document_history(self, document_id: UUID) -> tuple[ParsedDocument, ...]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(_DocumentExtractionRow)
+                .where(_DocumentExtractionRow.document_id == str(document_id))
+                .order_by(_DocumentExtractionRow.created_at, _DocumentExtractionRow.id)
+            )
+            return tuple(ParsedDocument.model_validate(row.payload) for row in rows)
+
+    async def search(
+        self, company_id: UUID, query: str, limit: int
+    ) -> tuple[DocumentSearchHit, ...]:
+        hits: list[DocumentSearchHit] = []
+        async with self._sessions() as session:
+            rows = await session.stream_scalars(
+                select(_DocumentExtractionRow)
+                .join(_DocumentRow)
+                .where(_DocumentRow.company_id == str(company_id))
+                .order_by(_DocumentExtractionRow.created_at.desc(), _DocumentExtractionRow.id)
+            )
+            async for row in rows:
+                document = ParsedDocument.model_validate(row.payload)
+                if document.artifact is None:
+                    continue
+                for chunk in document.chunks:
+                    if query.casefold() in chunk.text.casefold():
+                        section = next(
+                            s.label for s in document.sections if s.id == chunk.section_id
+                        )
+                        hits.append(
+                            DocumentSearchHit(
+                                document_id=document.identity.id,
+                                version_id=document.version_id,
+                                title=document.title,
+                                source_url=document.retrieval.final_url,
+                                retrieval_id=document.retrieval.id,
+                                artifact_id=document.artifact.id,
+                                artifact_sha256=document.artifact.content_sha256,
+                                page_id=chunk.page_id,
+                                page_number=chunk.page_number,
+                                chunk_id=chunk.id,
+                                section=section,
+                                text=chunk.text,
+                            )
+                        )
+                        if len(hits) >= limit:
+                            return tuple(hits)
+        return tuple(hits)

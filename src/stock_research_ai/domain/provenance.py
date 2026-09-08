@@ -33,6 +33,7 @@ class RawArtifact(BaseModel):
     size_bytes: int = Field(default=0, ge=0)
     content_type: str | None = None
     encoding: str = "utf-8"
+    complete: bool = True
     representation: Literal["decoded_http_body", "replay_bytes"] = "decoded_http_body"
 
 
@@ -74,6 +75,7 @@ class SourceRetrieval(BaseModel):
     http_status: int | None = None
     content_type: str | None = None
     encoding: str = "utf-8"
+    complete: bool = True
     error: str | None = None
     mode: Literal["http", "replay"] = "http"
     collector_version: str = "1"
@@ -83,6 +85,8 @@ class AcquiredPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     retrieval: SourceRetrieval
     content: bytes | None
+    source_type: str = "company_html"
+    file_extension: Literal["html", "pdf", "bin"] = "html"
 
 
 class SourceLink(BaseModel):

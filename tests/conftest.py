@@ -91,3 +91,86 @@ async def yesbank_result(tmp_path: Path, fixture_dir: Path):
         ),
         tmp_path / "export",
     )
+
+
+@pytest.fixture
+def make_document_pdf():
+    """Controlled test PDF bytes, generated locally without another PDF library."""
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    def make(
+        texts=("Management remarks\nThis is a controlled evidence page for offline proof.",),
+        scanned=False,
+        metadata=True,
+    ):
+        writer = PdfWriter()
+        for text in texts:
+            page = writer.add_blank_page(width=612, height=792)
+            font = DictionaryObject(
+                {
+                    NameObject("/Type"): NameObject("/Font"),
+                    NameObject("/Subtype"): NameObject("/Type1"),
+                    NameObject("/BaseFont"): NameObject("/Helvetica"),
+                }
+            )
+            page[NameObject("/Resources")] = DictionaryObject(
+                {
+                    NameObject("/Font"): DictionaryObject(
+                        {NameObject("/F1"): writer._add_object(font)}
+                    )
+                }
+            )
+            stream = DecodedStreamObject()
+            lines = []
+            for line in text.splitlines():
+                escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+                lines.append(f"({escaped}) Tj 0 -18 Td")
+            stream.set_data(("BT /F1 12 Tf 30 720 Td " + " ".join(lines) + " ET").encode())
+            page[NameObject("/Contents")] = writer._add_object(stream)
+            if scanned:
+                image = DecodedStreamObject()
+                image.set_data(b"\x00\x00\x00")
+                image.update(
+                    {
+                        NameObject("/Type"): NameObject("/XObject"),
+                        NameObject("/Subtype"): NameObject("/Image"),
+                        NameObject("/Width"): NumberObject(1),
+                        NameObject("/Height"): NumberObject(1),
+                        NameObject("/ColorSpace"): NameObject("/DeviceRGB"),
+                        NameObject("/BitsPerComponent"): NumberObject(8),
+                    }
+                )
+                page["/Resources"][NameObject("/XObject")] = DictionaryObject(
+                    {NameObject("/Im1"): writer._add_object(image)}
+                )
+        if not metadata:
+            writer.metadata = None
+        buffer = BytesIO()
+        writer.write(buffer)
+        return buffer.getvalue()
+
+    return make
+
+
+@pytest.fixture
+async def document_settings(tmp_path):
+    from stock_research_ai.bootstrap import initialize_database
+    from stock_research_ai.config import Settings
+
+    settings = Settings(
+        database_path=tmp_path / "documents.sqlite3", artifact_path=tmp_path / "artifacts"
+    )
+    await initialize_database(settings)
+    return settings
+
+
+@pytest.fixture
+async def document_company(document_settings):
+    from stock_research_ai.bootstrap import research_engine
+    from stock_research_ai.domain.company import CompanyRegistration
+
+    async with research_engine(document_settings) as engine:
+        return await engine.register_company(CompanyRegistration(name="YES BANK"))

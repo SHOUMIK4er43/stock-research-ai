@@ -3,6 +3,7 @@
 from typing import Protocol
 from uuid import UUID
 
+from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.company import Company, SourceCompanyIdentity
 from stock_research_ai.domain.documents import (
     DocumentIdentity,
@@ -154,3 +155,8 @@ class ContextRepository(Protocol):
     async def publication_history(self, identity_id: UUID) -> tuple[PublicationSnapshot, ...]: ...
     async def macro_history(self, series_id: UUID) -> tuple[MacroSnapshot, ...]: ...
     async def search_publications(self, query: str, limit: int) -> tuple[PublicationHit, ...]: ...
+
+
+class CalculationRepository(Protocol):
+    async def save_calculation(self, snapshot: CalculationSnapshot) -> None: ...
+    async def calculation_history(self, extraction_id: UUID) -> tuple[CalculationSnapshot, ...]: ...

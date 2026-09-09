@@ -6,7 +6,9 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from stock_research_ai.application.calculations import calculate
 from stock_research_ai.application.ports import (
+    CalculationRepository,
     CompanyRepository,
     ContextRepository,
     DocumentAcquirer,
@@ -24,6 +26,7 @@ from stock_research_ai.application.ports import (
     SourceAcquirer,
     SourceNormalizer,
 )
+from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
@@ -71,6 +74,13 @@ class MarketServices:
 
 
 @dataclass(frozen=True)
+class CalculationServices:
+    extractions: ExtractionRepository
+    repository: CalculationRepository
+    artifacts: RawArtifactStore
+
+
+@dataclass(frozen=True)
 class ContextServices:
     publications: PublicationAcquirer
     publication_parser: PublicationParser
@@ -88,12 +98,28 @@ class ResearchEngine:
         documents: DocumentServices | None = None,
         market: MarketServices | None = None,
         context: ContextServices | None = None,
+        calculations: CalculationServices | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
         self._documents = documents
         self._market = market
         self._context = context
+        self._calculations = calculations
+
+    async def calculate_financials(self, request: CalculationRequest) -> CalculationSnapshot:
+        services = self._calculations
+        if services is None:
+            raise RuntimeError("Calculation services not configured")
+        source = await services.extractions.get_extraction(request.extraction_id)
+        if source is None:
+            raise ValueError("Unknown extraction snapshot")
+        # Verify retained original evidence, without acquiring or normalizing new evidence.
+        for artifact in source.raw_artifacts:
+            await services.artifacts.read(artifact)
+        result = calculate(source, request)
+        await services.repository.save_calculation(result)
+        return result
 
     async def get_capabilities(self) -> Capabilities:
         return Capabilities()

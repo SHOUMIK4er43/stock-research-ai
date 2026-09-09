@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.company import (
     Company,
     ExchangeListing,
@@ -153,6 +154,7 @@ class SQLiteDatabase:
         self.documents = SQLiteDocumentRepository(sessions)
         self.market = SQLiteMarketRepository(sessions)
         self.context = SQLiteContextRepository(sessions)
+        self.calculations = SQLiteCalculationRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -653,3 +655,36 @@ class SQLiteContextRepository:
                         if len(hits) >= limit:
                             return tuple(hits)
         return tuple(hits)
+
+
+class _CalculationSnapshotRow(_Base):
+    __tablename__ = "calculation_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    extraction_id: Mapped[str] = mapped_column(ForeignKey("extractions.id"), index=True)
+    calculated_at: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteCalculationRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_calculation(self, snapshot: CalculationSnapshot) -> None:
+        async with self.sessions() as session, session.begin():
+            session.add(
+                _CalculationSnapshotRow(
+                    id=str(snapshot.id),
+                    extraction_id=str(snapshot.request.extraction_id),
+                    calculated_at=snapshot.calculated_at.isoformat(),
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def calculation_history(self, extraction_id: UUID) -> tuple[CalculationSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_CalculationSnapshotRow)
+                .where(_CalculationSnapshotRow.extraction_id == str(extraction_id))
+                .order_by(_CalculationSnapshotRow.calculated_at, _CalculationSnapshotRow.id)
+            )
+            return tuple(CalculationSnapshot.model_validate(row.payload) for row in rows)

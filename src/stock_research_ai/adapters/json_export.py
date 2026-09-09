@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from stock_research_ai.application.ports import RawArtifactStore
+from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
 from stock_research_ai.domain.macro import MacroSnapshot
@@ -175,3 +176,18 @@ async def export_context(
         else ("identity", "passages", "subjects", "attachments")
     ):
         write_json(output / "normalized" / f"{key}.json", data[key])
+
+
+def export_calculation(snapshot: CalculationSnapshot, output: Path) -> None:
+    check_output(output)
+    output.mkdir(parents=True)
+    write_json(output / "snapshot.json", snapshot.model_dump(mode="json"))
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "results": {
+                r.metric_id: {"status": r.status, "issues": r.issues} for r in snapshot.results
+            },
+        },
+    )

@@ -493,3 +493,17 @@ reuse `source_retrievals` and `raw_artifacts`; no subject/observation tables are
 news, RBI banking evidence and CPI use separate CLI requests, exports and offline fixtures.
 Live proof captures remain local and Git-ignored; redistribution permission is unresolved.
 See README for exact commands, verified source limitations and coverage semantics.
+
+## Part 4 first calculation slice
+
+`CalculationServices` injects the existing extraction reader and raw-artifact store plus a
+calculation repository Protocol. `ResearchEngine.calculate_financials` reads the pinned extraction,
+verifies original artifacts and invokes the pure application calculation module. Bootstrap and
+CLI use that same path. Formulas contain no provider, SQLAlchemy, HTTP or AI dependencies.
+
+`CalculationSnapshot` owns immutable versioned results and a digest of its source snapshot.
+Each result retains actual input observations, exact rational/Decimal arithmetic, formula/version,
+sector declaration and the caller-declared alignment policy/version. Units/scales are explicit;
+no currency conversion or fiscal dates are inferred. The two-point average-assets convention
+explicitly uses prior/current fiscal-year-end assets and current annual profit. It is not labelled
+ROA. Snapshot storage adds one table with an extraction foreign key; no per-metric tables.

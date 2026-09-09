@@ -22,3 +22,5 @@ build/
 /.local/
 /artifacts/
 /output/
+
+.env.save

@@ -8,6 +8,7 @@ from stock_research_ai.adapters.documents.pdf import PDFNormalizer
 from stock_research_ai.adapters.documents.source import DocumentSource
 from stock_research_ai.adapters.json_export import (
     check_output,
+    export_calculation,
     export_context,
     export_document,
     export_market,
@@ -24,6 +25,7 @@ from stock_research_ai.adapters.screener.normalizer import ScreenerNormalizer
 from stock_research_ai.adapters.screener.source import ScreenerSource
 from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
+    CalculationServices,
     ContextServices,
     DocumentServices,
     ExtractionServices,
@@ -38,6 +40,7 @@ from stock_research_ai.application.ports import (
     SourceAcquirer,
 )
 from stock_research_ai.config import Settings
+from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
 from stock_research_ai.domain.documents import DocumentRequest, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
@@ -231,3 +234,27 @@ async def ingest_macro(settings: Settings, request: MacroRequest, output: Path) 
             ),
         )
         return result
+
+
+async def calculate_financials(
+    settings: Settings, request: CalculationRequest, output: Path
+) -> CalculationSnapshot:
+    check_output(output)
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        engine = ResearchEngine(
+            database.repository,
+            calculations=CalculationServices(
+                database.extractions,
+                database.calculations,
+                FileRawArtifactStore(
+                    settings.artifact_path or settings.database_path.parent / "artifacts"
+                ),
+            ),
+        )
+        result = await engine.calculate_financials(request)
+        export_calculation(result, output)
+        return result
+    finally:
+        await database.close()

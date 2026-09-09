@@ -542,3 +542,88 @@ Git-ignored under `.local/` and `output/`; no rights to redistribute or commerci
 asserted. No new dependencies, generic news scraper, embeddings, event analysis, sentiment,
 recommendations or financial calculations were added. All pytest tests block network access
 and use temporary databases and artifact storage.
+
+## Part 4 first slice: deterministic financial calculations
+
+`calculate-financials` reads one explicitly selected Part 2 extraction, verifies its retained raw
+artifacts, calculates through `ResearchEngine`, and appends an immutable `calculation_snapshots`
+row. It does not fetch newer evidence or silently switch to the latest extraction. Run `init-db`
+on an existing database to add this table. Calculation JSON and per-result coverage are exported.
+
+Three version-1 formulas are implemented: source-metric growth, operating margin (non-financial
+companies only), and `AVERAGE_ASSETS_RETURN`. YESBANK's `Revenue` retains the source-reported
+meaning; it is not renamed total income or NII. Average-assets return is annual net profit divided
+by the average of prior/current fiscal-year-end total assets, multiplied by 100. It is not ROA.
+No market calculations, valuation, peer analytics, technical indicators or AI are included.
+
+A request explicitly supplies the company/extraction UUIDs, reporting scope, sector declaration,
+fiscal alignment policy and selected calculations. Example `request.json` (replace both UUIDs
+with values from the retained extraction):
+
+```json
+{
+  "company_id": "00000000-0000-0000-0000-000000000001",
+  "extraction_id": "00000000-0000-0000-0000-000000000002",
+  "reporting_scope": "consolidated",
+  "sector": {
+    "classification": "BANK",
+    "basis": "CALLER_DECLARED",
+    "declaration": "Caller classifies this YESBANK proof as BANK."
+  },
+  "alignment": {
+    "fiscal_year_end_month": 3,
+    "declaration": "Caller declares March year end and three-month quarters for this proof."
+  },
+  "calculations": [
+    {
+      "metric_id": "SOURCE_NET_PROFIT_QUARTERLY_YOY",
+      "formula_id": "SOURCE_METRIC_GROWTH",
+      "source_metric": "net_profit",
+      "current_period": "2025-06",
+      "comparison": "QUARTERLY_YOY"
+    },
+    {
+      "metric_id": "AVERAGE_ASSETS_RETURN",
+      "formula_id": "AVERAGE_ASSETS_RETURN",
+      "current_period": "2025-03",
+      "comparison": "ANNUAL_YOY"
+    }
+  ]
+}
+```
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database /path/to/research.sqlite3 init-db
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database /path/to/research.sqlite3 calculate-financials --request request.json --output output/calculation-run
+```
+
+Set `STOCK_RESEARCH_AI_ARTIFACT_PATH` when artifacts are not in the database directory's
+`artifacts/` subdirectory. Use a new output directory each time. Exit 0 means every requested
+calculation is available; 3 means at least one explicit unavailable/invalid result; 2 is a
+request or evidence-integrity error. Existing extraction and calculation snapshots are retained.
+
+The alignment policy (`DECLARED_FISCAL_PERIOD_KEYS`, version 1) matches source year/month keys,
+frequency and scope, never array positions. Annual comparisons use the same fiscal end one year
+apart; quarterly YoY uses twelve months, sequential uses three months. Known boundaries must
+agree with the policy. Unknown starts remain unknown and appear as a limitation. TTM, incompatible
+currencies/scopes, duplicate inputs and ambiguous metrics are not silently accepted. Unknown or
+other-financial sector conventions are currently unsupported. Caller declarations are recorded,
+not presented as verified source classifications.
+
+Each result records CALCULATION, snapshot/extraction IDs, formula and alignment versions, full
+input observations with their original IDs/provenance, classification provenance, issues and
+calculation time. No raw locator is fabricated for the calculation. Exact rational arithmetic
+uses standard-library `Fraction` on Decimal inputs (no floats), then records the pre-display
+Decimal at 50 significant digits, HALF_EVEN. Two-decimal display rounding is separate. For
+nonterminating values, the exact numerator/denominator preserves precision beyond finite Decimal
+representation. Negative-base growth uses the explicit absolute-denominator convention and a
+limitation; zero denominators never produce a value.
+
+Golden input and output files are separate under `tests/fixtures/calculations/`. The YESBANK
+quarterly YoY input for Jun-2024 was checked explicitly: **516**; Jun-2025 is **809**. Ten golden
+calculations cover YESBANK and INFY. Revised fixture bytes create a new extraction and calculation;
+old results remain reproducible. Full CLI tests block network access and use temporary storage.
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_calculations.py
+```

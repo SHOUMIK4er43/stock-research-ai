@@ -21,6 +21,9 @@ CalculationStatus = Literal[
     "INVALID_INPUT",
     "INVALID_PERIOD",
     "INCOMPATIBLE_SERIES",
+    "UNVERIFIED_METRIC_SEMANTICS",
+    "INCOMPATIBLE_PERIOD",
+    "INCOMPATIBLE_SCOPE",
 ]
 
 
@@ -54,7 +57,12 @@ class AlignmentPolicy(CalculationModel):
 
 class CalculationSpec(CalculationModel):
     metric_id: str = Field(min_length=1)
-    formula_id: Literal["SOURCE_METRIC_GROWTH", "OPERATING_MARGIN", "AVERAGE_ASSETS_RETURN"]
+    formula_id: Literal[
+        "SOURCE_METRIC_GROWTH",
+        "OPERATING_MARGIN",
+        "AVERAGE_ASSETS_RETURN",
+        "OPERATING_MARGIN_CHANGE_BPS",
+    ]
     source_metric: Literal["revenue", "sales", "net_profit", "eps", "deposits"] = "net_profit"
     current_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     comparison: Literal["ANNUAL_YOY", "QUARTERLY_YOY", "QUARTERLY_SEQUENTIAL"] = "ANNUAL_YOY"
@@ -103,7 +111,7 @@ class CalculationResult(CalculationModel):
     display_value: ExactDecimal | None = None
     exact_numerator: int | None = None
     exact_denominator: int | None = None
-    unit: Literal["PERCENT"] = "PERCENT"
+    unit: Literal["PERCENT", "BASIS_POINTS"] = "PERCENT"
     inputs: tuple[FinancialObservation, ...] = ()
     issues: tuple[str, ...] = ()
 

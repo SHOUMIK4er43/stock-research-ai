@@ -34,6 +34,7 @@ from stock_research_ai.domain.publications import (
     PublicationHit,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 
 
 class DatabaseNotReadyError(RuntimeError):
@@ -667,29 +668,49 @@ class _CalculationSnapshotRow(_Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+def decode_calculation(payload: dict[str, Any]) -> CalculationSnapshot | SectorKPIEvaluation:
+    if "payload_type" not in payload and payload.get("schema_version") == "4.1":
+        return CalculationSnapshot.model_validate(payload)
+    if payload.get("payload_version") != 1:
+        raise ValueError("Unsupported calculation payload version")
+    if payload.get("payload_type") == "financial_calculation":
+        return CalculationSnapshot.model_validate(payload["snapshot"])
+    if payload.get("payload_type") == "sector_kpi_evaluation":
+        return SectorKPIEvaluation.model_validate(payload["snapshot"])
+    raise ValueError("Unsupported calculation payload type")
+
+
 class SQLiteCalculationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
 
-    async def save_calculation(self, snapshot: CalculationSnapshot) -> None:
+    async def save_calculation(self, snapshot: CalculationSnapshot | SectorKPIEvaluation) -> None:
         async with self.sessions() as session, session.begin():
             session.add(
                 _CalculationSnapshotRow(
                     id=str(snapshot.id),
                     extraction_id=str(snapshot.request.extraction_id),
                     calculated_at=snapshot.calculated_at.isoformat(),
-                    payload=snapshot.model_dump(mode="json"),
+                    payload={
+                        "payload_type": "financial_calculation"
+                        if isinstance(snapshot, CalculationSnapshot)
+                        else "sector_kpi_evaluation",
+                        "payload_version": 1,
+                        "snapshot": snapshot.model_dump(mode="json"),
+                    },
                 )
             )
 
-    async def calculation_history(self, extraction_id: UUID) -> tuple[CalculationSnapshot, ...]:
+    async def calculation_history(
+        self, extraction_id: UUID
+    ) -> tuple[CalculationSnapshot | SectorKPIEvaluation, ...]:
         async with self.sessions() as session:
             rows = await session.scalars(
                 select(_CalculationSnapshotRow)
                 .where(_CalculationSnapshotRow.extraction_id == str(extraction_id))
                 .order_by(_CalculationSnapshotRow.calculated_at, _CalculationSnapshotRow.id)
             )
-            return tuple(CalculationSnapshot.model_validate(row.payload) for row in rows)
+            return tuple(decode_calculation(row.payload) for row in rows)
 
 
 class _MarketCalculationRow(_Base):

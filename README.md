@@ -726,3 +726,68 @@ UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --da
 ```
 
 RSI, MACD, other indicators, valuation, signals, recommendations and AI remain deferred.
+
+## Part 4C: sector KPI eligibility and calculations
+
+`calculate-sector-kpis` evaluates an explicitly selected, versioned profile against a pinned
+extraction. `BANK_PROFILE / 1` and `IT_SERVICES_PROFILE / 1` require caller/source classification;
+company names never determine eligibility. Every result retains the classification basis,
+optional effective dates, profile, KPI definition, exact semantic mapping, formula and alignment
+versions, actual input observations, exact fraction and 50-digit Decimal representation, separate
+two-place HALF_EVEN display, and structured issues.
+
+The first annual proof provides YESBANK deposit growth and `AVERAGE_ASSETS_RETURN` (not bank ROA).
+Growth of source-reported Revenue is exported as `GENERIC_SOURCE_METRIC`, outside the bank KPI
+inventory; it has no upgraded bank income meaning. INFY supports sales/net-profit/EPS growth,
+operating margin and operating-margin change in basis points. The BPS calculation subtracts the
+shared Part 4A unrounded margins and retains all four observations. Growth, margin and
+average-assets return dispatch to the existing Part 4A formula implementation/version.
+
+Only exact extractor metric identities, source sections, definition/version and provider bindings
+establish semantic mappings. NIM, CASA, PCR, credit cost, CRAR, CET1, bank ROA/ROE, advances growth,
+credit/deposit ratio, GNPA and NNPA have no calculated outputs in this slice. Source-displayed ratios
+remain evidence. An exact candidate `source:NIM` without an approved mapping is
+`UNVERIFIED_METRIC_SEMANTICS`; absent required evidence is `INSUFFICIENT_INPUT`. Wrong-profile KPIs
+are `NOT_APPLICABLE`; UNKNOWN classification carries `UNKNOWN_SECTOR_PROFILE`. Incompatible periods,
+scopes and mathematically invalid inputs retain distinct statuses. Part 4C zero denominators use
+`INVALID_INPUT` with `ZERO_PRIOR_VALUE` / `ZERO_DENOMINATOR`; Part 4A's status contract is unchanged.
+
+Run the complete reproducible offline proof in a new output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run python scripts/verify_sector_kpis.py --output output/part4c-proof-new
+```
+
+This executes the production CLI for initialization, retained HTML replay and KPI evaluation with
+network connections blocked. It creates YESBANK/INFY request JSON, SQLite and raw artifacts,
+exports and `golden-proof.json` comparing actual values with independently authored expectations.
+It never generates or updates expectations. Source-input and expected-output fixtures are separate
+in `tests/fixtures/sector_kpis/`. The completed review run is in Git-ignored `output/part4c-proof/`.
+
+To repeat a calculation against that retained proof:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/part4c-proof/proof.sqlite3 calculate-sector-kpis --request output/part4c-proof/YESBANK-request.json --output output/part4c-yesbank-rerun
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/part4c-proof/proof.sqlite3 calculate-sector-kpis --request output/part4c-proof/INFY-request.json --output output/part4c-infy-rerun
+```
+
+Set `STOCK_RESEARCH_AI_ARTIFACT_PATH` to the retained artifact directory when using a different
+location. Exit 0 means every requested KPI is AVAILABLE; exit 3 means the evaluation was exported
+with explicit unavailable/not-applicable outcomes (expected for these proof requests); exit 2 is
+an invalid request or evidence-loading/integrity error. Always inspect coverage and limitations.
+Exports include `profile.json`, `coverage.json`, and `normalized/` containing
+`calculation_snapshot.json`, `available_kpis.json`, `generic_financial.json`, `unavailable_kpis.json`
+and `not_applicable_kpis.json`.
+
+Persistence reuses `calculation_snapshots` without a table/schema migration. New rows use
+`payload_type` (`financial_calculation` or `sector_kpi_evaluation`) and `payload_version: 1` around
+the snapshot. Unwrapped Part 4A schema 4.1 rows still deserialize; historical rows are never rewritten.
+Tests prove profile, mapping, KPI definition, classification and source revisions preserve V1 history.
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_sector_kpis.py tests/test_calculations.py
+```
+
+Classification and fiscal alignment remain explicit declarations, not inferred facts. No new source
+acquisition, bank ratio conventions, peer analytics, indicators, valuation, recommendations or AI
+are added. See `docs/part4c-proof.md` for the numerical and negative proofs.

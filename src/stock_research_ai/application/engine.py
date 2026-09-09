@@ -25,9 +25,11 @@ from stock_research_ai.application.ports import (
     PublicationAcquirer,
     PublicationParser,
     RawArtifactStore,
+    SemanticResolver,
     SourceAcquirer,
     SourceNormalizer,
 )
+from stock_research_ai.application.sector_kpis import evaluate_kpis
 from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
@@ -44,6 +46,7 @@ from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 
 
 class Capabilities(BaseModel):
@@ -87,6 +90,14 @@ class MarketCalculationServices:
 
 
 @dataclass(frozen=True)
+class SectorKPIServices:
+    extractions: ExtractionRepository
+    repository: CalculationRepository
+    resolver: SemanticResolver
+    artifacts: RawArtifactStore
+
+
+@dataclass(frozen=True)
 class CalculationServices:
     extractions: ExtractionRepository
     repository: CalculationRepository
@@ -112,6 +123,7 @@ class ResearchEngine:
         market: MarketServices | None = None,
         context: ContextServices | None = None,
         calculations: CalculationServices | None = None,
+        sector_kpis: SectorKPIServices | None = None,
         market_calculations: MarketCalculationServices | None = None,
     ) -> None:
         self._repository = repository
@@ -120,6 +132,7 @@ class ResearchEngine:
         self._market = market
         self._context = context
         self._calculations = calculations
+        self._sector_kpis = sector_kpis
         self._market_calculations = market_calculations
 
     async def calculate_market(
@@ -142,6 +155,19 @@ class ResearchEngine:
                     await services.artifacts.read(artifact)
         result = calculate_market(source, request, benchmark)
         await services.repository.save_market_calculation(result)
+        return result
+
+    async def calculate_sector_kpis(self, request: SectorKPIRequest) -> SectorKPIEvaluation:
+        services = self._sector_kpis
+        if services is None:
+            raise RuntimeError("Sector KPI services not configured")
+        source = await services.extractions.get_extraction(request.extraction_id)
+        if source is None:
+            raise ValueError("Unknown extraction snapshot")
+        for artifact in source.raw_artifacts:
+            await services.artifacts.read(artifact)
+        result = evaluate_kpis(source, request, services.resolver)
+        await services.repository.save_calculation(result)
         return result
 
     async def calculate_financials(self, request: CalculationRequest) -> CalculationSnapshot:

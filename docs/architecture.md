@@ -523,3 +523,38 @@ digests, source identities and actual input observations, without fabricating ra
 Storage adds one append-only `market_calculation_snapshots` table with foreign keys to market
 extractions; the existing financial table's FK is unchanged. CLI, exports and SQLite follow the
 same existing application pipeline. No source acquisition or new dependencies are introduced.
+
+## Part 4C sector KPI slice
+
+`SectorKPIServices` supplies the neutral semantic resolver Protocol, extraction reader, raw store
+and existing calculation repository to `ResearchEngine.calculate_sector_kpis`. Bootstrap selects
+the Screener implementation. All Screener identities and exact source-definition checks live in
+`adapters/screener/semantic_mappings.py`; domain and application modules have no provider imports.
+
+`application/sector_kpis.py` performs profile eligibility, semantic verification and formula-specific
+period/scope gating. It passes original observations through the Part 4A evaluator; it contains no
+second growth, margin or average-assets formula. The new fixed BPS formula in the common evaluator
+calls its existing unrounded margin primitive twice, subtracts the exact fractions and multiplies
+by 100. The fraction is the exact value; the Decimal is its specified 50-digit representation.
+All four inputs and their mappings remain in the result. No derived KPI receives a fabricated raw
+locator; lineage ends through actual input observations and their preserved raw artifacts.
+
+Two immutable profile definitions identify BANK and explicit IT_SERVICES under NON_FINANCIAL.
+Evaluations embed profile, classification (basis/provenance/version/effective dates), KPI definition,
+semantic mapping and formula definitions plus the pinned source payload digest. Live registry changes
+cannot change their meaning. Generic source Revenue growth is explicitly outside sector KPI lists.
+Unimplemented bank ratio definitions retain eligibility and evidence gaps without executable formulas.
+The finite registry is fixed Python dispatch, with no executable formula strings or heuristic semantics.
+
+New financial and sector rows share the existing `calculation_snapshots` table/extraction foreign key.
+A version-1 envelope distinguishes `financial_calculation` and `sector_kpi_evaluation`; the latter
+contains schema `4C.1`. The decoder continues accepting original unwrapped schema `4.1` snapshots.
+There is no migration, historical rewrite or additional table. Tests insert a literal pre-4C payload,
+read mixed new history, and verify the old stored JSON bytes are unchanged. Revision tests persist
+V1 and V2 profile/mapping/definition/classification copies and a separate source-revision snapshot.
+
+CLI output is a profile evaluation with separate available sector KPIs, generic calculations,
+unavailable and not-applicable lists and coverage/issues. All calculations require explicit request
+selection; this first slice does not auto-enumerate every desired KPI or infer sector membership.
+Offline proofs use retained HTML, independent source/output goldens, temporary storage, blocked
+network subprocesses, and the same production CLI/ResearchEngine/persistence path used manually.

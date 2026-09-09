@@ -21,6 +21,7 @@ from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SemanticResolution
 
 
 class CompanyRepository(Protocol):
@@ -159,8 +160,12 @@ class ContextRepository(Protocol):
 
 
 class CalculationRepository(Protocol):
-    async def save_calculation(self, snapshot: CalculationSnapshot) -> None: ...
-    async def calculation_history(self, extraction_id: UUID) -> tuple[CalculationSnapshot, ...]: ...
+    async def save_calculation(
+        self, snapshot: CalculationSnapshot | SectorKPIEvaluation
+    ) -> None: ...
+    async def calculation_history(
+        self, extraction_id: UUID
+    ) -> tuple[CalculationSnapshot | SectorKPIEvaluation, ...]: ...
 
 
 class MarketCalculationRepository(Protocol):
@@ -168,3 +173,9 @@ class MarketCalculationRepository(Protocol):
     async def market_calculation_history(
         self, extraction_id: UUID
     ) -> tuple[MarketCalculationSnapshot, ...]: ...
+
+
+class SemanticResolver(Protocol):
+    def resolve(
+        self, source: CompanyExtractionResult, semantics: tuple[str, ...]
+    ) -> tuple[SemanticResolution, ...]: ...

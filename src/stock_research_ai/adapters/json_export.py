@@ -13,6 +13,7 @@ from stock_research_ai.domain.market_calculations import MarketCalculationSnapsh
 from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
+from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 
 SECTION_FILES = {
     "quarterly": Section.QUARTERLY,
@@ -215,3 +216,41 @@ def export_market_calculation(snapshot: MarketCalculationSnapshot, output: Path)
             ],
         },
     )
+
+
+def export_sector_kpis(snapshot: SectorKPIEvaluation, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    data = snapshot.model_dump(mode="json")
+    write_json(output / "normalized/calculation_snapshot.json", data)
+    write_json(output / "profile.json", data["profile"])
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "results": [
+                {
+                    "metric_id": r.definition.metric_id,
+                    "category": r.definition.category,
+                    "status": r.status,
+                    "issues": [i.model_dump(mode="json") for i in r.issues],
+                }
+                for r in snapshot.results
+            ],
+        },
+    )
+    for name, results in {
+        "available_kpis": [
+            r
+            for r in data["results"]
+            if r["status"] == "AVAILABLE" and r["definition"]["category"] == "SECTOR_KPI"
+        ],
+        "generic_financial": [
+            r for r in data["results"] if r["definition"]["category"] == "GENERIC_SOURCE_METRIC"
+        ],
+        "unavailable_kpis": [
+            r for r in data["results"] if r["status"] not in {"AVAILABLE", "NOT_APPLICABLE"}
+        ],
+        "not_applicable_kpis": [r for r in data["results"] if r["status"] == "NOT_APPLICABLE"],
+    }.items():
+        write_json(output / "normalized" / f"{name}.json", results)

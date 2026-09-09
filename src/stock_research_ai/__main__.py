@@ -82,13 +82,38 @@ def main(argv: Sequence[str] | None = None) -> None:
     market_calc = commands.add_parser("calculate-market", help="Calculate pinned market evidence")
     market_calc.add_argument("--request", type=Path, required=True)
     market_calc.add_argument("--output", type=Path, required=True)
+    sector = commands.add_parser(
+        "calculate-sector-kpis", help="Evaluate versioned sector KPI eligibility"
+    )
+    sector.add_argument("--request", type=Path, required=True)
+    sector.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "calculate-market":
+    if args.command == "calculate-sector-kpis":
+        from stock_research_ai.bootstrap import calculate_sector_kpis
+        from stock_research_ai.domain.sector_kpis import SectorKPIRequest
+
+        try:
+            evaluation = asyncio.run(
+                calculate_sector_kpis(
+                    settings,
+                    SectorKPIRequest.model_validate_json(args.request.read_text()),
+                    args.output,
+                )
+            )
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        available = sum(r.status == "AVAILABLE" for r in evaluation.results)
+        print(
+            f"{available}/{len(evaluation.results)} KPIs available; "
+            f"inspect eligibility and issues: {args.output}"
+        )
+        raise SystemExit(0 if available == len(evaluation.results) else 3)
+    elif args.command == "calculate-market":
         from stock_research_ai.bootstrap import calculate_market_snapshot
         from stock_research_ai.domain.market_calculations import MarketCalculationRequest
 

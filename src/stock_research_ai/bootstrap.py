@@ -14,6 +14,7 @@ from stock_research_ai.adapters.json_export import (
     export_market,
     export_market_calculation,
     export_result,
+    export_sector_kpis,
 )
 from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
 from stock_research_ai.adapters.kite.source import KiteSource
@@ -23,6 +24,7 @@ from stock_research_ai.adapters.publications.normalizer import PublicationNormal
 from stock_research_ai.adapters.publications.source import PublicationSource
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.screener.normalizer import ScreenerNormalizer
+from stock_research_ai.adapters.screener.semantic_mappings import ScreenerSemanticResolver
 from stock_research_ai.adapters.screener.source import ScreenerSource
 from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
@@ -33,6 +35,7 @@ from stock_research_ai.application.engine import (
     MarketCalculationServices,
     MarketServices,
     ResearchEngine,
+    SectorKPIServices,
 )
 from stock_research_ai.application.ports import (
     DocumentAcquirer,
@@ -55,6 +58,7 @@ from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 
 
 @asynccontextmanager
@@ -285,6 +289,31 @@ async def calculate_market_snapshot(
         )
         result = await engine.calculate_market(request)
         export_market_calculation(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def calculate_sector_kpis(
+    settings: Settings, request: SectorKPIRequest, output: Path
+) -> SectorKPIEvaluation:
+    check_output(output)
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        engine = ResearchEngine(
+            database.repository,
+            sector_kpis=SectorKPIServices(
+                database.extractions,
+                database.calculations,
+                ScreenerSemanticResolver(),
+                FileRawArtifactStore(
+                    settings.artifact_path or settings.database_path.parent / "artifacts"
+                ),
+            ),
+        )
+        result = await engine.calculate_sector_kpis(request)
+        export_sector_kpis(result, output)
         return result
     finally:
         await database.close()

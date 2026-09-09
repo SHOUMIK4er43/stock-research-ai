@@ -18,6 +18,13 @@ from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.financial import FinancialObservation
 
 FORMULAS = {
+    "OPERATING_MARGIN_CHANGE_BPS": FormulaDefinition(
+        id="OPERATING_MARGIN_CHANGE_BPS",
+        expression=(
+            "(current_unrounded_operating_margin_percent - "
+            "prior_unrounded_operating_margin_percent) * 100"
+        ),
+    ),
     "SOURCE_METRIC_GROWTH": FormulaDefinition(
         id="SOURCE_METRIC_GROWTH", expression="(current - prior) / abs(prior) * 100"
     ),
@@ -105,6 +112,9 @@ def calculate(source: CompanyExtractionResult, request: CalculationRequest) -> C
                     period=spec.current_period,
                     comparison=spec.comparison,
                     reporting_scope=request.reporting_scope,
+                    unit="BASIS_POINTS"
+                    if spec.formula_id == "OPERATING_MARGIN_CHANGE_BPS"
+                    else "PERCENT",
                     calculated_at=now,
                     status=status,
                     value=value,
@@ -146,6 +156,23 @@ def evaluate(
         or (spec.source_metric == "sales" and sector != "NON_FINANCIAL")
     ):
         raise InputFailure("NOT_APPLICABLE", "METRIC_SECTOR_MISMATCH")
+    if spec.formula_id == "OPERATING_MARGIN_CHANGE_BPS":
+        margin = spec.model_copy(update={"formula_id": "OPERATING_MARGIN"})
+        current = evaluate(source, request, margin, used, issues)
+        prior = evaluate(
+            source,
+            request,
+            margin.model_copy(
+                update={
+                    "current_period": previous(
+                        spec.current_period, 3 if spec.comparison == "QUARTERLY_SEQUENTIAL" else 12
+                    )
+                }
+            ),
+            used,
+            issues,
+        )
+        return (current - prior) * 100
     annual = spec.comparison == "ANNUAL_YOY"
     month = int(spec.current_period[5:])
     fiscal_end = request.alignment.fiscal_year_end_month

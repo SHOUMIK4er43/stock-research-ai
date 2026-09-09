@@ -627,3 +627,102 @@ old results remain reproducible. Full CLI tests block network access and use tem
 ```sh
 UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_calculations.py
 ```
+
+## Part 4B: deterministic market calculations
+
+The six supported metrics are `PRICE_RETURN`, `PRICE_CAGR`, `MAX_DRAWDOWN`,
+`REALIZED_VOLATILITY`, `SMA`, and `BENCHMARK_RELATIVE_RETURN`. These are calculations on
+retained source closes. They are not total, dividend-adjusted or shareholder returns.
+
+Mathematically valid outputs have `status: AVAILABLE`. Source adjustment uncertainty is a
+structured issue (`UNVERIFIED_ADJUSTMENT`, severity `LIMITATION`), alongside
+`adjustment_basis: UNKNOWN` and corporate-action coverage `UNAVAILABLE / NOT_PROVIDED_BY_SOURCE`.
+Zero, negative or non-finite required closes cannot produce a result; offending IDs are retained
+in error issues. Known invalid ordering, duplicates and identity/alignment conflicts are explicit
+failures rather than silently repaired inputs.
+
+Requests pin market extraction and instrument IDs. A benchmark requires both IDs explicitly;
+company names do not select benchmarks. The engine loads those snapshots, verifies raw artifacts,
+calculates, and appends a `market_calculation_snapshots` row. Primary/benchmark foreign keys refer
+to existing market extractions. Calculation output references retained evidence; it does not copy
+raw source payloads. Existing financial calculation storage and source goldens remain intact.
+
+Example request shape (replace UUIDs and dates with your retained evidence):
+
+```json
+{
+  "extraction_id": "00000000-0000-0000-0000-000000000001",
+  "instrument_id": "00000000-0000-0000-0000-000000000002",
+  "start_date": "2025-01-02",
+  "end_date": "2025-01-29",
+  "calculations": [
+    {"metric_id": "PRICE_RETURN"},
+    {"metric_id": "MAX_DRAWDOWN"},
+    {"metric_id": "REALIZED_VOLATILITY"},
+    {"metric_id": "SMA", "window": 20}
+  ]
+}
+```
+
+Add `benchmark_extraction_id` and `benchmark_instrument_id` for a
+`BENCHMARK_RELATIVE_RETURN` request. Optional `start_observation_id` and `end_observation_id`
+can pin the endpoint observations further; IDs must belong to that extraction and date.
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database /path/to/research.sqlite3 init-db
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database /path/to/research.sqlite3 calculate-market --request request.json --output output/market-calculation
+```
+
+Use a new or empty output directory and set `STOCK_RESEARCH_AI_ARTIFACT_PATH` if artifacts
+are outside the database's default `artifacts/` directory. Exports:
+`normalized/calculation_snapshot.json`, `normalized/results.json`, `coverage.json`.
+Exit 0 means all calculations are numerically AVAILABLE, including limited ones; inspect issues.
+Exit 3 indicates calculation failures, and 2 indicates request/source-loading/integrity errors.
+
+Versioned conventions:
+
+- `EXACT_DATES_ONLY_V1` requires both requested boundary dates; no nearest-date shifting.
+  Requested and actual selected dates are retained. SMA selects the last N observations inside
+  those exact boundaries; its actual start may therefore be later than the requested start.
+- `EXACT_SHARED_ENDPOINTS_V1` requires precisely matching company/benchmark endpoints.
+  Relative return is company price return minus benchmark price return, in percentage points.
+  Both component returns and all four endpoint observations are retained. It is not alpha.
+- `ACTUAL_DAYS_365_FIXED_V1` uses actual elapsed calendar days / 365, then
+  `(exp(ln(end/start)/elapsed_years)-1)*100`. This is our convention, not an exchange calendar.
+  Elapsed days and the working-precision elapsed-years value are retained without display rounding.
+- `ARITHMETIC_SAMPLE_252_V1` uses `r=close/prior_close-1`, arithmetic mean, sample variance
+  `sum((r-mean)^2)/(n-1)`, and `sqrt(variance)*sqrt(252)*100`. Minimum two returns/three closes.
+  Counts, factor 252, return/variance definitions and policy are recorded. No log returns.
+- Drawdown is positive loss magnitude `(1-close/running_peak)*100`. Equal worst drawdowns retain
+  the earliest episode. Recovery is the first later close **>=** the original peak. Unrecovered
+  episodes have null recovery fields plus `NOT_RECOVERED_WITHIN_WINDOW`; a non-declining series
+  has zero drawdown and no fabricated episode.
+- SMA windows count observations, not calendar days. Known missing required sessions block
+  window calculations. Without expected-session evidence, calculations can succeed with
+  `OBSERVED_SESSIONS_ONLY`; drawdown then describes only the observed path. Partial source coverage
+  is also retained as a limitation. No exchange calendar is inferred.
+
+Shared Part 4A primitives define formula versions, calculation statuses, precision and rounding;
+structured issues also live in `domain/calculations.py`. Market-specific contracts add instrument,
+window, annualization and episode metadata. Rational arithmetic uses exact fractions; Decimal
+ln/exp/sqrt use 70 working digits and results retain 50 digits with separate two-place HALF_EVEN
+display rounding. Irrational results are explicitly marked `DECIMAL_TRANSCENDENTAL` and cannot
+claim exact rational representation. No binary floating-point conversion is used.
+
+Synthetic inputs and independent outputs are separate in `tests/fixtures/market_calculations/`.
+The nine golden calculations include both benchmarks and a two-year CAGR window. Irrational
+outputs use independently specified absolute tolerances of `1e-40`; rational goldens use exact
+equality. No real Kite payloads were added. Automated tests remain offline with temporary storage.
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_market_calculations.py tests/test_market_calculation_pipeline.py
+```
+
+A local proof run and its five reusable request files are retained in Git-ignored
+`output/part4b-proof/`. For example, rerun its YESBANK calculation with:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/part4b-proof/proof.sqlite3 calculate-market --request output/part4b-proof/request-0.json --output output/part4b-rerun
+```
+
+RSI, MACD, other indicators, valuation, signals, recommendations and AI remain deferred.

@@ -13,6 +13,24 @@ class CalculationModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+CalculationStatus = Literal[
+    "AVAILABLE",
+    "INSUFFICIENT_INPUT",
+    "NOT_APPLICABLE",
+    "DIVISION_BY_ZERO",
+    "INVALID_INPUT",
+    "INVALID_PERIOD",
+    "INCOMPATIBLE_SERIES",
+]
+
+
+class CalculationIssue(CalculationModel):
+    code: str
+    severity: Literal["LIMITATION", "ERROR"]
+    observation_ids: tuple[UUID, ...] = ()
+    message: str
+
+
 class SectorDeclaration(CalculationModel):
     classification: Literal["BANK", "OTHER_FINANCIAL", "NON_FINANCIAL", "UNKNOWN"]
     basis: Literal["CALLER_DECLARED", "VERIFIED_MAPPING"]
@@ -62,6 +80,7 @@ class FormulaDefinition(CalculationModel):
     version: Literal["1"] = "1"
     expression: str
     precision: Literal[50] = 50
+    working_precision: int = Field(default=50, ge=50)
     rounding: Literal["ROUND_HALF_EVEN"] = "ROUND_HALF_EVEN"
     display_places: Literal[2] = 2
 
@@ -79,9 +98,7 @@ class CalculationResult(CalculationModel):
     comparison: str
     reporting_scope: ReportingScope
     calculated_at: AwareDatetime
-    status: Literal[
-        "AVAILABLE", "INSUFFICIENT_INPUT", "NOT_APPLICABLE", "DIVISION_BY_ZERO", "INVALID_INPUT"
-    ]
+    status: CalculationStatus
     value: ExactDecimal | None = None
     display_value: ExactDecimal | None = None
     exact_numerator: int | None = None

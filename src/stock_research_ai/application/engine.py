@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict
 
 from stock_research_ai.application.calculations import calculate
+from stock_research_ai.application.market_calculations import calculate_market
 from stock_research_ai.application.ports import (
     CalculationRepository,
     CompanyRepository,
@@ -17,6 +18,7 @@ from stock_research_ai.application.ports import (
     ExtractionRepository,
     MacroAcquirer,
     MacroParser,
+    MarketCalculationRepository,
     MarketNormalizer,
     MarketRepository,
     MarketSource,
@@ -32,6 +34,10 @@ from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHi
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.macro import MacroObservation, MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketRequest
+from stock_research_ai.domain.market_calculations import (
+    MarketCalculationRequest,
+    MarketCalculationSnapshot,
+)
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 from stock_research_ai.domain.publications import (
     PublicationHit,
@@ -74,6 +80,13 @@ class MarketServices:
 
 
 @dataclass(frozen=True)
+class MarketCalculationServices:
+    market: MarketRepository
+    repository: MarketCalculationRepository
+    artifacts: RawArtifactStore
+
+
+@dataclass(frozen=True)
 class CalculationServices:
     extractions: ExtractionRepository
     repository: CalculationRepository
@@ -99,6 +112,7 @@ class ResearchEngine:
         market: MarketServices | None = None,
         context: ContextServices | None = None,
         calculations: CalculationServices | None = None,
+        market_calculations: MarketCalculationServices | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
@@ -106,6 +120,29 @@ class ResearchEngine:
         self._market = market
         self._context = context
         self._calculations = calculations
+        self._market_calculations = market_calculations
+
+    async def calculate_market(
+        self, request: MarketCalculationRequest
+    ) -> MarketCalculationSnapshot:
+        services = self._market_calculations
+        if services is None:
+            raise RuntimeError("Market calculation services not configured")
+        source = await services.market.get_market(request.extraction_id)
+        benchmark = (
+            await services.market.get_market(request.benchmark_extraction_id)
+            if request.benchmark_extraction_id
+            else None
+        )
+        if source is None or (request.benchmark_extraction_id and benchmark is None):
+            raise ValueError("Unknown market extraction")
+        for snapshot in (source, benchmark):
+            if snapshot:
+                for artifact in snapshot.raw_artifacts:
+                    await services.artifacts.read(artifact)
+        result = calculate_market(source, request, benchmark)
+        await services.repository.save_market_calculation(result)
+        return result
 
     async def calculate_financials(self, request: CalculationRequest) -> CalculationSnapshot:
         services = self._calculations

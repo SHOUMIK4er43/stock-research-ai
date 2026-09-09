@@ -14,6 +14,7 @@ from stock_research_ai.domain.documents import (
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketInstrument, MarketRequest
+from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 from stock_research_ai.domain.publications import (
     PublicationHit,
@@ -160,3 +161,10 @@ class ContextRepository(Protocol):
 class CalculationRepository(Protocol):
     async def save_calculation(self, snapshot: CalculationSnapshot) -> None: ...
     async def calculation_history(self, extraction_id: UUID) -> tuple[CalculationSnapshot, ...]: ...
+
+
+class MarketCalculationRepository(Protocol):
+    async def save_market_calculation(self, snapshot: MarketCalculationSnapshot) -> None: ...
+    async def market_calculation_history(
+        self, extraction_id: UUID
+    ) -> tuple[MarketCalculationSnapshot, ...]: ...

@@ -9,6 +9,7 @@ from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
 from stock_research_ai.domain.macro import MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult
+from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
 from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
@@ -189,5 +190,28 @@ def export_calculation(snapshot: CalculationSnapshot, output: Path) -> None:
             "results": {
                 r.metric_id: {"status": r.status, "issues": r.issues} for r in snapshot.results
             },
+        },
+    )
+
+
+def export_market_calculation(snapshot: MarketCalculationSnapshot, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    data = snapshot.model_dump(mode="json")
+    write_json(output / "normalized/calculation_snapshot.json", data)
+    write_json(output / "normalized/results.json", data["results"])
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "results": [
+                {
+                    "metric_id": r.metric_id,
+                    "window": r.window,
+                    "status": r.status,
+                    "issues": [i.model_dump(mode="json") for i in r.issues],
+                }
+                for r in snapshot.results
+            ],
         },
     )

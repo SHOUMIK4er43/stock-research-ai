@@ -507,3 +507,19 @@ sector declaration and the caller-declared alignment policy/version. Units/scale
 no currency conversion or fiscal dates are inferred. The two-point average-assets convention
 explicitly uses prior/current fiscal-year-end assets and current annual profit. It is not labelled
 ROA. Snapshot storage adds one table with an extraction foreign key; no per-metric tables.
+
+## Part 4B market calculation slice
+
+The derived-evidence conventions remain shared with Part 4A: `CalculationModel`,
+`FormulaDefinition`, `CalculationStatus` and `CalculationIssue` live in the common calculation
+module. Market-specific result/snapshot contracts add typed market inputs, instrument identities,
+exact date policies, annualization metadata and drawdown episodes. A successful numerical result
+can carry economic interpretation limitations; adjustment uncertainty does not become a numeric
+failure. Financial snapshots keep their existing compatible fields and validation.
+
+`ResearchEngine.calculate_market` loads pinned primary/benchmark market snapshots and verifies
+retained raw artifacts before invoking a pure calculation module. Results retain source snapshot
+digests, source identities and actual input observations, without fabricating raw provenance.
+Storage adds one append-only `market_calculation_snapshots` table with foreign keys to market
+extractions; the existing financial table's FK is unchanged. CLI, exports and SQLite follow the
+same existing application pipeline. No source acquisition or new dependencies are introduced.

@@ -12,6 +12,7 @@ from stock_research_ai.adapters.json_export import (
     export_context,
     export_document,
     export_market,
+    export_market_calculation,
     export_result,
 )
 from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
@@ -29,6 +30,7 @@ from stock_research_ai.application.engine import (
     ContextServices,
     DocumentServices,
     ExtractionServices,
+    MarketCalculationServices,
     MarketServices,
     ResearchEngine,
 )
@@ -45,6 +47,10 @@ from stock_research_ai.domain.documents import DocumentRequest, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketRequest
+from stock_research_ai.domain.market_calculations import (
+    MarketCalculationRequest,
+    MarketCalculationSnapshot,
+)
 from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
@@ -255,6 +261,30 @@ async def calculate_financials(
         )
         result = await engine.calculate_financials(request)
         export_calculation(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def calculate_market_snapshot(
+    settings: Settings, request: MarketCalculationRequest, output: Path
+) -> MarketCalculationSnapshot:
+    check_output(output)
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        engine = ResearchEngine(
+            database.repository,
+            market_calculations=MarketCalculationServices(
+                database.market,
+                database.market_calculations,
+                FileRawArtifactStore(
+                    settings.artifact_path or settings.database_path.parent / "artifacts"
+                ),
+            ),
+        )
+        result = await engine.calculate_market(request)
+        export_market_calculation(result, output)
         return result
     finally:
         await database.close()

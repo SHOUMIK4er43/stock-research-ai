@@ -28,6 +28,7 @@ from stock_research_ai.domain.documents import (
 from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.macro import MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult
+from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
 from stock_research_ai.domain.provenance import RawArtifact, SourceRetrieval
 from stock_research_ai.domain.publications import (
     PublicationHit,
@@ -155,6 +156,7 @@ class SQLiteDatabase:
         self.market = SQLiteMarketRepository(sessions)
         self.context = SQLiteContextRepository(sessions)
         self.calculations = SQLiteCalculationRepository(sessions)
+        self.market_calculations = SQLiteMarketCalculationRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -688,3 +690,42 @@ class SQLiteCalculationRepository:
                 .order_by(_CalculationSnapshotRow.calculated_at, _CalculationSnapshotRow.id)
             )
             return tuple(CalculationSnapshot.model_validate(row.payload) for row in rows)
+
+
+class _MarketCalculationRow(_Base):
+    __tablename__ = "market_calculation_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    extraction_id: Mapped[str] = mapped_column(ForeignKey("market_extractions.id"), index=True)
+    benchmark_extraction_id: Mapped[str | None] = mapped_column(ForeignKey("market_extractions.id"))
+    calculated_at: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteMarketCalculationRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_market_calculation(self, snapshot: MarketCalculationSnapshot) -> None:
+        async with self.sessions() as session, session.begin():
+            session.add(
+                _MarketCalculationRow(
+                    id=str(snapshot.id),
+                    extraction_id=str(snapshot.request.extraction_id),
+                    benchmark_extraction_id=str(snapshot.request.benchmark_extraction_id)
+                    if snapshot.request.benchmark_extraction_id
+                    else None,
+                    calculated_at=snapshot.calculated_at.isoformat(),
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def market_calculation_history(
+        self, extraction_id: UUID
+    ) -> tuple[MarketCalculationSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_MarketCalculationRow)
+                .where(_MarketCalculationRow.extraction_id == str(extraction_id))
+                .order_by(_MarketCalculationRow.calculated_at, _MarketCalculationRow.id)
+            )
+            return tuple(MarketCalculationSnapshot.model_validate(row.payload) for row in rows)

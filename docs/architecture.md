@@ -558,3 +558,43 @@ unavailable and not-applicable lists and coverage/issues. All calculations requi
 selection; this first slice does not auto-enumerate every desired KPI or infer sector membership.
 Offline proofs use retained HTML, independent source/output goldens, temporary storage, blocked
 network subprocesses, and the same production CLI/ResearchEngine/persistence path used manually.
+
+## Part 4D financial-pattern slice
+
+`PatternRequest` pins one extraction, explicit classification/profile and annual endpoint, exact
+pattern versions and AUTO_CREATE or PINNED prerequisite mode. `ResearchEngine.evaluate_patterns`
+verifies original raw artifacts, then delegates to the fixed six-rule application registry. No
+provider imports, acquisition, text interpretation or speculative semantics appear in that registry.
+
+Source input selection uses the Part 4C exact semantic resolver with one narrow CFO binding added.
+The existing Part 4A monetary evidence checks are extracted into `take_observation` and reused for
+cash-flow duration, scope, currency, value-state and raw-evidence validation. `profile_issue` shares
+Part 4C classification eligibility; each pattern's immutable definition restricts permitted profiles.
+Missing intermediate fiscal years cannot be skipped. Negative CFO and nonzero negative profit remain
+valid where permitted; negative-profit ratios retain an interpretation limitation.
+
+CFO/net-profit is implemented once in the common calculation module. Sector margin and deposit
+prerequisites call the existing ResearchEngine financial/sector methods. An evaluation may need
+multiple prerequisite snapshots: references identify snapshot plus metric, formula/version, source,
+profile where relevant and payload SHA. AUTO_CREATE records created IDs; PINNED requires exact roles
+and never substitutes latest or silently creates evidence. References are checked for unique metric,
+company, extraction digest, scope, period, classification/alignment and input-observation equality.
+
+`PatternDefinition` embeds rule/version, required semantics/calculations, annual window, scope policy,
+conditions, interpretation boundary and optional threshold policy. `PatternFinding` holds actual
+observations/mappings, exact numeric quantities, calculation references, status/outcome and neutral
+statements. `PatternSnapshot` adds request/profile, execution metadata, source digest and evaluation
+time. Immutable copies make prior pattern, threshold and mapping versions reconstructible. Findings
+have no fabricated raw-source locator; lineage terminates through actual input observations.
+
+The dedicated append-only `pattern_snapshots` table has UUID, extraction FK, timestamp, schema
+version and JSON. All prerequisite references are validated against stored calculation payloads in
+the insertion transaction. There is deliberately no singular calculation FK, no association table,
+no historical row rewrite and no new migration framework. Existing calculation formats remain
+compatible. Prerequisite writes occur before the final pattern append, not in one global transaction.
+
+Evidence scope remains the existing retained HTML. CFO source meaning is narrow; NPA/NNPA period
+contracts are not altered. All automated tests use temporary databases/storage and blocked network;
+the standalone proof script also blocks network in real CLI subprocesses. Golden inputs and findings
+are separate authored artifacts. Exact rational comparisons precede display rounding, including the
+-50-bps threshold boundary and the two unrounded deposit-growth prerequisites.

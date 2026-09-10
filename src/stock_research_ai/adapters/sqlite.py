@@ -29,6 +29,7 @@ from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.macro import MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult
 from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
+from stock_research_ai.domain.patterns import PatternSnapshot
 from stock_research_ai.domain.provenance import RawArtifact, SourceRetrieval
 from stock_research_ai.domain.publications import (
     PublicationHit,
@@ -157,6 +158,7 @@ class SQLiteDatabase:
         self.market = SQLiteMarketRepository(sessions)
         self.context = SQLiteContextRepository(sessions)
         self.calculations = SQLiteCalculationRepository(sessions)
+        self.patterns = SQLitePatternRepository(sessions)
         self.market_calculations = SQLiteMarketCalculationRepository(sessions)
 
     @property
@@ -684,6 +686,13 @@ class SQLiteCalculationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
 
+    async def get_calculation(
+        self, snapshot_id: UUID
+    ) -> CalculationSnapshot | SectorKPIEvaluation | None:
+        async with self.sessions() as session:
+            row = await session.get(_CalculationSnapshotRow, str(snapshot_id))
+            return decode_calculation(row.payload) if row else None
+
     async def save_calculation(self, snapshot: CalculationSnapshot | SectorKPIEvaluation) -> None:
         async with self.sessions() as session, session.begin():
             session.add(
@@ -750,3 +759,61 @@ class SQLiteMarketCalculationRepository:
                 .order_by(_MarketCalculationRow.calculated_at, _MarketCalculationRow.id)
             )
             return tuple(MarketCalculationSnapshot.model_validate(row.payload) for row in rows)
+
+
+class _PatternSnapshotRow(_Base):
+    __tablename__ = "pattern_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    extraction_id: Mapped[str] = mapped_column(ForeignKey("extractions.id"), index=True)
+    evaluated_at: Mapped[str] = mapped_column(String)
+    schema_version: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLitePatternRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_pattern(self, snapshot: PatternSnapshot) -> None:
+        # Validate every referenced immutable payload before the append, in this transaction.
+        from stock_research_ai.application.patterns import digest, validate_calculation
+
+        async with self.sessions() as session, session.begin():
+            source_row = await session.get(_ExtractionRow, str(snapshot.request.extraction_id))
+            if source_row is None:
+                raise ValueError("Pattern extraction missing")
+            source = CompanyExtractionResult.model_validate(source_row.payload)
+            if digest(source) != snapshot.source_payload_sha256:
+                raise ValueError("Pattern source digest mismatch")
+            for finding in snapshot.findings:
+                for ref in finding.calculations:
+                    row = await session.get(_CalculationSnapshotRow, str(ref.snapshot_id))
+                    if row is None:
+                        raise ValueError("Pattern calculation reference missing")
+                    calculation = decode_calculation(row.payload)
+                    metric, key = ref.role.split(":")
+                    if (
+                        validate_calculation(
+                            calculation, snapshot.request, metric, key, ref.metric_id, source
+                        )
+                        != ref
+                    ):
+                        raise ValueError("Pattern calculation reference mismatch")
+            session.add(
+                _PatternSnapshotRow(
+                    id=str(snapshot.id),
+                    extraction_id=str(snapshot.request.extraction_id),
+                    evaluated_at=snapshot.evaluated_at.isoformat(),
+                    schema_version=snapshot.schema_version,
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def pattern_history(self, extraction_id: UUID) -> tuple[PatternSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_PatternSnapshotRow)
+                .where(_PatternSnapshotRow.extraction_id == str(extraction_id))
+                .order_by(_PatternSnapshotRow.evaluated_at, _PatternSnapshotRow.id)
+            )
+            return tuple(PatternSnapshot.model_validate(row.payload) for row in rows)

@@ -13,6 +13,7 @@ from stock_research_ai.adapters.json_export import (
     export_document,
     export_market,
     export_market_calculation,
+    export_patterns,
     export_result,
     export_sector_kpis,
 )
@@ -54,6 +55,7 @@ from stock_research_ai.domain.market_calculations import (
     MarketCalculationRequest,
     MarketCalculationSnapshot,
 )
+from stock_research_ai.domain.patterns import PatternRequest, PatternSnapshot
 from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
@@ -314,6 +316,31 @@ async def calculate_sector_kpis(
         )
         result = await engine.calculate_sector_kpis(request)
         export_sector_kpis(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def evaluate_patterns(
+    settings: Settings, request: PatternRequest, output: Path
+) -> PatternSnapshot:
+    check_output(output)
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        store = FileRawArtifactStore(
+            settings.artifact_path or settings.database_path.parent / "artifacts"
+        )
+        engine = ResearchEngine(
+            database.repository,
+            calculations=CalculationServices(database.extractions, database.calculations, store),
+            sector_kpis=SectorKPIServices(
+                database.extractions, database.calculations, ScreenerSemanticResolver(), store
+            ),
+            patterns=database.patterns,
+        )
+        result = await engine.evaluate_patterns(request)
+        export_patterns(result, output)
         return result
     finally:
         await database.close()

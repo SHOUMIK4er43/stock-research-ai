@@ -15,6 +15,7 @@ from stock_research_ai.domain.extraction import CompanyExtractionResult, Extract
 from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketInstrument, MarketRequest
 from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
+from stock_research_ai.domain.patterns import PatternSnapshot
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 from stock_research_ai.domain.publications import (
     PublicationHit,
@@ -160,6 +161,10 @@ class ContextRepository(Protocol):
 
 
 class CalculationRepository(Protocol):
+    async def get_calculation(
+        self, snapshot_id: UUID
+    ) -> CalculationSnapshot | SectorKPIEvaluation | None: ...
+
     async def save_calculation(
         self, snapshot: CalculationSnapshot | SectorKPIEvaluation
     ) -> None: ...
@@ -179,3 +184,8 @@ class SemanticResolver(Protocol):
     def resolve(
         self, source: CompanyExtractionResult, semantics: tuple[str, ...]
     ) -> tuple[SemanticResolution, ...]: ...
+
+
+class PatternRepository(Protocol):
+    async def save_pattern(self, snapshot: PatternSnapshot) -> None: ...
+    async def pattern_history(self, extraction_id: UUID) -> tuple[PatternSnapshot, ...]: ...

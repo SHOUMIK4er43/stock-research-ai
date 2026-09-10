@@ -62,6 +62,7 @@ class CalculationSpec(CalculationModel):
         "OPERATING_MARGIN",
         "AVERAGE_ASSETS_RETURN",
         "OPERATING_MARGIN_CHANGE_BPS",
+        "CFO_TO_NET_PROFIT",
     ]
     source_metric: Literal["revenue", "sales", "net_profit", "eps", "deposits"] = "net_profit"
     current_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -111,7 +112,7 @@ class CalculationResult(CalculationModel):
     display_value: ExactDecimal | None = None
     exact_numerator: int | None = None
     exact_denominator: int | None = None
-    unit: Literal["PERCENT", "BASIS_POINTS"] = "PERCENT"
+    unit: Literal["PERCENT", "BASIS_POINTS", "RATIO_X"] = "PERCENT"
     inputs: tuple[FinancialObservation, ...] = ()
     issues: tuple[str, ...] = ()
 

@@ -10,6 +10,7 @@ from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
 from stock_research_ai.domain.macro import MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult
 from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
+from stock_research_ai.domain.patterns import PatternSnapshot
 from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
@@ -254,3 +255,37 @@ def export_sector_kpis(snapshot: SectorKPIEvaluation, output: Path) -> None:
         "not_applicable_kpis": [r for r in data["results"] if r["status"] == "NOT_APPLICABLE"],
     }.items():
         write_json(output / "normalized" / f"{name}.json", results)
+
+
+def export_patterns(snapshot: PatternSnapshot, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    write_json(output / "normalized/pattern_snapshot.json", snapshot.model_dump(mode="json"))
+    findings = [f.model_dump(mode="json") for f in snapshot.findings]
+    groups = {
+        "findings": findings,
+        "triggered": [f for f in findings if f["rule_outcome"] == "TRIGGERED"],
+        "not_triggered": [f for f in findings if f["rule_outcome"] == "NOT_TRIGGERED"],
+        "observations": [f for f in findings if f["rule_outcome"] == "OBSERVATION_ONLY"],
+        "unavailable": [
+            f for f in findings if f["evaluation_status"] not in {"AVAILABLE", "NOT_APPLICABLE"}
+        ],
+        "not_applicable": [f for f in findings if f["evaluation_status"] == "NOT_APPLICABLE"],
+    }
+    for name, records in groups.items():
+        write_json(output / "normalized" / f"{name}.json", records)
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "findings": [
+                {
+                    "pattern_id": f.definition.pattern_id,
+                    "evaluation_status": f.evaluation_status,
+                    "rule_outcome": f.rule_outcome,
+                    "issues": [i.model_dump(mode="json") for i in f.issues],
+                }
+                for f in snapshot.findings
+            ],
+        },
+    )

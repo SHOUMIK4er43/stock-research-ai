@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from stock_research_ai.application import patterns as pattern_engine
 from stock_research_ai.application.calculations import calculate
 from stock_research_ai.application.market_calculations import calculate_market
 from stock_research_ai.application.ports import (
@@ -22,6 +23,7 @@ from stock_research_ai.application.ports import (
     MarketNormalizer,
     MarketRepository,
     MarketSource,
+    PatternRepository,
     PublicationAcquirer,
     PublicationParser,
     RawArtifactStore,
@@ -40,6 +42,7 @@ from stock_research_ai.domain.market_calculations import (
     MarketCalculationRequest,
     MarketCalculationSnapshot,
 )
+from stock_research_ai.domain.patterns import PatternRequest, PatternSnapshot
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
 from stock_research_ai.domain.publications import (
     PublicationHit,
@@ -125,6 +128,7 @@ class ResearchEngine:
         calculations: CalculationServices | None = None,
         sector_kpis: SectorKPIServices | None = None,
         market_calculations: MarketCalculationServices | None = None,
+        patterns: PatternRepository | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
@@ -134,6 +138,7 @@ class ResearchEngine:
         self._calculations = calculations
         self._sector_kpis = sector_kpis
         self._market_calculations = market_calculations
+        self._patterns = patterns
 
     async def calculate_market(
         self, request: MarketCalculationRequest
@@ -155,6 +160,21 @@ class ResearchEngine:
                     await services.artifacts.read(artifact)
         result = calculate_market(source, request, benchmark)
         await services.repository.save_market_calculation(result)
+        return result
+
+    async def evaluate_patterns(self, request: PatternRequest) -> PatternSnapshot:
+        services = self._sector_kpis
+        if services is None or self._patterns is None:
+            raise RuntimeError("Pattern services not configured")
+        source = await services.extractions.get_extraction(request.extraction_id)
+        if source is None:
+            raise ValueError("Unknown pattern extraction")
+        for artifact in source.raw_artifacts:
+            await services.artifacts.read(artifact)
+        result = await pattern_engine.evaluate(
+            source, request, services.resolver, services.repository, self
+        )
+        await self._patterns.save_pattern(result)
         return result
 
     async def calculate_sector_kpis(self, request: SectorKPIRequest) -> SectorKPIEvaluation:

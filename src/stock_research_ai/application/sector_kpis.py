@@ -176,10 +176,9 @@ def evaluate_kpis(
             status="AVAILABLE",
         )
         try:
-            if request.classification.classification == "UNKNOWN":
-                raise GateFailure("NOT_APPLICABLE", "UNKNOWN_SECTOR_PROFILE")
-            if request.classification.classification != profile.classification:
-                raise GateFailure("NOT_APPLICABLE", "PROFILE_CLASSIFICATION_MISMATCH")
+            issue = profile_issue(request.classification.classification, profile)
+            if issue:
+                raise GateFailure("NOT_APPLICABLE", issue)
             if profile.profile_id not in kpi.applicable_profiles or (
                 kpi.category == "SECTOR_KPI" and metric not in profile.supported_kpis
             ):
@@ -352,3 +351,12 @@ def evaluate_kpis(
         calculated_at=now,
         results=tuple(results),
     )
+
+
+def profile_issue(classification: str, profile: SectorProfile | None) -> str | None:
+    """Shared classification eligibility, with no provider or company-name inference."""
+    if classification == "UNKNOWN" or profile is None:
+        return "UNKNOWN_SECTOR_PROFILE"
+    if classification != profile.classification:
+        return "PROFILE_CLASSIFICATION_MISMATCH"
+    return None

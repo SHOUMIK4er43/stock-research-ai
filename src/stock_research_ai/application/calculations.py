@@ -18,6 +18,13 @@ from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.financial import FinancialObservation
 
 FORMULAS = {
+    "CFO_TO_NET_PROFIT": FormulaDefinition(
+        id="CFO_TO_NET_PROFIT", expression="source_reported_cfo / net_profit"
+    ),
+    "PERCENTAGE_POINT_DIFFERENCE": FormulaDefinition(
+        id="PERCENTAGE_POINT_DIFFERENCE",
+        expression="current_unrounded_percent - previous_unrounded_percent",
+    ),
     "OPERATING_MARGIN_CHANGE_BPS": FormulaDefinition(
         id="OPERATING_MARGIN_CHANGE_BPS",
         expression=(
@@ -114,6 +121,8 @@ def calculate(source: CompanyExtractionResult, request: CalculationRequest) -> C
                     reporting_scope=request.reporting_scope,
                     unit="BASIS_POINTS"
                     if spec.formula_id == "OPERATING_MARGIN_CHANGE_BPS"
+                    else "RATIO_X"
+                    if spec.formula_id == "CFO_TO_NET_PROFIT"
                     else "PERCENT",
                     calculated_at=now,
                     status=status,
@@ -185,56 +194,22 @@ def evaluate(
 
     def take(metric: str, key: str, instant: bool = False) -> Fraction:
         rows = source.balance_sheet if instant else financials
-        candidates = [o for o in rows if o.metric_id == metric and period_key(o) == key]
-        if not candidates:
-            raise InputFailure("INSUFFICIENT_INPUT", f"MISSING_OBSERVATION:{metric}:{key}")
-        if len(candidates) != 1:
-            raise InputFailure("INVALID_INPUT", f"DUPLICATE_OBSERVATION:{metric}:{key}")
-        o = candidates[0]
-        if any(prior.id == o.id for prior in used):
-            raise InputFailure("INVALID_INPUT", "DUPLICATE_INPUT_OBSERVATION_ID")
-        used.append(o)
-        artifact = next(a for a in source.raw_artifacts if a.id == o.provenance.raw_artifact_id)
-        retrieval = next(r for r in source.retrievals if r.id == artifact.retrieval_id)
-        if not artifact.complete or retrieval.status != "success":
-            raise InputFailure("INVALID_INPUT", "INPUT_EVIDENCE_INCOMPLETE_OR_UNAVAILABLE")
-        if o.mapping_status != "mapped":
-            raise InputFailure("INVALID_INPUT", "UNVERIFIED_METRIC_MAPPING")
-        if o.reporting_scope != request.reporting_scope:
-            raise InputFailure("INVALID_INPUT", "INCOMPATIBLE_SCOPE")
-        if o.period.kind != ("instant" if instant else "duration") or (
-            o.period.frequency != ("point_in_time" if instant else frequency)
-        ):
-            raise InputFailure("INVALID_INPUT", "INCOMPATIBLE_PERIOD_KIND_OR_FREQUENCY")
-        if instant and o.period.end_date is None:
-            raise InputFailure("INVALID_INPUT", "INSTANT_DATE_UNKNOWN")
-        if (
-            o.period.end_date
-            and o.period.end_date.day
-            != calendar.monthrange(o.period.end_date.year, o.period.end_date.month)[1]
-        ):
-            raise InputFailure("INVALID_INPUT", "PERIOD_END_NOT_DECLARED_MONTH_END")
-        if not instant and o.period.start_date is not None:
-            expected_start = previous(key, 11 if annual else 2) + "-01"
-            if o.period.start_date.isoformat() != expected_start:
-                raise InputFailure("INVALID_INPUT", "DURATION_CONFLICTS_WITH_ALIGNMENT_POLICY")
-        if not instant and o.period.start_date is None:
-            issues.append("DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1")
-        if o.value_status != "available":
-            state = {"not_applicable": "NOT_APPLICABLE", "parse_error": "INVALID_INPUT"}.get(
-                o.value_status, "INSUFFICIENT_INPUT"
-            )
-            raise InputFailure(state, f"INPUT_STATUS:{o.value_status}")
-        if o.value is None or not o.value.is_finite():
-            raise InputFailure("INVALID_INPUT", "MALFORMED_VALUE")
-        if o.unit.kind == "unknown":
-            raise InputFailure("INVALID_INPUT", "UNKNOWN_UNIT")
-        if o.unit.kind != "money":
-            raise InputFailure("INVALID_INPUT", "FINANCIAL_FORMULA_REQUIRES_MONETARY_INPUT")
-        if used[0].unit.kind != o.unit.kind or used[0].unit.currency != o.unit.currency:
-            raise InputFailure("INVALID_INPUT", "INCOMPATIBLE_UNIT_OR_CURRENCY")
-        return Fraction(o.value) * Fraction(o.unit.scale)
+        if metric == "cash_operating":
+            rows = source.cashflow
+        return take_observation(
+            source, request, metric, key, rows, used, issues, instant, frequency
+        )
 
+    if spec.formula_id == "CFO_TO_NET_PROFIT":
+        if sector != "NON_FINANCIAL" or not annual:
+            raise InputFailure("NOT_APPLICABLE", "CFO_RATIO_REQUIRES_NON_FINANCIAL_ANNUAL_INPUTS")
+        cfo = take("cash_operating", spec.current_period)
+        profit = take("net_profit", spec.current_period)
+        if profit == 0:
+            raise InputFailure("INVALID_INPUT", "ZERO_NET_PROFIT")
+        if profit < 0:
+            issues.append("NEGATIVE_NET_PROFIT_RATIO_INTERPRETATION_LIMITED")
+        return cfo / profit
     if spec.formula_id == "SOURCE_METRIC_GROWTH":
         if spec.source_metric == "deposits" and not annual:
             raise InputFailure("NOT_APPLICABLE", "DEPOSIT_PROOF_REQUIRES_ANNUAL_END_POINTS")
@@ -266,3 +241,72 @@ def evaluate(
     if base < 0:
         raise InputFailure("INVALID_INPUT", "NEGATIVE_RATIO_DENOMINATOR")
     return profit / base * 100
+
+
+def take_observation(
+    source: CompanyExtractionResult,
+    request: CalculationRequest,
+    metric: str,
+    key: str,
+    rows: tuple[FinancialObservation, ...],
+    used: list[FinancialObservation],
+    issues: list[str],
+    instant: bool = False,
+    frequency: str = "annual",
+) -> Fraction:
+    """Shared evidence, scope, period, value and unit checks for monetary inputs."""
+    annual = frequency == "annual"
+    candidates = [o for o in rows if o.metric_id == metric and period_key(o) == key]
+    if not candidates:
+        raise InputFailure("INSUFFICIENT_INPUT", f"MISSING_OBSERVATION:{metric}:{key}")
+    if len(candidates) != 1:
+        raise InputFailure("INVALID_INPUT", f"DUPLICATE_OBSERVATION:{metric}:{key}")
+    o = candidates[0]
+    if any(prior.id == o.id for prior in used):
+        raise InputFailure("INVALID_INPUT", "DUPLICATE_INPUT_OBSERVATION_ID")
+    used.append(o)
+    artifact = next(a for a in source.raw_artifacts if a.id == o.provenance.raw_artifact_id)
+    retrieval = next(r for r in source.retrievals if r.id == artifact.retrieval_id)
+    if not artifact.complete or retrieval.status != "success":
+        raise InputFailure("INVALID_INPUT", "INPUT_EVIDENCE_INCOMPLETE_OR_UNAVAILABLE")
+    if o.mapping_status != "mapped":
+        raise InputFailure("INVALID_INPUT", "UNVERIFIED_METRIC_MAPPING")
+    if o.reporting_scope != request.reporting_scope:
+        raise InputFailure("INVALID_INPUT", "INCOMPATIBLE_SCOPE")
+    if o.period.kind != ("instant" if instant else "duration") or (
+        o.period.frequency != ("point_in_time" if instant else frequency)
+    ):
+        raise InputFailure("INVALID_INPUT", "INCOMPATIBLE_PERIOD_KIND_OR_FREQUENCY")
+    if instant and o.period.end_date is None:
+        raise InputFailure("INVALID_INPUT", "INSTANT_DATE_UNKNOWN")
+    if (
+        o.period.end_date
+        and o.period.end_date.day
+        != calendar.monthrange(o.period.end_date.year, o.period.end_date.month)[1]
+    ):
+        raise InputFailure("INVALID_INPUT", "PERIOD_END_NOT_DECLARED_MONTH_END")
+    if not instant and o.period.start_date is not None:
+        expected_start = previous(key, 11 if annual else 2) + "-01"
+        if o.period.start_date.isoformat() != expected_start:
+            raise InputFailure("INVALID_INPUT", "DURATION_CONFLICTS_WITH_ALIGNMENT_POLICY")
+    if not instant and o.period.start_date is None:
+        issues.append("DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1")
+    if o.value_status != "available":
+        state = {"not_applicable": "NOT_APPLICABLE", "parse_error": "INVALID_INPUT"}.get(
+            o.value_status, "INSUFFICIENT_INPUT"
+        )
+        raise InputFailure(state, f"INPUT_STATUS:{o.value_status}")
+    if o.value is None or not o.value.is_finite():
+        raise InputFailure("INVALID_INPUT", "MALFORMED_VALUE")
+    if o.unit.kind == "unknown":
+        raise InputFailure("INVALID_INPUT", "UNKNOWN_UNIT")
+    if o.unit.kind != "money":
+        raise InputFailure("INVALID_INPUT", "FINANCIAL_FORMULA_REQUIRES_MONETARY_INPUT")
+    if used[0].unit.kind != o.unit.kind or used[0].unit.currency != o.unit.currency:
+        raise InputFailure("INVALID_INPUT", "INCOMPATIBLE_UNIT_OR_CURRENCY")
+    return Fraction(o.value) * Fraction(o.unit.scale)
+
+
+def percentage_point_difference(current: Fraction, prior: Fraction) -> Fraction:
+    """Exact difference of two unrounded percentage quantities."""
+    return current - prior

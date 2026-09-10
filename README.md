@@ -791,3 +791,88 @@ UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_sect
 Classification and fiscal alignment remain explicit declarations, not inferred facts. No new source
 acquisition, bank ratio conventions, peer analytics, indicators, valuation, recommendations or AI
 are added. See `docs/part4c-proof.md` for the numerical and negative proofs.
+
+## Part 4D: deterministic financial patterns
+
+`evaluate-patterns` evaluates exactly six structured-evidence patterns. Findings separate
+`evaluation_status` from `rule_outcome`: only AVAILABLE findings have TRIGGERED, NOT_TRIGGERED or
+OBSERVATION_ONLY. A trigger records a quantitative review condition; it makes no claim about intent,
+fraud, management integrity or accounting quality. No scores, valuation, recommendations or AI.
+
+| Pattern | Profile | V1 rule |
+|---|---|---|
+| CFO_TO_NET_PROFIT | IT_SERVICES | Source-reported CFO / net profit, RATIO_X; observation only |
+| PROFIT_VS_CFO_DIVERGENCE | IT_SERVICES | Current profit > 0 and > prior profit, and current CFO < prior CFO or < 0 |
+| REPEATED_NEGATIVE_CFO | IT_SERVICES | Exactly three consecutive comparable annual CFO values, all < 0 |
+| OPERATING_MARGIN_DETERIORATION | IT_SERVICES | Existing unrounded margin change <= -50 bps |
+| DEPOSIT_CONTRACTION | BANK | Existing annual deposit growth < 0% |
+| DEPOSIT_GROWTH_DECELERATION | BANK | Current minus previous unrounded deposit growth, percentage points; observation only |
+
+The margin threshold is `OPERATING_MARGIN_DETERIORATION_SYSTEM_V1`, version 1, basis
+SYSTEM_DEFINED, operator LESS_THAN_OR_EQUAL, -50 BASIS_POINTS. It is an internal review heuristic,
+not an industry, regulatory or institutional standard. Directional rules retain their exact
+conditions; repeated-negative-CFO records N=3. Observation-only findings have no trigger threshold.
+
+The narrow Screener CFO binding verifies `cash_operating`, `source:Cash from Operating Activity`,
+CASH_FLOW provenance, provider, exact extractor definition/version and mapping status. It does not
+mean free cash flow or cash earnings. Part 4A monetary-input checks now provide a shared helper;
+CFO/net-profit is a new common formula. Margin and deposit prerequisites use Part 4C's unchanged
+formulas. Exact deposit-growth differences use a common rational subtraction primitive. Rules do
+not independently recalculate growth or margin, nor use rounded displays.
+
+Requests pin the extraction, classification/profile, declared fiscal alignment, pattern IDs/versions
+and annual evaluation endpoint. `calculation_mode` is explicit in execution output:
+
+- `AUTO_CREATE` (default): create prerequisite snapshots through existing financial/sector production
+  paths, retaining every created snapshot ID and finding reference. Reruns append new snapshots.
+- `PINNED`: supply all required `pinned_calculations` entries; there is no automatic fallback.
+  Each entry contains `role`, `snapshot_id`, `metric_id`. Roles are `CFO_TO_NET_PROFIT:YYYY-MM`,
+  `OPERATING_MARGIN_CHANGE_BPS:YYYY-MM`, or `DEPOSIT_GROWTH:YYYY-MM`. Deceleration needs current and
+  previous-year growth roles. Missing, extra, wrong-company/source/scope/period/formula references
+  are rejected. AUTO_CREATE cannot include pinned entries.
+
+Every reference records formula, extraction, optional sector profile and immutable payload digest.
+The selected metric must exist exactly once in the referenced snapshot. Findings preserve source
+observations, exact mappings, prerequisite references, exact fractions, 50-digit Decimal values,
+separate two-place HALF_EVEN display, and issues. Source monetary observations in `observed` are
+scale-normalized (e.g. INR); `inputs` retains original crore values and their scale. Missing duration
+start dates remain explicit limitations under the caller-declared annual alignment convention.
+
+Initialize the additive `pattern_snapshots` table explicitly before using an existing database:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database PATH init-db
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database PATH evaluate-patterns --request request.json --output OUTPUT
+```
+
+Set `STOCK_RESEARCH_AI_ARTIFACT_PATH` when original artifacts are outside the database's adjacent
+`artifacts/` directory. Output must be new or empty. Exit 0 means all requested patterns evaluated,
+including triggered findings; exit 3 means explicit unavailable/not-applicable findings were exported;
+exit 2 means a request/reference/integrity error. JSON files under `normalized/` are
+`pattern_snapshot.json`, `findings.json`, `triggered.json`, `not_triggered.json`, `observations.json`,
+`unavailable.json` and `not_applicable.json`; `coverage.json` enumerates every requested pattern.
+
+Run all six retained-source CLI goldens offline in a fresh output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run python scripts/verify_patterns.py --output output/part4d-proof-new
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_patterns.py tests/test_pattern_pipeline.py tests/test_calculations.py tests/test_sector_kpis.py
+```
+
+The completed local proof is in Git-ignored `output/part4d-proof/`, with independently expected and
+actual results in `golden-proof.json`, six request files, original artifacts, SQLite and CLI exports.
+For example:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 uv run stock-research-ai --database output/part4d-proof/proof.sqlite3 evaluate-patterns --request output/part4d-proof/YESBANK-DEPOSIT_GROWTH_DECELERATION-request.json --output output/part4d-deceleration-rerun
+```
+
+The new table has only an extraction foreign key, evaluation time, schema version and immutable
+payload. Multiple calculation references are validated before insertion; there is no singular
+calculation FK or association table. Existing calculation rows are unchanged. Prerequisites and the
+pattern are separate append operations: a later failure may leave valid prerequisite snapshots, but
+no completed pattern row. They are not silently deleted or overwritten.
+
+Only the six named patterns are implemented. Receivables, inventory, debt, interest pressure,
+dilution/share count, GNPA/NNPA and other banking ratio trends remain deferred. Unknown profiles
+produce explicit NOT_APPLICABLE findings. Existing source NPA period semantics are untouched.

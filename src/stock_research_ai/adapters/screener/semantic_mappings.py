@@ -5,6 +5,7 @@ from stock_research_ai.domain.sector_kpis import SemanticMappingDefinition, Sema
 
 # Each meaning intentionally remains source-reported; no regulatory reinterpretation.
 _NAMES = {
+    "cash_operating": ("Cash from Operating Activity", "SOURCE_REPORTED_CFO"),
     "deposits": ("Deposits", "DEPOSITS"),
     "total_assets": ("Total Assets", "TOTAL_ASSETS"),
     "net_profit": ("Net Profit", "NET_PROFIT"),
@@ -26,7 +27,9 @@ MAPPINGS = tuple(
     )
     for metric, (label, canonical) in _NAMES.items()
     for section in (
-        ("balance_sheet",)
+        ("cashflow",)
+        if metric == "cash_operating"
+        else ("balance_sheet",)
         if metric in {"deposits", "total_assets"}
         else ("profit_loss", "quarterly")
     )
@@ -41,7 +44,7 @@ class ScreenerSemanticResolver:
         self, source: CompanyExtractionResult, semantics: tuple[str, ...]
     ) -> tuple[SemanticResolution, ...]:
         resolved = []
-        for section in ("profit_loss", "quarterly", "balance_sheet"):
+        for section in ("profit_loss", "quarterly", "balance_sheet", "cashflow"):
             for o in getattr(source, section):
                 matches = [
                     m
@@ -75,7 +78,8 @@ class ScreenerSemanticResolver:
                         and o.mapping_status == "mapped"
                         and o.metric_id == m.source_metric_id
                         and o.metric == m.source_identity
-                        and o.provenance.source_location.section == section.upper()
+                        and o.provenance.source_location.section
+                        == ("CASH_FLOW" if section == "cashflow" else section.upper())
                         and source.metadata.mapping_version == m.extractor_mapping_version
                         and len(definitions) == 1
                         and definitions[0].version == m.extractor_mapping_version

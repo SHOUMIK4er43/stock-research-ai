@@ -87,13 +87,36 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     sector.add_argument("--request", type=Path, required=True)
     sector.add_argument("--output", type=Path, required=True)
+    patterns = commands.add_parser(
+        "evaluate-patterns", help="Evaluate six deterministic financial patterns"
+    )
+    patterns.add_argument("--request", type=Path, required=True)
+    patterns.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "calculate-sector-kpis":
+    if args.command == "evaluate-patterns":
+        from stock_research_ai.bootstrap import evaluate_patterns
+        from stock_research_ai.domain.patterns import PatternRequest
+
+        try:
+            snapshot = asyncio.run(
+                evaluate_patterns(
+                    settings,
+                    PatternRequest.model_validate_json(args.request.read_text()),
+                    args.output,
+                )
+            )
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"Pattern evaluation exported: {args.output}")
+        raise SystemExit(
+            0 if all(f.evaluation_status == "AVAILABLE" for f in snapshot.findings) else 3
+        )
+    elif args.command == "calculate-sector-kpis":
         from stock_research_ai.bootstrap import calculate_sector_kpis
         from stock_research_ai.domain.sector_kpis import SectorKPIRequest
 

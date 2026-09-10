@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict
 
 from stock_research_ai.application import patterns as pattern_engine
+from stock_research_ai.application import technicals
 from stock_research_ai.application.calculations import calculate
 from stock_research_ai.application.market_calculations import calculate_market
 from stock_research_ai.application.ports import (
@@ -50,6 +51,7 @@ from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
+from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
 
 
 class Capabilities(BaseModel):
@@ -139,6 +141,19 @@ class ResearchEngine:
         self._sector_kpis = sector_kpis
         self._market_calculations = market_calculations
         self._patterns = patterns
+
+    async def calculate_technicals(self, request: TechnicalRequest) -> TechnicalSnapshot:
+        services = self._market_calculations
+        if services is None:
+            raise RuntimeError("Market calculation services not configured")
+        source = await services.market.get_market(request.extraction_id)
+        if source is None:
+            raise ValueError("Unknown market extraction")
+        for artifact in source.raw_artifacts:
+            await services.artifacts.read(artifact)
+        snapshot = technicals.calculate(source, request)
+        await services.repository.save_technical(snapshot)
+        return snapshot
 
     async def calculate_market(
         self, request: MarketCalculationRequest

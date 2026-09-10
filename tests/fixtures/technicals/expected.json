@@ -1,0 +1,4832 @@
+[
+  {
+    "scenario": "mixed",
+    "indicator": "EMA20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "110.5",
+    "numerator": "221",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "112.2619047619047619047619047619047619047619047619047619047619047619047619047619047619047619047619048",
+    "numerator": "4715",
+    "denominator": "42",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "126.2052144924816857334239666348944653741128691975624988940868033658573169506968208137897257202192736",
+    "numerator": "3799760845192364687392352118186603635926270005000191895060497",
+    "denominator": "30107795945457741440503213982281620654246196418541240182562",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 12,
+    "date": "2025-01-12",
+    "expected": "106.5",
+    "numerator": "213",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 13,
+    "date": "2025-01-13",
+    "expected": "107.5",
+    "numerator": "215",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "126.7488716520414462417311538510824669098753950482996411240971878792714172230040000201952229747622796",
+    "numerator": "2615059646038701940828116344282469103502693424318361",
+    "denominator": "20631817955884605254408940372628632422124510004322",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "113.3846153846153846153846153846153846153846153846153846153846153846153846153846153846153846153846154",
+    "numerator": "1474",
+    "denominator": "13",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "113.4301994301994301994301994301994301994301994301994301994301994301994301994301994301994301994301994",
+    "numerator": "39814",
+    "denominator": "351",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "125.5144449433340038571762988304987588671640700117160465781359787528629220587970035761811991162243242",
+    "numerator": "4022167015865270271395881005231340156181586085510992029308",
+    "denominator": "32045451164454877551949708893861269569971444661168812597",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD12_26",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "6.115652908577903123989368545554630398675398177139389605016481903468730583704472250714706134011103402",
+    "numerator": "59038177",
+    "denominator": "9653618",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD12_26",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "5.223873740964120964655479279944428658620581275900763371678421352025590353645182415079877357750793389",
+    "numerator": "17700677833",
+    "denominator": "3388419918",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD12_26",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1.234426708707442384554855020583708042711325036583594545961209126408495164206996444014023858537955380",
+    "numerator": "62780655367230608161074651497909259245760921712558819159669845850302378692250434327574471388536911117257",
+    "denominator": "50858147287632567303355717744770486277769609287294483750561657923386979158294656750299610201232621388018",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "4.844715807187689124467031014101039484962976971633679286442276349241788478308346077472985839073165824",
+    "numerator": "96974568745587940868095834057",
+    "denominator": "20016564976157134847782716162",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "4.446759906372077855057874742499579621341102871950629447866502190049153024904446695808628964109538350",
+    "numerator": "17356727426857087182987590721709",
+    "denominator": "3903230170350641295317629651590",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1.741251820639268688631166796286943804625662190050786669781567991072792068869813274371383019280685572",
+    "numerator": "82474985680477966024555488904193398172490377522600737868308185642054538187534502556368734608095896055563641011679041037333961",
+    "denominator": "47365340672091177947219198331954410558351883000968474662454480233962628206512571079935515486851913284527137875556945800781250",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "-1.309244292291532028602604125441582761728460894389722716794938170868913225814020734157539970321785828",
+    "numerator": "-13103286723158157343844367896",
+    "denominator": "10008282488078567423891358081",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "-1.591823603262445077636625086405839454487496398732199354303096636770541813615597526657427499854509897",
+    "numerator": "-3106626957065122572582193838812",
+    "denominator": "1951615085175320647658814825795",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "-0.5068251119318263040763117757032357619143371534671921238203588646642969046628168303573591607427301918",
+    "numerator": "-12002972043910848102505126943481676912273821826561865556423206438835650798264200105440596363568632621484952628594571177846668",
+    "denominator": "23682670336045588973609599165977205279175941500484237331227240116981314103256285539967757743425956642263568937778472900390625",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "30",
+    "numerator": "30",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "6.396371007915016524692569082297620779901311473311237162512851977226271491238773436870269282946468361",
+    "numerator": "860076774835317729995700995927402503032711234493781",
+    "denominator": "134463240761212718494125326299972753332151053713408",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7.270105545934850030938512047819125021277958038965352837697027689333781001523675798217842318769059780",
+    "numerator": "139651707483209367204910984117454665007180828575485",
+    "denominator": "19209034394458959784875046614281821904593007673344",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "RSI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "RSI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "RSI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "46.80336575935623582080799287332465187178298705159456858345076688557254040122335956034969316046472773",
+    "numerator": "21501919370882943249892524898185062575817780862344525",
+    "denominator": "459409681804445825107519471187396289520744258630544",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "5",
+    "numerator": "5",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "4",
+    "numerator": "4",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "12",
+    "numerator": "12",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "15",
+    "numerator": "15",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "25",
+    "numerator": "25",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "31",
+    "numerator": "31",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 31,
+    "date": "2025-01-31",
+    "expected": "8",
+    "numerator": "8",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "TRUE_RANGE",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "32",
+    "numerator": "32",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "10",
+    "numerator": "10",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "24",
+    "numerator": "24",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 31,
+    "date": "2025-01-31",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "14",
+    "numerator": "14",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "28",
+    "numerator": "28",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 31,
+    "date": "2025-01-31",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "31",
+    "numerator": "31",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "4.071428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571",
+    "numerator": "57",
+    "denominator": "14",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "3.994897959183673469387755102040816326530612244897959183673469387755102040816326530612244897959183673",
+    "numerator": "783",
+    "denominator": "196",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 17,
+    "date": "2025-01-17",
+    "expected": "4.066690962099125364431486880466472303206997084548104956268221574344023323615160349854227405247813411",
+    "numerator": "11159",
+    "denominator": "2744",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 18,
+    "date": "2025-01-18",
+    "expected": "4.061927321949187838400666389004581424406497292794668887963348604748021657642648896293211162015826739",
+    "numerator": "156043",
+    "denominator": "38416",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 19,
+    "date": "2025-01-19",
+    "expected": "3.986075370381388707086333075504254179806033200452192538823109418694591539239602546557981793300410543",
+    "numerator": "2143807",
+    "denominator": "537824",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "4.058498558211289513723023570111093166962745114705607357478601603073549286436773793232411665207524076",
+    "numerator": "30558611",
+    "denominator": "7529536",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "4.625748661196197405599950457960300797893977606512349689087272917139724337405575665144382260549843785",
+    "numerator": "487616375",
+    "denominator": "105413504",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "5.366766613967897590914239710963136455187264920332896139866753423058315456162320260491212099081997800",
+    "numerator": "7920215435",
+    "denominator": "1475789056",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "6.769140427255904905848936874465769565531031711737689272733413892839864352150725956170411234861855100",
+    "numerator": "139857527055",
+    "denominator": "20661046784",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "8.499916111023340269716869954861071739421672303756425753252455757637016898425674102158239003800294022",
+    "numerator": "2458640302019",
+    "denominator": "289254654976",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 25,
+    "date": "2025-01-25",
+    "expected": "9.035636388807387393308522100942423758034409996345252485162994632091515691395268809146936217814558734",
+    "numerator": "36590398405863",
+    "denominator": "4049565169664",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "8.818805218178288293786484808017964918174809282320591593365637872656407427724178179922155059399233110",
+    "numerator": "499972570294203",
+    "denominator": "56693912375296",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "8.760319131165553415658878750302395995448037190726263622410949453180949754315308309927715412299287888",
+    "numerator": "6953194712827007",
+    "denominator": "793714773254144",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "9.348867764653728171683244553852224852916034534245816220810167349382310486149929144932878597135053039",
+    "numerator": "103884682412071539",
+    "denominator": "11112006825558016",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "9.038234352892747587991584228577065934850603496085400776466583967283574022853505634580530125911120679",
+    "numerator": "1406060905484720087",
+    "denominator": "155568095557812224",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ATR14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "16.13869799167945952468472528149357832391511195087523074018097655114696846316378472060456868319601730",
+    "numerator": "32679114385237085324244117535945854276084127054519279858083",
+    "denominator": "2024891623976437135118764865774783290467102632746078437376",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1.428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571429",
+    "numerator": "10",
+    "denominator": "7",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1.326530612244897959183673469387755102040816326530612244897959183673469387755102040816326530612244898",
+    "numerator": "65",
+    "denominator": "49",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 17,
+    "date": "2025-01-17",
+    "expected": "1.374635568513119533527696793002915451895043731778425655976676384839650145772594752186588921282798834",
+    "numerator": "943",
+    "denominator": "686",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 18,
+    "date": "2025-01-18",
+    "expected": "1.419304456476468138275718450645564348188254893794252394835485214493960849645980841316118284048313203",
+    "numerator": "13631",
+    "denominator": "9604",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 19,
+    "date": "2025-01-19",
+    "expected": "1.317925566728148985541738561313738323317665258523234366632950556315820788956982209793538406616290831",
+    "numerator": "177203",
+    "denominator": "134456",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "1.366645169104709772288757235505614157366403454343003340444882659436119304031483480522571377572270058",
+    "numerator": "2572551",
+    "denominator": "1882384",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "1.983313371311516217125274575826641717554517493318503101841676755190682210886377517628101993459965053",
+    "numerator": "52267003",
+    "denominator": "26353376",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "1.841648130503550773044897820410453023443480529510038594567271272677062052965921980654666136784253264",
+    "numerator": "679471039",
+    "denominator": "368947264",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "3.424387549753297146398833690381134950340374777402178694955323324628700477754070410607904269871092316",
+    "numerator": "17687857843",
+    "denominator": "5165261696",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "3.179788439056633064513202712496768168173205150444880216744228801440936157914493952707339679166014294",
+    "numerator": "229942151959",
+    "denominator": "72313663744",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 25,
+    "date": "2025-01-25",
+    "expected": "3.881232121981159274190831090175570441875119068270245915548212458480869289492030098942529702082727559",
+    "numerator": "3929325604139",
+    "denominator": "1012391292416",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "3.604001256125362183177200298020172553169753420536656921580482997160807197385456520446634723362532733",
+    "numerator": "51081232853807",
+    "denominator": "14173478093824",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "3.346572594973550598664543133875874513657628176212609998610448497363606683286495340414732243122351823",
+    "numerator": "664056027099491",
+    "denominator": "198428693313536",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "4.107531695332582698759932910027597762682083306483137855852559318980491920194602816099394225756469550",
+    "numerator": "11410730058682887",
+    "denominator": "2778001706389504",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "3.814136574237398220277080559311340779633363070305770866148805081910456783037845472092294638202436011",
+    "numerator": "148339490762877531",
+    "denominator": "38892023889453056",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "6.469983781375658357452828996530396921237132612779896943233065962795708820843073410399015564036465500",
+    "numerator": "3275253991542741612966873503344011984051788270048259351159",
+    "denominator": "506222905994109283779691216443695822616775658186519609344",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 17,
+    "date": "2025-01-17",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 18,
+    "date": "2025-01-18",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 19,
+    "date": "2025-01-19",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "0.9285714285714285714285714285714285714285714285714285714285714285714285714285714285714285714285714286",
+    "numerator": "13",
+    "denominator": "14",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "2.862244897959183673469387755102040816326530612244897959183673469387755102040816326530612244897959184",
+    "numerator": "561",
+    "denominator": "196",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 25,
+    "date": "2025-01-25",
+    "expected": "2.657798833819241982507288629737609329446064139941690962099125364431486880466472303206997084548104956",
+    "numerator": "7293",
+    "denominator": "2744",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "2.753670345689296126613910870470637234485630987088713036234902124114952103290295710120783007080383174",
+    "numerator": "105785",
+    "denominator": "38416",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "2.914122463854346403284345808294163146308085916582376390789551972392455524483846016540727078003212947",
+    "numerator": "1567285",
+    "denominator": "537824",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "2.705970859293321660192606821987437207286079779683635220018869688650137272734999872502103715288697736",
+    "numerator": "20374705",
+    "denominator": "7529536",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "2.512687226486655827321706334702620263908502652563375561446093282317984610396785595894810592768076470",
+    "numerator": "264871165",
+    "denominator": "105413504",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7.480754455092618989202735843343247552015332707612864715113093857174634127207396303642114413844639541",
+    "numerator": "10264147830312586576753230173082733994314963604545",
+    "denominator": "1372073885318497127491074758162987278899500548096",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "35.08771929824561403508771929824561403508771929824561403508771929824561403508771929824561403508771930",
+    "numerator": "2000",
+    "denominator": "57",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "33.20561941251596424010217113665389527458492975734355044699872286079182630906768837803320561941251596",
+    "numerator": "26000",
+    "denominator": "783",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 17,
+    "date": "2025-01-17",
+    "expected": "33.80231203512859575230755444036203960928398602025271081638139618245362487678107357290079756250560086",
+    "numerator": "377200",
+    "denominator": "11159",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 18,
+    "date": "2025-01-18",
+    "expected": "34.94165069884583095685163704876220016277564517472747896413168165185237402510846369270008907801054837",
+    "numerator": "5452400",
+    "denominator": "156043",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 19,
+    "date": "2025-01-19",
+    "expected": "33.06323750225649976886911928172638675029981710107299770921542844108634779156892388167404994945906978",
+    "numerator": "70881200",
+    "denominator": "2143807",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "33.67366402877408269636339164761120850682643919908532491872749059176806170934928946868691119501472106",
+    "numerator": "1029020400",
+    "denominator": "30558611",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "42.87551089727042083030948253122139304694187105590947391789293376376049717362342476706201673395402277",
+    "numerator": "836272048",
+    "denominator": "19504655",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "34.31578570438216874084309551360076103788457112846198734744391457326564501461695403996292936695856430",
+    "numerator": "54357683120",
+    "denominator": "1584043087",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "50.58821849765474533686691747718604761797888347483193671002236069102501835309603315508158653820979360",
+    "numerator": "1415028627440",
+    "denominator": "27971505411",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "37.40964496029367403811247709437240931357958526746788350657977224249331626200302438181619888566582694",
+    "numerator": "91976860783600",
+    "denominator": "2458640302019",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 25,
+    "date": "2025-01-25",
+    "expected": "42.95471790773823574730278760270518826286787522966149632108117869166193744779739978845280474017197926",
+    "numerator": "1571730241655600",
+    "denominator": "36590398405863",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "40.86722823514005748662789574088357125140851364530230340438701753482021279728063668453180310571975965",
+    "numerator": "20432493141522800",
+    "denominator": "499972570294203",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "38.20149180488007867928113628406092381051785330504563924137007843768150405587093422032539023527511421",
+    "numerator": "265622410839796400",
+    "denominator": "6953194712827007",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "43.93614070425052350142384744665827144134980054213612987965762472070326776622716416691423513366482893",
+    "numerator": "1521430674491051600",
+    "denominator": "34628227470690513",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "42.20001855801247509485272156467337063964860587384461991808336695687068939265665322644148895310509382",
+    "numerator": "59335796305151012400",
+    "denominator": "1406060905484720087",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "PLUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "40.08987456554024740522270708258605547258430261157464567993154909125202855900820984898913574640050979",
+    "numerator": "436700532205698881728916467112534931206905102673101246821200",
+    "denominator": "10893038128412361774748039178648618092028042351506426619361",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 17,
+    "date": "2025-01-17",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 18,
+    "date": "2025-01-18",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 19,
+    "date": "2025-01-19",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "18.63319335328155754894563672938777832625963159801346994546746189612959688387567200058113065708546601",
+    "numerator": "29515781120",
+    "denominator": "1584043087",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "13.71771554380141188318682587905851200022850282478848882146066485802843798895740456362668810095957263",
+    "numerator": "383705154560",
+    "denominator": "27971505411",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "33.67380172431591327881763391337366312953487915311120499809121208533588374017413231556825406907537269",
+    "numerator": "7526524185600",
+    "denominator": "223512754729",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 25,
+    "date": "2025-01-25",
+    "expected": "29.41462802898429320917328653395085802212654015312039059630067187062628869388090809603691649973768962",
+    "numerator": "358764319513600",
+    "denominator": "12196799468621",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "31.22498204193385370784828143189917810469275565270526182807819607862469430889054385571887538953574934",
+    "numerator": "15611634528896000",
+    "denominator": "499972570294203",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "33.26502631036712874755781928344026079790010635880939022674101731911252012842707691257732009903768796",
+    "numerator": "231298205063296000",
+    "denominator": "6953194712827007",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "28.94436981474994537742191007678896935294041926710626362891759027468750081304661254971287381813520956",
+    "numerator": "3006876665822848000",
+    "denominator": "103884682412071539",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "27.80064256336143142962327364118588619987238067615979995529048788947659319205696808950287876662066841",
+    "numerator": "39089396655697024000",
+    "denominator": "1406060905484720087",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "MINUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "46.35289946530649963643759057705630794407756312586636796747675630700978425589629777735030151671296243",
+    "numerator": "1514771703714146032902492110208448461136918950462582285952000",
+    "denominator": "32679114385237085324244117535945854276084127054519279858083",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 17,
+    "date": "2025-01-17",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 18,
+    "date": "2025-01-18",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 19,
+    "date": "2025-01-19",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 22,
+    "date": "2025-01-22",
+    "expected": "29.61830922938398949336160149046921016982665171956655548772883260127518014152791836561441640531908951",
+    "numerator": "31052377500",
+    "denominator": "1048418303",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 23,
+    "date": "2025-01-23",
+    "expected": "57.33608181491306421685919056141905495162374172833542746015986038783364552387108055104065421950250557",
+    "numerator": "51566173644",
+    "denominator": "899366891",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 24,
+    "date": "2025-01-24",
+    "expected": "5.255574131841605405791238635366223443879408962743185518574273794842955763098995264119711669807451196",
+    "numerator": "2296273685500",
+    "denominator": "436921567063",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 25,
+    "date": "2025-01-25",
+    "expected": "18.70970326385562417994629178893090826872437130309981176753708085671444167095714405214577308392108127",
+    "numerator": "9527640059900",
+    "denominator": "509235230807",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "13.37487941644166861038072194759742270240233558056959079289759533181496155418084207726670343741018895",
+    "numerator": "1205214653156700",
+    "denominator": "90110319176047",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "6.907382120607002192863205992856433271976250816181403356374694995343514572015163027043773552272073956",
+    "numerator": "8581051444125100",
+    "denominator": "1242301539757731",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "20.57034285673961700808236667393054261848977703835805978635887013726400577290498538937044151107901158",
+    "numerator": "389353839412576700",
+    "denominator": "18927921723240007",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "20.57034285673961700808236667393054261848977703835805978635887013726400577290498538937044151107901158",
+    "numerator": "389353839412576700",
+    "denominator": "18927921723240007",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "DX_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7.245284490212354420822302253541184305195129364370104648196108910870316694505891492721034466812575976",
+    "numerator": "51167526774262346928935677217710916879050910610819636372100",
+    "denominator": "7062183250828106695223103778865133136894085646204715066039",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ADX14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "60.84087663098446936480604407789784253049446693920385958354508629322062178561115205190010527709367157",
+    "numerator": "27045396959889412352280488331306764404173526200386369162456516476045733470246734254530492",
+    "denominator": "444526746777938222292191096074743219164300421899577311819822579551482027932392399011207",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ADX14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "57.96440993282412276789720997761446396535127480342915959803178513922372064184642586171941500809262443",
+    "numerator": "25766730576341115903674881990192978119926779936356780468288479313532094279406260121442364",
+    "denominator": "444526746777938222292191096074743219164300421899577311819822579551482027932392399011207",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "ADX14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "9.881203115764070400170261464542403182991091932046910990441529411523656290142820227926349396093061593",
+    "numerator": "156045298014914492613089933037187936304772124708939927280638574214881053285208991235175316579329173226933485232993145027862414448332786491439801366248701849965740795840382287196848423600821273138538663724854966008827905664012165720648461953835646957359754243353954876310071588380226832178216003817393357255613680416559537478130347143469995183292126354366547045441891142742105018806167417625949446479754905631567398813585759685324654809620154496212387653291137587070214574997928019724640727952289761722185763078618503858526408455416635528654630620514016059240321763075703984697935239840515338198566648973636798202235705035007447506183432760452644721254725071366472062599694257894134790715799346348377218379795514617312738061682469714895436514006666616432735261787629208896594047996968366993158011194490410805140311932295255105601641811840247395142416615437977394530816117788929875773271678522392829351862868895547444647739582763989772844784584632482977109003891098387425190771065979345045966294372755120458818778067799280613959815777694287249605172034811583812299491392737035389095858155585867521130601314126720913906183651015895013441536652190558766069725981404810074929577354146695784447850641568598405433066837325242551850864938902770260987160212152937261089767964144877366708994172806172568802675956162338471309044124747040824948552266752974159500550003653565",
+    "denominator": "15792135450182797842439229173419954613681687896698434282728580547269532922608205183857057185996182456855422993203171806427342621085650826973095480841296401207567794326388594743000612489464875962506623306211282426970130541340850475848855894464552733079683413453227474345969014905846232763435919681022868682256750379485179181167574581419721232994965283092278234577397714135643706948284706498227872669038699023797854363351954237502879051352758451282547785938072078906504569618945049494555083736022996714300700033370120910352760055277538671361851346743699952661029785373968747305150541521100425546450872423736220175196879218735642228657157080106465049920953737154408375889108078019337257052518089844449554946466969957717437546927714969525630094841032829323662634033072605872373404492771255944386243058658200876595056296195403745344746334734870234064788050495420733312364075833202615719828602246276822728745980828421747798690791831170825968557654989227459671124028436860799039840372729328252024950659312076267610340967359923947971565690938540627069209831869170634869919518267968491968403870458854677449306154461107923892763318111640342731970490510224383993132612982037290848874269544974696906072059580863486143760758744814608521111060146066452016888678748606751196306006791908396287717212849081602886275968137734987417742592208543383571528156225135458169462909304832",
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "110.5",
+    "numerator": "221",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "111.9",
+    "numerator": "1119",
+    "denominator": "10",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "126.65",
+    "numerator": "2533",
+    "denominator": "20",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "43.89",
+    "numerator": "4389",
+    "denominator": "100",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "94.8275",
+    "numerator": "37931",
+    "denominator": "400",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "6.62495283002075419305284089573440218824172960339622551417788381816579001143581559188468669223979197",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "9.73794126086207196937111283826046672458884379700128166978540771701590895906542423336831220806861540",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "122.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "125.1499056600415083861056817914688043764834592067924510283557676363315800228716311837693733844795839",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "146.1258825217241439387422256765209334491776875940025633395708154340318179181308484667366244161372308",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "98.96743740532920411064581676118212749941693114875861316667212192386472855852511742794709747032563365",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "98.65009433995849161389431820853119562351654079320754897164423236366841997712836881623062661552041606",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "mixed",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "107.1741174782758560612577743234790665508223124059974366604291845659681820818691515332633755838627692",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "110.5",
+    "numerator": "221",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "111.5",
+    "numerator": "223",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "154.5",
+    "numerator": "309",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 12,
+    "date": "2025-01-12",
+    "expected": "106.5",
+    "numerator": "213",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 13,
+    "date": "2025-01-13",
+    "expected": "107.5",
+    "numerator": "215",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "158.5",
+    "numerator": "317",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "113.5",
+    "numerator": "227",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "114.5",
+    "numerator": "229",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "151.5",
+    "numerator": "303",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD12_26",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD12_26",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD12_26",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "RSI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "RSI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "RSI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "TRUE_RANGE",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "TRUE_RANGE",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "TRUE_RANGE",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "ATR14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "ATR14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "ATR14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "PLUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "PLUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "PLUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MINUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MINUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "MINUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "DX_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "DX_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "DX_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "ADX14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "ADX14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "ADX14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "110.5",
+    "numerator": "221",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "111.5",
+    "numerator": "223",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "154.5",
+    "numerator": "309",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "122.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "123.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "166.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "98.96743740532920411064581676118212749941693114875861316667212192386472855852511742794709747032563365",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "99.96743740532920411064581676118212749941693114875861316667212192386472855852511742794709747032563365",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "linear",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "142.9674374053292041106458167611821274994169311487586131666721219238647285585251174279470974703256336",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "110.5",
+    "numerator": "221",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "111.5",
+    "numerator": "223",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "154.5",
+    "numerator": "309",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 12,
+    "date": "2025-01-12",
+    "expected": "106.5",
+    "numerator": "213",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 13,
+    "date": "2025-01-13",
+    "expected": "107.5",
+    "numerator": "215",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "158.5",
+    "numerator": "317",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "113.5",
+    "numerator": "227",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "114.5",
+    "numerator": "229",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "151.5",
+    "numerator": "303",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD12_26",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD12_26",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD12_26",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "7",
+    "numerator": "7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "RSI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "RSI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "RSI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "TRUE_RANGE",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "TRUE_RANGE",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "TRUE_RANGE",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "ATR14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "ATR14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "ATR14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "PLUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "PLUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "PLUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MINUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MINUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "MINUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "DX_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "DX_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "DX_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "ADX14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "ADX14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "ADX14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "110.5",
+    "numerator": "221",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "111.5",
+    "numerator": "223",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "154.5",
+    "numerator": "309",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "122.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "123.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "166.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "98.96743740532920411064581676118212749941693114875861316667212192386472855852511742794709747032563365",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "99.96743740532920411064581676118212749941693114875861316667212192386472855852511742794709747032563365",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "rising",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "142.9674374053292041106458167611821274994169311487586131666721219238647285585251174279470974703256336",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "190.5",
+    "numerator": "381",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "189.5",
+    "numerator": "379",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "146.5",
+    "numerator": "293",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 12,
+    "date": "2025-01-12",
+    "expected": "194.5",
+    "numerator": "389",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 13,
+    "date": "2025-01-13",
+    "expected": "193.5",
+    "numerator": "387",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "142.5",
+    "numerator": "285",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "187.5",
+    "numerator": "375",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "186.5",
+    "numerator": "373",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "149.5",
+    "numerator": "299",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD12_26",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "-7",
+    "numerator": "-7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD12_26",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "-7",
+    "numerator": "-7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD12_26",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "-7",
+    "numerator": "-7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "-7",
+    "numerator": "-7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "-7",
+    "numerator": "-7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "-7",
+    "numerator": "-7",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "RSI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "RSI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "RSI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "TRUE_RANGE",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "TRUE_RANGE",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "TRUE_RANGE",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "ATR14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "ATR14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "ATR14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "2",
+    "numerator": "2",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "1",
+    "numerator": "1",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "PLUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "PLUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "PLUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MINUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MINUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "MINUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "DX_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "DX_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "DX_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "ADX14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "ADX14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "ADX14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "190.5",
+    "numerator": "381",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "189.5",
+    "numerator": "379",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "146.5",
+    "numerator": "293",
+    "denominator": "2",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "33.25",
+    "numerator": "133",
+    "denominator": "4",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "5.766281297335397944677091619408936250291534425620693416663939038067635720737441286026451264837183175",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "202.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "201.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "158.0325625946707958893541832388178725005830688512413868333278780761352714414748825720529025296743664",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "178.9674374053292041106458167611821274994169311487586131666721219238647285585251174279470974703256336",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "177.9674374053292041106458167611821274994169311487586131666721219238647285585251174279470974703256336",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "falling",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "134.9674374053292041106458167611821274994169311487586131666721219238647285585251174279470974703256336",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 12,
+    "date": "2025-01-12",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 13,
+    "date": "2025-01-13",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA12_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "EMA26_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD12_26",
+    "observation": 26,
+    "date": "2025-01-26",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD12_26",
+    "observation": 27,
+    "date": "2025-01-27",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD12_26",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD_SIGNAL9",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 34,
+    "date": "2025-02-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 35,
+    "date": "2025-02-04",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MACD_HISTOGRAM",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "AVG_GAIN_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "AVG_LOSS_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "RSI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "RSI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "RSI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "50",
+    "numerator": "50",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "TRUE_RANGE",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "TRUE_RANGE",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "TRUE_RANGE",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 2,
+    "date": "2025-01-02",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 3,
+    "date": "2025-01-03",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "ATR14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "ATR14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "ATR14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "SMOOTH_PLUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "SMOOTH_MINUS_DM_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "PLUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "PLUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "PLUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MINUS_DI14",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MINUS_DI14",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "MINUS_DI14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "DX_INTERNAL",
+    "observation": 15,
+    "date": "2025-01-15",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "DX_INTERNAL",
+    "observation": 16,
+    "date": "2025-01-16",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "DX_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "ADX14",
+    "observation": 28,
+    "date": "2025-01-28",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "ADX14",
+    "observation": 29,
+    "date": "2025-01-29",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "ADX14",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_MIDDLE20",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": "100",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "VARIANCE_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": "0",
+    "denominator": "1",
+    "tolerance": "0"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "0",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "0",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "STDDEV_INTERNAL",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "0",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "100",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "100",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_UPPER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 20,
+    "date": "2025-01-20",
+    "expected": "100",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 21,
+    "date": "2025-01-21",
+    "expected": "100",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  },
+  {
+    "scenario": "flat",
+    "indicator": "BOLLINGER_LOWER20_2",
+    "observation": 64,
+    "date": "2025-03-05",
+    "expected": "100",
+    "numerator": null,
+    "denominator": null,
+    "tolerance": "1e-45"
+  }
+]

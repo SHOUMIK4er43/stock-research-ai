@@ -598,3 +598,38 @@ contracts are not altered. All automated tests use temporary databases/storage a
 the standalone proof script also blocks network in real CLI subprocesses. Golden inputs and findings
 are separate authored artifacts. Exact rational comparisons precede display rounding, including the
 -50-bps threshold boundary and the two unrounded deposit-growth prerequisites.
+
+## Part 4E fixed technical series
+
+`domain/technicals.py` defines immutable requests, definitions, precision policy,
+points, series and snapshots. `application/technicals.py` calculates only the thirteen
+approved V1 outputs. `ResearchEngine.calculate_technicals` loads the pinned market
+extraction, verifies every raw artifact through the artifact store, calculates and
+appends the snapshot. It has no provider dependency. Bootstrap and CLI handle wiring
+and JSON export. No acquisition, authentication, signals or interpretation are added.
+
+The requested range is the entire seed universe (`REQUEST_RANGE_ONLY_V1`). Exact
+endpoints are required. Known missing sessions block recursion; absent calendar
+metadata produces `OBSERVED_SESSIONS_ONLY`. No calendar or prior lookback is inferred.
+OHLC values must be finite, positive and internally consistent. Unknown adjustments
+remain a limitation, not a numerical failure. Corporate actions remain unavailable.
+
+Production uses bounded 70-digit Decimal recursive state, independent 50-digit stored
+values and two-place HALF_EVEN display values. Recursive values do not claim exact
+rational representation. Shared finite-window mean, square root and endpoint selection
+helpers preserve existing Part 4B behavior. Public indicator periods are fixed; private
+registry injection exists for future-version regression tests only.
+
+A technical snapshot retains each selected Part 3B observation once. Each derived point
+has its own UUID and references current/seed observations, its recursive predecessor,
+and dependent indicator points. The validator rejects duplicate IDs, unresolved/future
+references and inconsistent point dates. Audit intermediates are inside the same
+snapshot; they have no separate database rows or invented raw locators.
+
+`market_calculation_snapshots` is reused without DDL changes. New payloads are envelopes
+with `payload_version=1` and `payload_type=market_scalar` or `technical_series`.
+Legacy unwrapped `schema_version=4B.1` is still decoded without rewriting stored rows.
+`market_calculation_history` returns only scalar objects; `technical_history` returns
+only technical snapshots. Saving again appends a new UUID; inserting the same UUID
+fails. Definitions, parameters, precision, source references and ranges are copied
+into immutable snapshots. See `docs/part4e-proof.md` for reproducible proof details.

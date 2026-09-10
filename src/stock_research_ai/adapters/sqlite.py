@@ -36,6 +36,7 @@ from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
+from stock_research_ai.domain.technicals import TechnicalSnapshot
 
 
 class DatabaseNotReadyError(RuntimeError):
@@ -731,6 +732,20 @@ class _MarketCalculationRow(_Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+def decode_market_calculation(
+    payload: dict[str, Any],
+) -> MarketCalculationSnapshot | TechnicalSnapshot:
+    if "payload_type" not in payload and payload.get("schema_version") == "4B.1":
+        return MarketCalculationSnapshot.model_validate(payload)
+    if payload.get("payload_version") != 1:
+        raise ValueError("Unknown market calculation payload version")
+    if payload.get("payload_type") == "market_scalar":
+        return MarketCalculationSnapshot.model_validate(payload["snapshot"])
+    if payload.get("payload_type") == "technical_series":
+        return TechnicalSnapshot.model_validate(payload["snapshot"])
+    raise ValueError("Unknown market calculation payload type")
+
+
 class SQLiteMarketCalculationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
@@ -745,7 +760,11 @@ class SQLiteMarketCalculationRepository:
                     if snapshot.request.benchmark_extraction_id
                     else None,
                     calculated_at=snapshot.calculated_at.isoformat(),
-                    payload=snapshot.model_dump(mode="json"),
+                    payload={
+                        "payload_type": "market_scalar",
+                        "payload_version": 1,
+                        "snapshot": snapshot.model_dump(mode="json"),
+                    },
                 )
             )
 
@@ -758,7 +777,34 @@ class SQLiteMarketCalculationRepository:
                 .where(_MarketCalculationRow.extraction_id == str(extraction_id))
                 .order_by(_MarketCalculationRow.calculated_at, _MarketCalculationRow.id)
             )
-            return tuple(MarketCalculationSnapshot.model_validate(row.payload) for row in rows)
+            decoded = (decode_market_calculation(row.payload) for row in rows)
+            return tuple(s for s in decoded if isinstance(s, MarketCalculationSnapshot))
+
+    async def save_technical(self, snapshot: TechnicalSnapshot) -> None:
+        async with self.sessions() as session, session.begin():
+            session.add(
+                _MarketCalculationRow(
+                    id=str(snapshot.id),
+                    extraction_id=str(snapshot.request.extraction_id),
+                    benchmark_extraction_id=None,
+                    calculated_at=snapshot.calculated_at.isoformat(),
+                    payload={
+                        "payload_type": "technical_series",
+                        "payload_version": 1,
+                        "snapshot": snapshot.model_dump(mode="json"),
+                    },
+                )
+            )
+
+    async def technical_history(self, extraction_id: UUID) -> tuple[TechnicalSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_MarketCalculationRow)
+                .where(_MarketCalculationRow.extraction_id == str(extraction_id))
+                .order_by(_MarketCalculationRow.calculated_at, _MarketCalculationRow.id)
+            )
+            decoded = (decode_market_calculation(row.payload) for row in rows)
+            return tuple(s for s in decoded if isinstance(s, TechnicalSnapshot))
 
 
 class _PatternSnapshotRow(_Base):

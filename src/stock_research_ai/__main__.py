@@ -92,13 +92,38 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     patterns.add_argument("--request", type=Path, required=True)
     patterns.add_argument("--output", type=Path, required=True)
+    technical = commands.add_parser(
+        "calculate-technicals", help="Calculate fixed technical indicator series"
+    )
+    technical.add_argument("--request", type=Path, required=True)
+    technical.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "evaluate-patterns":
+    if args.command == "calculate-technicals":
+        from stock_research_ai.bootstrap import calculate_technicals
+        from stock_research_ai.domain.technicals import TechnicalRequest
+
+        try:
+            technical_snapshot = asyncio.run(
+                calculate_technicals(
+                    settings,
+                    TechnicalRequest.model_validate_json(args.request.read_text()),
+                    args.output,
+                )
+            )
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"Technical calculation exported: {args.output}")
+        raise SystemExit(
+            0
+            if all(s.status == "AVAILABLE" for s in technical_snapshot.series if s.requested)
+            else 3
+        )
+    elif args.command == "evaluate-patterns":
         from stock_research_ai.bootstrap import evaluate_patterns
         from stock_research_ai.domain.patterns import PatternRequest
 

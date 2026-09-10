@@ -23,6 +23,7 @@ from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SemanticResolution
+from stock_research_ai.domain.technicals import TechnicalSnapshot
 
 
 class CompanyRepository(Protocol):
@@ -174,6 +175,9 @@ class CalculationRepository(Protocol):
 
 
 class MarketCalculationRepository(Protocol):
+    async def save_technical(self, snapshot: TechnicalSnapshot) -> None: ...
+    async def technical_history(self, extraction_id: UUID) -> tuple[TechnicalSnapshot, ...]: ...
+
     async def save_market_calculation(self, snapshot: MarketCalculationSnapshot) -> None: ...
     async def market_calculation_history(
         self, extraction_id: UUID

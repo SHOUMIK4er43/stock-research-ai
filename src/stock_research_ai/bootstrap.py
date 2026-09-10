@@ -16,6 +16,7 @@ from stock_research_ai.adapters.json_export import (
     export_patterns,
     export_result,
     export_sector_kpis,
+    export_technicals,
 )
 from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
 from stock_research_ai.adapters.kite.source import KiteSource
@@ -61,6 +62,7 @@ from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
+from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
 
 
 @asynccontextmanager
@@ -341,6 +343,30 @@ async def evaluate_patterns(
         )
         result = await engine.evaluate_patterns(request)
         export_patterns(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def calculate_technicals(
+    settings: Settings, request: TechnicalRequest, output: Path
+) -> TechnicalSnapshot:
+    check_output(output)
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        engine = ResearchEngine(
+            database.repository,
+            market_calculations=MarketCalculationServices(
+                database.market,
+                database.market_calculations,
+                FileRawArtifactStore(
+                    settings.artifact_path or settings.database_path.parent / "artifacts"
+                ),
+            ),
+        )
+        result = await engine.calculate_technicals(request)
+        export_technicals(result, output)
         return result
     finally:
         await database.close()

@@ -15,6 +15,7 @@ from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
+from stock_research_ai.domain.technicals import TechnicalSnapshot
 
 SECTION_FILES = {
     "quarterly": Section.QUARTERLY,
@@ -286,6 +287,47 @@ def export_patterns(snapshot: PatternSnapshot, output: Path) -> None:
                     "issues": [i.model_dump(mode="json") for i in f.issues],
                 }
                 for f in snapshot.findings
+            ],
+        },
+    )
+
+
+def export_technicals(snapshot: TechnicalSnapshot, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    write_json(output / "normalized/calculation_snapshot.json", snapshot.model_dump(mode="json"))
+    requested = [s for s in snapshot.series if s.requested]
+    write_json(
+        output / "normalized/indicator_series.json", [s.model_dump(mode="json") for s in requested]
+    )
+    write_json(
+        output / "normalized/latest.json",
+        {
+            "requested_terminal_date": snapshot.request.end_date.isoformat(),
+            "results": [
+                {
+                    "indicator_id": s.definition.indicator_id,
+                    "status": s.status,
+                    "point": s.points[-1].model_dump(mode="json")
+                    if s.points and s.points[-1].date == snapshot.request.end_date
+                    else None,
+                }
+                for s in requested
+            ],
+        },
+    )
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "issues": [i.model_dump(mode="json") for i in snapshot.issues],
+            "indicators": [
+                {
+                    "indicator_id": s.definition.indicator_id,
+                    "status": s.status,
+                    "warmup_points": sum(p.status == "INSUFFICIENT_INPUT" for p in s.points),
+                }
+                for s in requested
             ],
         },
     )

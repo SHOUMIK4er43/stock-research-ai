@@ -876,3 +876,40 @@ no completed pattern row. They are not silently deleted or overwritten.
 Only the six named patterns are implemented. Receivables, inventory, debt, interest pressure,
 dilution/share count, GNPA/NNPA and other banking ratio trends remain deferred. Unknown profiles
 produce explicit NOT_APPLICABLE findings. Existing source NPA period semantics are untouched.
+
+## Part 4E: fixed technical indicator evidence
+
+The technical CLI calculates EMA20, RSI14, MACD12/26 with signal9 and histogram,
+true range, ATR14, Bollinger20/2, +DI14, −DI14 and ADX14 from a pinned Part 3B extraction.
+It emits numerical evidence only. The explicit requested range supplies all seeds;
+there is no hidden lookback. Values use 70-digit Decimal working state, 50-digit
+storage and separately rounded display values.
+
+Run the complete offline proof in a **new** output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run python scripts/verify_technicals.py --output output/part4e-proof-manual
+```
+
+This initializes an isolated proof database, replays synthetic OHLCV through the market
+CLI, runs eight technical CLI cases and compares 996 checkpoints to frozen independent
+expectations. It uses no Kite credentials or live data. Results include source SHA
+checks, typed snapshot retrieval, full checkpoint values and the exact executed commands.
+
+For an existing extraction, save a request JSON with `extraction_id`, `instrument_id`,
+`start_date`, `end_date`, and `indicators` (for example `["EMA20", "ADX14"]`), then run:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run stock-research-ai --database /absolute/path/research.sqlite3 \
+  calculate-technicals --request /absolute/path/request.json --output /absolute/path/new-export
+```
+
+Use the same `STOCK_RESEARCH_AI_ARTIFACT_PATH` as ingestion when it is customized.
+Outputs are `normalized/calculation_snapshot.json`, `normalized/indicator_series.json`,
+`normalized/latest.json` and `coverage.json`. Latest always identifies the requested
+terminal date; warm-up points do not invalidate a series whose terminal point is available.
+Exit status is 0 for all requested outputs available, 3 for unavailable outputs, and
+2 for an invalid request. Unknown adjustment and unavailable corporate-action coverage
+remain explicit. See [the Part 4E proof report](docs/part4e-proof.md).

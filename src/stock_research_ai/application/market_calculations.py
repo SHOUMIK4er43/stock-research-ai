@@ -1,7 +1,8 @@
 """Six deterministic calculations on pinned close observations; no acquisition."""
 
 import hashlib
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from fractions import Fraction
 from typing import Any
@@ -174,23 +175,7 @@ def evaluate(
             )
 
     def select(s: MarketExtractionResult, relative: bool = False) -> list[MarketObservation]:
-        rows = [
-            o for o in s.observations if request.start_date <= o.trading_date <= request.end_date
-        ]
-        if (
-            not rows
-            or rows[0].trading_date != request.start_date
-            or rows[-1].trading_date != request.end_date
-        ):
-            raise MarketInputFailure(
-                "INCOMPATIBLE_SERIES" if relative else "INSUFFICIENT_INPUT",
-                "EXACT_ENDPOINT_MISSING",
-            )
-        if any(request.start_date <= d <= request.end_date for d in s.coverage.duplicate_dates):
-            raise MarketInputFailure("INVALID_INPUT", "SOURCE_DUPLICATE_DATE_EXCLUDED")
-        if s.coverage.overall != "COMPLETE":
-            issues.append(issue("PARTIAL_SOURCE_COVERAGE"))
-        return rows
+        return select_range(s, request.start_date, request.end_date, issues, relative)
 
     rows = select(source, spec.metric_id == "BENCHMARK_RELATIVE_RETURN")
     if spec.metric_id in {"PRICE_RETURN", "PRICE_CAGR", "BENCHMARK_RELATIVE_RETURN"}:
@@ -273,7 +258,7 @@ def evaluate(
         data.update(unit=source.instrument.price_unit, currency=source.instrument.currency)
         if source.instrument.price_unit == "PRICE" and source.instrument.currency is None:
             issues.append(issue("SOURCE_CURRENCY_UNKNOWN"))
-        return sum(closes, Fraction()) / len(closes)
+        return numeric_mean(closes)
     if spec.metric_id == "REALIZED_VOLATILITY":
         returns = [b / a - 1 for a, b in zip(closes, closes[1:], strict=False)]
         n = len(returns)
@@ -286,7 +271,7 @@ def evaluate(
             variance_definition="SAMPLE_VARIANCE",
             annualization_policy="ARITHMETIC_SAMPLE_252_V1",
         )
-        return decimal(variance).sqrt() * Decimal(252).sqrt() * 100
+        return decimal_sqrt(decimal(variance)) * decimal_sqrt(Decimal(252)) * 100
     if spec.metric_id == "MAX_DRAWDOWN":
         peak = peak_index = trough_index = 0
         worst = Fraction()
@@ -342,3 +327,34 @@ def evaluate(
         benchmark_price_return=decimal(benchmark_return),
     )
     return company_return - benchmark_return
+
+
+def select_range(
+    s: MarketExtractionResult,
+    start_date: date,
+    end_date: date,
+    issues: list[CalculationIssue],
+    relative: bool = False,
+) -> list[MarketObservation]:
+    rows = [o for o in s.observations if start_date <= o.trading_date <= end_date]
+    if not rows or rows[0].trading_date != start_date or rows[-1].trading_date != end_date:
+        raise MarketInputFailure(
+            "INCOMPATIBLE_SERIES" if relative else "INSUFFICIENT_INPUT",
+            "EXACT_ENDPOINT_MISSING",
+        )
+    if any(start_date <= d <= end_date for d in s.coverage.duplicate_dates):
+        raise MarketInputFailure("INVALID_INPUT", "SOURCE_DUPLICATE_DATE_EXCLUDED")
+    if s.coverage.overall != "COMPLETE":
+        issues.append(issue("PARTIAL_SOURCE_COVERAGE"))
+    return rows
+
+
+def numeric_mean[Number: (Decimal, Fraction)](values: Sequence[Number]) -> Number:
+    total = values[0]
+    for value in values[1:]:
+        total += value
+    return total / len(values)
+
+
+def decimal_sqrt(value: Decimal) -> Decimal:
+    return value.sqrt()

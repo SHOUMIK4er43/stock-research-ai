@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict
 
 from stock_research_ai.application import patterns as pattern_engine
-from stock_research_ai.application import technicals
+from stock_research_ai.application import technicals, valuation
 from stock_research_ai.application.calculations import calculate
 from stock_research_ai.application.market_calculations import calculate_market
 from stock_research_ai.application.ports import (
@@ -31,6 +31,7 @@ from stock_research_ai.application.ports import (
     SemanticResolver,
     SourceAcquirer,
     SourceNormalizer,
+    ValuationRepository,
 )
 from stock_research_ai.application.sector_kpis import evaluate_kpis
 from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
@@ -52,6 +53,7 @@ from stock_research_ai.domain.publications import (
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
+from stock_research_ai.domain.valuation import ValuationRequest, ValuationSnapshot
 
 
 class Capabilities(BaseModel):
@@ -119,6 +121,16 @@ class ContextServices:
     repository: ContextRepository
 
 
+@dataclass(frozen=True)
+class ValuationServices:
+    extractions: ExtractionRepository
+    market: MarketRepository
+    calculations: CalculationRepository
+    resolver: SemanticResolver
+    artifacts: RawArtifactStore
+    repository: ValuationRepository
+
+
 class ResearchEngine:
     def __init__(
         self,
@@ -131,6 +143,7 @@ class ResearchEngine:
         sector_kpis: SectorKPIServices | None = None,
         market_calculations: MarketCalculationServices | None = None,
         patterns: PatternRepository | None = None,
+        valuations: ValuationServices | None = None,
     ) -> None:
         self._repository = repository
         self._extraction = extraction
@@ -141,6 +154,39 @@ class ResearchEngine:
         self._sector_kpis = sector_kpis
         self._market_calculations = market_calculations
         self._patterns = patterns
+        self._valuations = valuations
+
+    async def evaluate_valuation(self, request: ValuationRequest) -> ValuationSnapshot:
+        services = self._valuations
+        if services is None:
+            raise RuntimeError("Valuation services not configured")
+        if await self._repository.get(request.company_id) is None:
+            raise ValueError("Unknown valuation company")
+        financial = (
+            await services.extractions.get_extraction(request.financial_extraction_id)
+            if request.financial_extraction_id
+            else None
+        )
+        markets = {}
+        calculations = {}
+        for pin in valuation.pins(request):
+            if pin.kind == "MARKET":
+                market = await services.market.get_market(pin.snapshot_id)
+                if market is None:
+                    raise ValueError("Unknown market extraction")
+                markets[market.id] = market
+            elif pin.kind == "CALCULATION":
+                calculation = await services.calculations.get_calculation(pin.snapshot_id)
+                if calculation is None:
+                    raise ValueError("Unknown calculation snapshot")
+                calculations[calculation.id] = calculation
+        evidence = valuation.Evidence(request, financial, markets, calculations, services.resolver)
+        for source in evidence.sources():
+            for artifact in source.artifacts:
+                await services.artifacts.read(artifact)
+        result = valuation.evaluate(request, evidence)
+        await services.repository.save_valuation(result)
+        return result
 
     async def calculate_technicals(self, request: TechnicalRequest) -> TechnicalSnapshot:
         services = self._market_calculations

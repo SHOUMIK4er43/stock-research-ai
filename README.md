@@ -913,3 +913,72 @@ terminal date; warm-up points do not invalidate a series whose terminal point is
 Exit status is 0 for all requested outputs available, 3 for unavailable outputs, and
 2 for an invalid request. Unknown adjustment and unavailable corporate-action coverage
 remain explicit. See [the Part 4E proof report](docs/part4e-proof.md).
+
+## Part 5A — Valuation & Expectations Engine
+
+The valuation CLI evaluates six deterministic, evidence-pinned methods against a
+Part 2 financial extraction and, optionally, a Part 3B market extraction or Part
+4A/4C calculation: `PRICE_TO_EARNINGS`, `PRICE_TO_BOOK` (observed multiples), and
+four scenario/expectation methods driven by explicit caller-declared assumptions —
+`FCFF_DCF`, `IMPLIED_FCFF_GROWTH_FROM_MARKET_PRICE` (a Decimal-bisection reverse
+solve), `REQUIRED_EPS_CAGR_FOR_RETURN` and `REQUIRED_BVPS_CAGR_FOR_RETURN`. Every
+fact used is pinned by exact observation ID and hash-verified against its source
+snapshot at persistence time; every scenario assumption declares its provenance
+(`SOURCE_EVIDENCE` or `CALLER_DECLARED`) and, for source-evidenced assumptions,
+must match the pinned evidence exactly. `FCFF_DCF` and
+`IMPLIED_FCFF_GROWTH_FROM_MARKET_PRICE` apply only to `IT_SERVICES_PROFILE`;
+`REQUIRED_BVPS_CAGR_FOR_RETURN` applies only to `BANK_PROFILE`; the other three
+methods apply to both. Values use 70-digit Decimal working state, 50-digit
+storage and separately rounded display values, matching Parts 4A–4E.
+
+Every result retains `POINT_IN_TIME_AVAILABILITY_UNVERIFIED`: pinning a current
+financial extraction and a market observation under `as_of_policy =
+CURRENT_PINNED_SNAPSHOT_V1` makes a valuation numerically reproducible, but does
+not establish that the financial fact was publicly known as of the pinned market
+date. Source-reported multiples (e.g. Screener's own "Stock P/E") are retained
+as separate `SOURCE_REPORTED_VALUATION_EVIDENCE` facts on the snapshot and are
+never substituted for — or silently accepted in place of — a calculated
+multiple's own pinned denominator.
+
+Run the complete offline proof in a **new** output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run python scripts/verify_valuation.py --output output/part5a-proof-manual
+```
+
+This initializes an isolated proof database, replays one synthetic and two real
+(INFY standalone, YESBANK consolidated) Screener fixtures through the production
+CLI, runs 13 valuation cases and compares every component to independently
+hand-derived expectations (synthetic) or exact rational fractions (real). It
+uses no network access and no Kite credentials. Real-source evidence proves only
+the two observed-multiple methods, because those are the only methods whose full
+evidence contract (a pinned price and a pinned annual EPS/BVPS fact) is actually
+satisfied by retained public data; `PRICE_TO_BOOK` correctly refuses
+`UNVERIFIED_METRIC_SEMANTICS` for both real companies because neither page
+publishes a mapped book-value-**per-share** figure. DCF, reverse-DCF and the
+required-CAGR methods are proved only against the independent synthetic
+scenario — no WACC, terminal growth, forecast FCFF, exit multiple or required
+return is invented for a real company.
+
+For an existing extraction, save a request JSON with `company_id`,
+`financial_extraction_id`, `reporting_scope`, `profile_id`, `classification`,
+and one or more `selections` (each with a `method`, and where applicable a
+`price`/`denominator` evidence pin and a `scenario` of caller-declared
+assumptions), then run:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run stock-research-ai --database /absolute/path/research.sqlite3 \
+  evaluate-valuation --request /absolute/path/request.json --output /absolute/path/new-export
+```
+
+Use the same `STOCK_RESEARCH_AI_ARTIFACT_PATH` as ingestion when it is
+customized. Outputs are `normalized/valuation_snapshot.json`, `normalized/
+multiples.json`, `normalized/scenarios.json`, `normalized/
+reverse_expectations.json` and `coverage.json`. Exit status is 0 when every
+requested selection resolves `AVAILABLE`, and 3 otherwise. Valuation snapshots
+are append-only history rows keyed by company; no historical row is ever
+rewritten, and a revised assumption, method version, precision policy, solver
+policy or pinned source produces a new, independently reconstructable snapshot.
+See [the Part 5A proof report](docs/part5a-proof.md).

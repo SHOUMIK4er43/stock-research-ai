@@ -17,6 +17,7 @@ from stock_research_ai.adapters.json_export import (
     export_result,
     export_sector_kpis,
     export_technicals,
+    export_valuation,
 )
 from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
 from stock_research_ai.adapters.kite.source import KiteSource
@@ -38,6 +39,7 @@ from stock_research_ai.application.engine import (
     MarketServices,
     ResearchEngine,
     SectorKPIServices,
+    ValuationServices,
 )
 from stock_research_ai.application.ports import (
     DocumentAcquirer,
@@ -63,6 +65,7 @@ from stock_research_ai.domain.publications import (
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
+from stock_research_ai.domain.valuation import ValuationRequest, ValuationSnapshot
 
 
 @asynccontextmanager
@@ -367,6 +370,34 @@ async def calculate_technicals(
         )
         result = await engine.calculate_technicals(request)
         export_technicals(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def evaluate_valuation(
+    settings: Settings, request: ValuationRequest, output: Path
+) -> ValuationSnapshot:
+    check_output(output)
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        store = FileRawArtifactStore(
+            settings.artifact_path or settings.database_path.parent / "artifacts"
+        )
+        engine = ResearchEngine(
+            database.repository,
+            valuations=ValuationServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                ScreenerSemanticResolver(),
+                store,
+                database.valuations,
+            ),
+        )
+        result = await engine.evaluate_valuation(request)
+        export_valuation(result, output)
         return result
     finally:
         await database.close()

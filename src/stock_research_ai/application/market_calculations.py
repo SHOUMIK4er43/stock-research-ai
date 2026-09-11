@@ -8,6 +8,7 @@ from fractions import Fraction
 from typing import Any
 from uuid import UUID, uuid4
 
+from stock_research_ai.application.numerics import root_growth
 from stock_research_ai.domain.calculations import CalculationIssue, FormulaDefinition
 from stock_research_ai.domain.market import MarketExtractionResult, MarketObservation
 from stock_research_ai.domain.market_calculations import (
@@ -252,7 +253,7 @@ def evaluate(
         data.update(
             annualization_policy="ACTUAL_DAYS_365_FIXED_V1", elapsed_days=days, elapsed_years=years
         )
-        return ((decimal(closes[-1] / closes[0]).ln() / years).exp() - 1) * 100
+        return root_growth(decimal(closes[-1] / closes[0]), years) * 100
     if spec.metric_id == "SMA":
         assert source.instrument is not None
         data.update(unit=source.instrument.price_unit, currency=source.instrument.currency)

@@ -24,6 +24,7 @@ from stock_research_ai.domain.publications import (
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SemanticResolution
 from stock_research_ai.domain.technicals import TechnicalSnapshot
+from stock_research_ai.domain.valuation import ValuationSnapshot
 
 
 class CompanyRepository(Protocol):
@@ -193,3 +194,8 @@ class SemanticResolver(Protocol):
 class PatternRepository(Protocol):
     async def save_pattern(self, snapshot: PatternSnapshot) -> None: ...
     async def pattern_history(self, extraction_id: UUID) -> tuple[PatternSnapshot, ...]: ...
+
+
+class ValuationRepository(Protocol):
+    async def save_valuation(self, snapshot: ValuationSnapshot) -> None: ...
+    async def valuation_history(self, company_id: UUID) -> tuple[ValuationSnapshot, ...]: ...

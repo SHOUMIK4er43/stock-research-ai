@@ -44,6 +44,7 @@ LABELS = {
     "Tax %": "tax_percent",
     "Net Profit": "net_profit",
     "EPS in Rs": "eps",
+    "Book Value Per Share in Rs": "bvps",
     "Gross NPA %": "gross_npa_percent",
     "Net NPA %": "net_npa_percent",
     "Dividend Payout %": "dividend_payout_percent",

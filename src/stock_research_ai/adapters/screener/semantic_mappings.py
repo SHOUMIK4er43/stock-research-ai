@@ -13,6 +13,8 @@ _NAMES = {
     "sales": ("Sales", "SALES"),
     "operating_profit": ("Operating Profit", "OPERATING_PROFIT"),
     "eps": ("EPS in Rs", "EPS"),
+    "current_price": ("Current Price", "PRICE"),
+    "bvps": ("Book Value Per Share in Rs", "BVPS"),
 }
 MAPPINGS = tuple(
     SemanticMappingDefinition(
@@ -27,7 +29,11 @@ MAPPINGS = tuple(
     )
     for metric, (label, canonical) in _NAMES.items()
     for section in (
-        ("cashflow",)
+        ("top_metrics",)
+        if metric == "current_price"
+        else ("balance_sheet",)
+        if metric == "bvps"
+        else ("cashflow",)
         if metric == "cash_operating"
         else ("balance_sheet",)
         if metric in {"deposits", "total_assets"}
@@ -44,7 +50,7 @@ class ScreenerSemanticResolver:
         self, source: CompanyExtractionResult, semantics: tuple[str, ...]
     ) -> tuple[SemanticResolution, ...]:
         resolved = []
-        for section in ("profit_loss", "quarterly", "balance_sheet", "cashflow"):
+        for section in ("top_metrics", "profit_loss", "quarterly", "balance_sheet", "cashflow"):
             for o in getattr(source, section):
                 matches = [
                     m

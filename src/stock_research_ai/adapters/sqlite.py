@@ -37,6 +37,7 @@ from stock_research_ai.domain.publications import (
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 from stock_research_ai.domain.technicals import TechnicalSnapshot
+from stock_research_ai.domain.valuation import ValuationSnapshot
 
 
 class DatabaseNotReadyError(RuntimeError):
@@ -161,6 +162,7 @@ class SQLiteDatabase:
         self.calculations = SQLiteCalculationRepository(sessions)
         self.patterns = SQLitePatternRepository(sessions)
         self.market_calculations = SQLiteMarketCalculationRepository(sessions)
+        self.valuations = SQLiteValuationRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -863,3 +865,78 @@ class SQLitePatternRepository:
                 .order_by(_PatternSnapshotRow.evaluated_at, _PatternSnapshotRow.id)
             )
             return tuple(PatternSnapshot.model_validate(row.payload) for row in rows)
+
+
+class _ValuationRow(_Base):
+    __tablename__ = "valuation_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    financial_extraction_id: Mapped[str | None] = mapped_column(ForeignKey("extractions.id"))
+    market_extraction_id: Mapped[str | None] = mapped_column(ForeignKey("market_extractions.id"))
+    evaluated_at: Mapped[str] = mapped_column(String)
+    payload_type: Mapped[str] = mapped_column(String)
+    schema_version: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteValuationRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_valuation(self, snapshot: ValuationSnapshot) -> None:
+        from stock_research_ai.application.valuation import digest
+
+        snapshot = ValuationSnapshot.model_validate_json(snapshot.model_dump_json())
+        # Validate immutable references in the append transaction, without association tables.
+        async with self.sessions() as session, session.begin():
+            source: (
+                CompanyExtractionResult
+                | MarketExtractionResult
+                | CalculationSnapshot
+                | SectorKPIEvaluation
+                | None
+            )
+            for reference in snapshot.sources:
+                if reference.kind == "FINANCIAL":
+                    row = await session.get(_ExtractionRow, str(reference.snapshot_id))
+                    source = CompanyExtractionResult.model_validate(row.payload) if row else None
+                elif reference.kind == "MARKET":
+                    market_row = await session.get(_MarketExtractionRow, str(reference.snapshot_id))
+                    source = (
+                        MarketExtractionResult.model_validate(market_row.payload)
+                        if market_row
+                        else None
+                    )
+                else:
+                    calculation_row = await session.get(
+                        _CalculationSnapshotRow, str(reference.snapshot_id)
+                    )
+                    source = (
+                        decode_calculation(calculation_row.payload) if calculation_row else None
+                    )
+                if source is None or digest(source) != reference.payload_sha256:
+                    raise ValueError("Valuation source reference/hash mismatch")
+            markets = [s.snapshot_id for s in snapshot.sources if s.kind == "MARKET"]
+            session.add(
+                _ValuationRow(
+                    id=str(snapshot.id),
+                    company_id=str(snapshot.request.company_id),
+                    financial_extraction_id=str(snapshot.request.financial_extraction_id)
+                    if snapshot.request.financial_extraction_id
+                    else None,
+                    market_extraction_id=str(markets[0]) if len(markets) == 1 else None,
+                    evaluated_at=snapshot.evaluated_at.isoformat(),
+                    payload_type=snapshot.payload_type,
+                    schema_version=snapshot.schema_version,
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def valuation_history(self, company_id: UUID) -> tuple[ValuationSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_ValuationRow)
+                .where(_ValuationRow.company_id == str(company_id))
+                .order_by(_ValuationRow.evaluated_at, _ValuationRow.id)
+            )
+            return tuple(ValuationSnapshot.model_validate(row.payload) for row in rows)

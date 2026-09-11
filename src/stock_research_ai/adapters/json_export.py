@@ -16,6 +16,7 @@ from stock_research_ai.domain.publications import (
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 from stock_research_ai.domain.technicals import TechnicalSnapshot
+from stock_research_ai.domain.valuation import ValuationSnapshot
 
 SECTION_FILES = {
     "quarterly": Section.QUARTERLY,
@@ -328,6 +329,43 @@ def export_technicals(snapshot: TechnicalSnapshot, output: Path) -> None:
                     "warmup_points": sum(p.status == "INSUFFICIENT_INPUT" for p in s.points),
                 }
                 for s in requested
+            ],
+        },
+    )
+
+
+def export_valuation(snapshot: ValuationSnapshot, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    write_json(output / "normalized/valuation_snapshot.json", snapshot.model_dump(mode="json"))
+    for file, category in (
+        ("multiples", "OBSERVED_MULTIPLE_CALCULATION"),
+        ("scenarios", "SCENARIO_CALCULATION"),
+        ("reverse_expectations", "SCENARIO_EXPECTATION"),
+    ):
+        write_json(
+            output / "normalized" / (file + ".json"),
+            {
+                "snapshot_id": str(snapshot.id),
+                "results": [
+                    r.model_dump(mode="json")
+                    for r in snapshot.results
+                    if r.definition.category == category
+                ],
+            },
+        )
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "methods": [
+                {
+                    "selection_index": r.selection_index,
+                    "method": r.definition.method,
+                    "status": r.status,
+                    "issues": [i.model_dump(mode="json") for i in r.issues],
+                }
+                for r in snapshot.results
             ],
         },
     )

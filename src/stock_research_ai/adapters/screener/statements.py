@@ -69,7 +69,7 @@ def parse_statements(
                 unit = FinancialUnit(kind=UnitKind.DAYS)
             if clean_label(label) == "No. of Shareholders":
                 unit = FinancialUnit(kind=UnitKind.NUMBER)
-            if clean_label(label) == "EPS in Rs":
+            if clean_label(label) in {"EPS in Rs", "Book Value Per Share in Rs"}:
                 unit = FinancialUnit(kind=UnitKind.MONEY, currency="INR")
             for header, cell in zip(headers, row[1:], strict=True):
                 period = parse_period(

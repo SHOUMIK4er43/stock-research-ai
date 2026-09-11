@@ -97,13 +97,36 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     technical.add_argument("--request", type=Path, required=True)
     technical.add_argument("--output", type=Path, required=True)
+    valuation = commands.add_parser(
+        "evaluate-valuation", help="Evaluate pinned valuation evidence and explicit scenarios"
+    )
+    valuation.add_argument("--request", type=Path, required=True)
+    valuation.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "calculate-technicals":
+    if args.command == "evaluate-valuation":
+        from stock_research_ai.bootstrap import evaluate_valuation
+        from stock_research_ai.domain.valuation import ValuationRequest
+
+        try:
+            valuation_snapshot = asyncio.run(
+                evaluate_valuation(
+                    settings,
+                    ValuationRequest.model_validate_json(args.request.read_text()),
+                    args.output,
+                )
+            )
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"Valuation exported: {args.output}")
+        raise SystemExit(
+            0 if all(r.status == "AVAILABLE" for r in valuation_snapshot.results) else 3
+        )
+    elif args.command == "calculate-technicals":
         from stock_research_ai.bootstrap import calculate_technicals
         from stock_research_ai.domain.technicals import TechnicalRequest
 

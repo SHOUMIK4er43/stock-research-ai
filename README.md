@@ -982,3 +982,63 @@ are append-only history rows keyed by company; no historical row is ever
 rewritten, and a revised assumption, method version, precision policy, solver
 policy or pinned source produces a new, independently reconstructable snapshot.
 See [the Part 5A proof report](docs/part5a-proof.md).
+
+## Part 5B — Institutional Analyst Engine
+
+The analyst CLI produces structured, evidence-cited **interpretation** over Parts 1-5A
+evidence. It creates no new source facts, no recommendation, no final report. Every claim
+an `AnalystModel` may propose is validated deterministically before acceptance: every
+citation must resolve to an item explicitly pinned into the request's own evidence
+bundle; every numeric token in a claim's statement must exactly match — same value, same
+sign, same unit family — a canonical stored value already cited, never a value the model
+computed itself; forbidden recommendation language (`buy`/`sell`/`hold`/`target price`),
+unsupported certainty language, and sector-inapplicable industrial framing (e.g. "net
+debt" for a bank) are all rejected. `epistemic_class` is structurally locked to
+`INTERPRETATION` for everything the model authors — FACT, CALCULATION, and SCENARIO
+describe only what was cited, never the claim itself.
+
+Section coverage (`AVAILABLE`/`PARTIAL`/`INSUFFICIENT_INPUT`/`NOT_APPLICABLE`/
+`UNAVAILABLE`/`UNVERIFIED_METRIC_SEMANTICS`/`INCOMPATIBLE_SCOPE`/`INCOMPATIBLE_PERIOD`) is
+computed from the pinned evidence bundle before any model call, and persisted
+independently of whether any claim was produced — a section with no genuine coverage is
+an honest result, not a pipeline failure. No LIVE language-model provider ships in this
+part: `Capabilities.analysis_available` is `false` in every real deployment until a
+provider is explicitly wired in a later, separately reviewed increment. The CLI, run as
+shipped, always reports "provider unavailable" (exit code 4) — it never silently
+substitutes a stub.
+
+Run the complete offline proof in a **new** output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run python scripts/verify_analysis.py --output output/part5b-proof-manual
+```
+
+This exercises two explicitly separate tracks. **Real retained evidence** (INFY, YESBANK):
+only genuinely real Screener/document fixtures are used, and sections with no real
+retained evidence (market/technical data, industry/macro context, and any
+scenario-dependent expectation) are never requested for either company — for example,
+YESBANK's real investor-presentation PDF genuinely supports `BUSINESS_MODEL` and
+`MANAGEMENT_AND_DOCUMENT_INTELLIGENCE`, while INFY (no retained document evidence) reports
+`INSUFFICIENT_INPUT`/`UNAVAILABLE` there instead — an outcome of what evidence actually
+exists, not a scripted difference. **Synthetic mechanical proof**: a fully synthetic
+company and scenario fixture exercises valuation-expectation, variant-perception, and
+bull/base/bear interpretation mechanically; it is never presented as real analysis.
+
+For an existing evidence graph, save a request JSON (`AnalysisRequest`: company, profile,
+pinned Part 1-5A evidence IDs, requested sections) and an execution JSON
+(`AnstExecutionSpec`: template selection and non-secret generation parameters), then run:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run stock-research-ai --database /absolute/path/research.sqlite3 \
+  analyze-company --request /absolute/path/request.json \
+  --execution /absolute/path/execution.json --output /absolute/path/new-export
+```
+
+Outputs are `normalized/analysis_snapshot.json` (the full snapshot, including the exact
+input bundle and the exact rendered model request/response — reconstructable forever),
+`normalized/claims_by_section.json`, and `coverage.json`. Analysis snapshots are
+append-only history rows keyed by company; a revised template, provider, model, generation
+parameter, or pinned source produces a new, independently reconstructable snapshot, and no
+historical row is ever rewritten. See [the Part 5B proof report](docs/part5b-proof.md).

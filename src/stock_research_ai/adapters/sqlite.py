@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from pydantic import BaseModel
 from sqlalchemy import JSON, ForeignKey, String, event, inspect, select, text
 from sqlalchemy.engine import URL, Connection
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from stock_research_ai.domain.analysis import AnalysisSnapshot
 from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.company import (
     Company,
@@ -57,6 +59,34 @@ class _CompanyRow(_Base):
     provider_identifiers: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False)
 
 
+async def _load_company(session: AsyncSession, company_id: UUID) -> Company | None:
+    """Shared by SQLiteCompanyRepository.get and any in-transaction integrity check that
+    needs the exact same reconstruction (so a re-hash matches what the engine saw)."""
+    row = await session.get(_CompanyRow, str(company_id))
+    if row is None:
+        return None
+    listing_rows = (
+        await session.scalars(select(_ListingRow).where(_ListingRow.company_id == str(company_id)))
+    ).all()
+    projected = list(row.listings)
+    for stored in listing_rows:
+        listing = Listing.model_validate(stored.payload)
+        entry = {
+            "exchange": listing.exchange,
+            "symbol": listing.symbol or listing.exchange_identifier,
+        }
+        if entry not in projected:
+            projected.append(entry)
+    return Company(
+        id=UUID(row.id),
+        name=row.name,
+        listings=tuple(ExchangeListing.model_validate(listing) for listing in projected),
+        provider_identifiers=tuple(
+            ProviderIdentifier.model_validate(identifier) for identifier in row.provider_identifiers
+        ),
+    )
+
+
 class SQLiteCompanyRepository:
     """Map companies to rows, with a separate session for each operation."""
 
@@ -79,32 +109,7 @@ class SQLiteCompanyRepository:
 
     async def get(self, company_id: UUID) -> Company | None:
         async with self._sessions() as session:
-            row = await session.get(_CompanyRow, str(company_id))
-            if row is None:
-                return None
-            listing_rows = (
-                await session.scalars(
-                    select(_ListingRow).where(_ListingRow.company_id == str(company_id))
-                )
-            ).all()
-            projected = list(row.listings)
-            for stored in listing_rows:
-                listing = Listing.model_validate(stored.payload)
-                entry = {
-                    "exchange": listing.exchange,
-                    "symbol": listing.symbol or listing.exchange_identifier,
-                }
-                if entry not in projected:
-                    projected.append(entry)
-            return Company(
-                id=UUID(row.id),
-                name=row.name,
-                listings=tuple(ExchangeListing.model_validate(listing) for listing in projected),
-                provider_identifiers=tuple(
-                    ProviderIdentifier.model_validate(identifier)
-                    for identifier in row.provider_identifiers
-                ),
-            )
+            return await _load_company(session, company_id)
 
 
 def _check_schema(connection: Connection) -> None:
@@ -163,6 +168,7 @@ class SQLiteDatabase:
         self.patterns = SQLitePatternRepository(sessions)
         self.market_calculations = SQLiteMarketCalculationRepository(sessions)
         self.valuations = SQLiteValuationRepository(sessions)
+        self.analyses = SQLiteAnalysisRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -636,6 +642,16 @@ class SQLiteContextRepository:
             )
             return tuple(MacroSnapshot.model_validate(r.payload) for r in rows)
 
+    async def get_publication(self, snapshot_id: UUID) -> PublicationSnapshot | None:
+        async with self.sessions() as session:
+            row = await session.get(_PublicationSnapshotRow, str(snapshot_id))
+            return PublicationSnapshot.model_validate(row.payload) if row else None
+
+    async def get_macro(self, snapshot_id: UUID) -> MacroSnapshot | None:
+        async with self.sessions() as session:
+            row = await session.get(_MacroSnapshotRow, str(snapshot_id))
+            return MacroSnapshot.model_validate(row.payload) if row else None
+
     async def search_publications(self, query: str, limit: int) -> tuple[PublicationHit, ...]:
         hits = []
         async with self.sessions() as session:
@@ -940,3 +956,174 @@ class SQLiteValuationRepository:
                 .order_by(_ValuationRow.evaluated_at, _ValuationRow.id)
             )
             return tuple(ValuationSnapshot.model_validate(row.payload) for row in rows)
+
+
+class _AnalysisRow(_Base):
+    __tablename__ = "analysis_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    evaluated_at: Mapped[str] = mapped_column(String)
+    schema_version: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+async def _load_evidence_owner_in_session(
+    session: AsyncSession, kind: str, owning_snapshot_id: UUID
+) -> BaseModel | None:
+    """Neutral transaction-scoped integrity helper: reload the exact owning object for one
+    evidence kind, using the SAME session/transaction the caller is about to insert with.
+    Pure read + decode - no formula, no calculation, no recomputation of any kind."""
+    if kind == "COMPANY":
+        return await _load_company(session, owning_snapshot_id)
+    if kind in ("FINANCIAL", "SHAREHOLDING"):
+        row = await session.get(_ExtractionRow, str(owning_snapshot_id))
+        return CompanyExtractionResult.model_validate(row.payload) if row else None
+    if kind == "MARKET":
+        market_row = await session.get(_MarketExtractionRow, str(owning_snapshot_id))
+        return MarketExtractionResult.model_validate(market_row.payload) if market_row else None
+    if kind in ("FINANCIAL_CALCULATION", "SECTOR_KPI"):
+        calc_row = await session.get(_CalculationSnapshotRow, str(owning_snapshot_id))
+        return decode_calculation(calc_row.payload) if calc_row else None
+    if kind == "PATTERN":
+        pattern_row = await session.get(_PatternSnapshotRow, str(owning_snapshot_id))
+        return PatternSnapshot.model_validate(pattern_row.payload) if pattern_row else None
+    if kind in ("MARKET_CALCULATION", "TECHNICAL"):
+        mc_row = await session.get(_MarketCalculationRow, str(owning_snapshot_id))
+        return decode_market_calculation(mc_row.payload) if mc_row else None
+    if kind == "VALUATION":
+        valuation_row = await session.get(_ValuationRow, str(owning_snapshot_id))
+        return ValuationSnapshot.model_validate(valuation_row.payload) if valuation_row else None
+    if kind == "DOCUMENT_CHUNK":
+        document_row = await session.get(_DocumentExtractionRow, str(owning_snapshot_id))
+        return ParsedDocument.model_validate(document_row.payload) if document_row else None
+    if kind == "PUBLICATION":
+        publication_row = await session.get(_PublicationSnapshotRow, str(owning_snapshot_id))
+        return (
+            PublicationSnapshot.model_validate(publication_row.payload)
+            if publication_row
+            else None
+        )
+    if kind == "MACRO":
+        macro_row = await session.get(_MacroSnapshotRow, str(owning_snapshot_id))
+        return MacroSnapshot.model_validate(macro_row.payload) if macro_row else None
+    raise ValueError(f"Unknown evidence kind: {kind}")
+
+
+async def _verify_upstream_lineage_in_session(
+    session: AsyncSession, kind: str, decoded_source: object
+) -> None:
+    """Safeguard 1B, replayed inside the SAME transaction as the append: derived snapshots
+    are walked back to their own originating extraction(s)/market extraction(s), using
+    their own already-existing lineage fields, and re-verified. Pure read + digest compare;
+    no financial/calculation/technical logic is reimplemented or recomputed here."""
+    from stock_research_ai.application.hashing import digest
+
+    if kind in ("FINANCIAL_CALCULATION", "SECTOR_KPI"):
+        assert isinstance(decoded_source, CalculationSnapshot | SectorKPIEvaluation)
+        upstream = await _load_evidence_owner_in_session(
+            session, "FINANCIAL", decoded_source.request.extraction_id
+        )
+        if upstream is None or digest(upstream) != decoded_source.source_payload_sha256:
+            raise ValueError(f"Pinned {kind} source's upstream extraction hash mismatch")
+    elif kind == "PATTERN":
+        assert isinstance(decoded_source, PatternSnapshot)
+        upstream = await _load_evidence_owner_in_session(
+            session, "FINANCIAL", decoded_source.request.extraction_id
+        )
+        if upstream is None or digest(upstream) != decoded_source.source_payload_sha256:
+            raise ValueError("Pinned PATTERN source's upstream extraction hash mismatch")
+    elif kind == "MARKET_CALCULATION":
+        assert isinstance(decoded_source, MarketCalculationSnapshot)
+        for market_source in decoded_source.sources:
+            upstream = await _load_evidence_owner_in_session(
+                session, "MARKET", market_source.extraction_id
+            )
+            if upstream is None or digest(upstream) != market_source.payload_sha256:
+                raise ValueError(
+                    "Pinned MARKET_CALCULATION source's upstream market extraction hash mismatch"
+                )
+    elif kind == "TECHNICAL":
+        assert isinstance(decoded_source, TechnicalSnapshot)
+        upstream = await _load_evidence_owner_in_session(
+            session, "MARKET", decoded_source.source.extraction_id
+        )
+        if upstream is None or digest(upstream) != decoded_source.source.payload_sha256:
+            raise ValueError(
+                "Pinned TECHNICAL source's upstream market extraction hash mismatch"
+            )
+    elif kind == "VALUATION":
+        assert isinstance(decoded_source, ValuationSnapshot)
+        for valuation_source in decoded_source.sources:
+            if valuation_source.kind == "FINANCIAL":
+                upstream = await _load_evidence_owner_in_session(
+                    session, "FINANCIAL", valuation_source.snapshot_id
+                )
+            elif valuation_source.kind == "MARKET":
+                upstream = await _load_evidence_owner_in_session(
+                    session, "MARKET", valuation_source.snapshot_id
+                )
+            else:
+                upstream = await _load_evidence_owner_in_session(
+                    session, "FINANCIAL_CALCULATION", valuation_source.snapshot_id
+                )
+                if upstream is None:
+                    upstream = await _load_evidence_owner_in_session(
+                        session, "SECTOR_KPI", valuation_source.snapshot_id
+                    )
+                if upstream is not None:
+                    upstream_kind = (
+                        "FINANCIAL_CALCULATION"
+                        if isinstance(upstream, CalculationSnapshot)
+                        else "SECTOR_KPI"
+                    )
+                    await _verify_upstream_lineage_in_session(session, upstream_kind, upstream)
+            if upstream is None or digest(upstream) != valuation_source.payload_sha256:
+                raise ValueError(
+                    "Pinned VALUATION source's upstream reference hash mismatch"
+                )
+    # COMPANY, FINANCIAL, SHAREHOLDING, MARKET, DOCUMENT_CHUNK, PUBLICATION, MACRO directly
+    # own their own raw evidence - there is no further upstream snapshot to walk.
+
+
+class SQLiteAnalysisRepository:
+    """Append-only. Every distinct pinned source - across all thirteen evidence kinds - is
+    reloaded and re-hashed, and every derived kind's upstream lineage is re-verified,
+    inside the SAME session/transaction that performs the insert. If any check fails, the
+    transaction is rolled back and nothing is inserted - eliminating the TOCTOU gap of
+    checking through separate sibling-repository sessions before a later, separate insert."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_analysis(self, snapshot: AnalysisSnapshot) -> None:
+        from stock_research_ai.application.hashing import digest
+
+        distinct = {
+            (r.kind, r.owning_snapshot_id): r.snapshot_payload_sha256 for r in snapshot.sources
+        }
+        snapshot = AnalysisSnapshot.model_validate_json(snapshot.model_dump_json())
+        async with self.sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            for (kind, owning_snapshot_id), expected_sha in distinct.items():
+                source = await _load_evidence_owner_in_session(session, kind, owning_snapshot_id)
+                if source is None or digest(source) != expected_sha:
+                    raise ValueError(f"Pinned {kind} source no longer exists or hash mismatch")
+                await _verify_upstream_lineage_in_session(session, kind, source)
+            session.add(
+                _AnalysisRow(
+                    id=str(snapshot.id),
+                    company_id=str(snapshot.company_id),
+                    evaluated_at=snapshot.evaluated_at.isoformat(),
+                    schema_version=snapshot.schema_version,
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def analysis_history(self, company_id: UUID) -> tuple[AnalysisSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_AnalysisRow)
+                .where(_AnalysisRow.company_id == str(company_id))
+                .order_by(_AnalysisRow.evaluated_at, _AnalysisRow.id)
+            )
+            return tuple(AnalysisSnapshot.model_validate(row.payload) for row in rows)

@@ -3,11 +3,13 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from stock_research_ai.adapters.documents.pdf import PDFNormalizer
 from stock_research_ai.adapters.documents.source import DocumentSource
 from stock_research_ai.adapters.json_export import (
     check_output,
+    export_analysis,
     export_calculation,
     export_context,
     export_document,
@@ -31,6 +33,7 @@ from stock_research_ai.adapters.screener.semantic_mappings import ScreenerSemant
 from stock_research_ai.adapters.screener.source import ScreenerSource
 from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
+    AnalystServices,
     CalculationServices,
     ContextServices,
     DocumentServices,
@@ -42,6 +45,7 @@ from stock_research_ai.application.engine import (
     ValuationServices,
 )
 from stock_research_ai.application.ports import (
+    AnalystModel,
     DocumentAcquirer,
     MacroAcquirer,
     MarketSource,
@@ -49,6 +53,11 @@ from stock_research_ai.application.ports import (
     SourceAcquirer,
 )
 from stock_research_ai.config import Settings
+from stock_research_ai.domain.analysis import (
+    AnalysisRequest,
+    AnalysisSnapshot,
+    AnalystExecutionSpec,
+)
 from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
 from stock_research_ai.domain.documents import DocumentRequest, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
@@ -398,6 +407,57 @@ async def evaluate_valuation(
         )
         result = await engine.evaluate_valuation(request)
         export_valuation(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def analyze_company(
+    settings: Settings,
+    request: AnalysisRequest,
+    execution: AnalystExecutionSpec,
+    output: Path,
+    model: AnalystModel | None = None,
+    provider_kind: Literal["LIVE", "FAKE"] | None = None,
+) -> AnalysisSnapshot:
+    """Route through ResearchEngine only. No provider is wired by default: production
+    bootstrap never substitutes a fake model. Pass `model` explicitly (a LIVE adapter, or a
+    FakeAnalystModel for offline tests/proof scripts) to actually run analysis - the caller
+    must also state `provider_kind` explicitly; there is no default, so a test/proof script
+    can never accidentally report itself as a LIVE provider."""
+    check_output(output)
+    if model is None or provider_kind is None:
+        raise RuntimeError(
+            "No LIVE analyst provider is configured for this bootstrap. Part 5B core is "
+            "fully usable by explicitly injecting an AnalystModel and its provider_kind "
+            "(a LIVE adapter, or FakeAnalystModel for offline tests) - it is never "
+            "silently substituted or defaulted."
+        )
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        store = FileRawArtifactStore(
+            settings.artifact_path or settings.database_path.parent / "artifacts"
+        )
+        engine = ResearchEngine(
+            database.repository,
+            analyst=AnalystServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                model,
+                database.analyses,
+                provider_kind=provider_kind,
+            ),
+        )
+        result = await engine.analyze_company(request, execution)
+        export_analysis(result, output)
         return result
     finally:
         await database.close()

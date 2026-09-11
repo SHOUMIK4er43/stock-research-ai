@@ -1,12 +1,12 @@
 """Sector eligibility and exact semantic gates; arithmetic dispatches to Part 4A."""
 
-import hashlib
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from typing import Any, Literal
 from uuid import uuid4
 
 from stock_research_ai.application import calculations as financial
+from stock_research_ai.application.hashing import digest
 from stock_research_ai.application.ports import SemanticResolver
 from stock_research_ai.domain.calculations import (
     CalculationIssue,
@@ -347,7 +347,7 @@ def evaluate_kpis(
         id=snapshot_id,
         request=request,
         profile=profile,
-        source_payload_sha256=hashlib.sha256(source.model_dump_json().encode()).hexdigest(),
+        source_payload_sha256=digest(source),
         calculated_at=now,
         results=tuple(results),
     )

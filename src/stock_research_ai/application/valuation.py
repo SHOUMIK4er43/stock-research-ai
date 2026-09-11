@@ -1,12 +1,10 @@
 """Provider-neutral valuation gates and explicit scenario mathematics."""
 
-import hashlib
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
-
+from stock_research_ai.application.hashing import digest as digest
 from stock_research_ai.application.numerics import root_growth
 from stock_research_ai.application.ports import SemanticResolver
 from stock_research_ai.domain.calculations import CalculationIssue, CalculationSnapshot
@@ -74,10 +72,6 @@ DEFINITIONS = tuple(
 )
 DEFAULT_PRECISION = ValuationPrecision()
 Calculation = CalculationSnapshot | SectorKPIEvaluation
-
-
-def digest(value: BaseModel) -> str:
-    return hashlib.sha256(value.model_dump_json().encode()).hexdigest()
 
 
 def issue(code: str, error: bool = False) -> CalculationIssue:

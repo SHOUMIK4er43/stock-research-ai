@@ -3,6 +3,12 @@
 from typing import Protocol
 from uuid import UUID
 
+from stock_research_ai.domain.analysis import (
+    AnalysisSnapshot,
+    AnalystExecutionSpec,
+    AnstInputBundle,
+    ModelMetadata,
+)
 from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.company import Company, SourceCompanyIdentity
 from stock_research_ai.domain.documents import (
@@ -160,6 +166,8 @@ class ContextRepository(Protocol):
     async def publication_history(self, identity_id: UUID) -> tuple[PublicationSnapshot, ...]: ...
     async def macro_history(self, series_id: UUID) -> tuple[MacroSnapshot, ...]: ...
     async def search_publications(self, query: str, limit: int) -> tuple[PublicationHit, ...]: ...
+    async def get_publication(self, snapshot_id: UUID) -> PublicationSnapshot | None: ...
+    async def get_macro(self, snapshot_id: UUID) -> MacroSnapshot | None: ...
 
 
 class CalculationRepository(Protocol):
@@ -199,3 +207,20 @@ class PatternRepository(Protocol):
 class ValuationRepository(Protocol):
     async def save_valuation(self, snapshot: ValuationSnapshot) -> None: ...
     async def valuation_history(self, company_id: UUID) -> tuple[ValuationSnapshot, ...]: ...
+
+
+class AnalystModel(Protocol):
+    """Provider-neutral: turns a pinned bundle into a raw structured response.
+
+    Never receives or returns a provider SDK object; secrets are read by the concrete
+    adapter directly from its own environment, never through this protocol or its inputs.
+    """
+
+    async def generate(
+        self, bundle: AnstInputBundle, execution: AnalystExecutionSpec
+    ) -> ModelMetadata: ...
+
+
+class AnalysisRepository(Protocol):
+    async def save_analysis(self, snapshot: AnalysisSnapshot) -> None: ...
+    async def analysis_history(self, company_id: UUID) -> tuple[AnalysisSnapshot, ...]: ...

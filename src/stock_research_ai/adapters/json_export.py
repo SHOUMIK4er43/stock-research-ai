@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from stock_research_ai.application.ports import RawArtifactStore
+from stock_research_ai.domain.analysis import AnalysisSnapshot
 from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
@@ -367,5 +368,32 @@ def export_valuation(snapshot: ValuationSnapshot, output: Path) -> None:
                 }
                 for r in snapshot.results
             ],
+        },
+    )
+
+
+def export_analysis(snapshot: AnalysisSnapshot, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    write_json(output / "normalized/analysis_snapshot.json", snapshot.model_dump(mode="json"))
+    write_json(
+        output / "normalized/claims_by_section.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "sections": {
+                section: [
+                    c.model_dump(mode="json") for c in snapshot.claims if c.section == section
+                ]
+                for section in sorted({c.section for c in snapshot.claims})
+            },
+        },
+    )
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "sections": [c.model_dump(mode="json") for c in snapshot.section_coverage],
+            "rejected_count": len(snapshot.rejected),
+            "accepted_count": len(snapshot.claims),
         },
     )

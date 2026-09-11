@@ -1,6 +1,5 @@
 """Fixed pattern rules over verified evidence and explicit calculation prerequisites."""
 
-import hashlib
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from fractions import Fraction
@@ -8,6 +7,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from stock_research_ai.application import calculations as common
+from stock_research_ai.application.hashing import digest as digest
 from stock_research_ai.application.ports import CalculationRepository, SemanticResolver
 from stock_research_ai.application.sector_kpis import BANK, IT, PROFILES, profile_issue
 from stock_research_ai.domain.calculations import (
@@ -124,10 +124,6 @@ DEFINITIONS = (
 class Calculator(Protocol):
     async def calculate_financials(self, request: CalculationRequest) -> CalculationSnapshot: ...
     async def calculate_sector_kpis(self, request: SectorKPIRequest) -> SectorKPIEvaluation: ...
-
-
-def digest(value: CalculationSnapshot | SectorKPIEvaluation | CompanyExtractionResult) -> str:
-    return hashlib.sha256(value.model_dump_json().encode()).hexdigest()
 
 
 def exact(name: str, value: Fraction, unit: str, formula: str | None = None) -> ExactValue:

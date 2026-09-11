@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from uuid import UUID
@@ -102,13 +103,40 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     valuation.add_argument("--request", type=Path, required=True)
     valuation.add_argument("--output", type=Path, required=True)
+    analysis = commands.add_parser(
+        "analyze-company",
+        help="Produce evidence-cited interpretation claims over pinned Parts 1-5A evidence",
+    )
+    analysis.add_argument("--request", type=Path, required=True)
+    analysis.add_argument("--execution", type=Path, required=True)
+    analysis.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
     logging.basicConfig(level=logging.INFO)
     settings = Settings(database_path=args.database) if args.database is not None else Settings()
 
-    if args.command == "evaluate-valuation":
+    if args.command == "analyze-company":
+        from stock_research_ai.bootstrap import analyze_company
+        from stock_research_ai.domain.analysis import AnalysisRequest, AnalystExecutionSpec
+
+        try:
+            asyncio.run(
+                analyze_company(
+                    settings,
+                    AnalysisRequest.model_validate_json(args.request.read_text()),
+                    AnalystExecutionSpec.model_validate_json(args.execution.read_text()),
+                    args.output,
+                )
+            )
+        except RuntimeError as exc:
+            print(f"Analyst provider unavailable: {exc}", file=sys.stderr)
+            raise SystemExit(4) from None
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"Analysis exported: {args.output}")
+        raise SystemExit(0)
+    elif args.command == "evaluate-valuation":
         from stock_research_ai.bootstrap import evaluate_valuation
         from stock_research_ai.domain.valuation import ValuationRequest
 

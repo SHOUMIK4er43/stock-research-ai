@@ -6,11 +6,16 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from stock_research_ai.application import analysis as analyst_engine
 from stock_research_ai.application import patterns as pattern_engine
 from stock_research_ai.application import technicals, valuation
+from stock_research_ai.application.analysis_validation import validate_response
 from stock_research_ai.application.calculations import calculate
+from stock_research_ai.application.hashing import digest
 from stock_research_ai.application.market_calculations import calculate_market
 from stock_research_ai.application.ports import (
+    AnalysisRepository,
+    AnalystModel,
     CalculationRepository,
     CompanyRepository,
     ContextRepository,
@@ -34,6 +39,11 @@ from stock_research_ai.application.ports import (
     ValuationRepository,
 )
 from stock_research_ai.application.sector_kpis import evaluate_kpis
+from stock_research_ai.domain.analysis import (
+    AnalysisRequest,
+    AnalysisSnapshot,
+    AnalystExecutionSpec,
+)
 from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
@@ -62,7 +72,7 @@ class Capabilities(BaseModel):
     operations: tuple[
         Literal["get_capabilities"], Literal["register_company"], Literal["get_company"]
     ] = ("get_capabilities", "register_company", "get_company")
-    analysis_available: Literal[False] = False
+    analysis_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,6 +141,26 @@ class ValuationServices:
     repository: ValuationRepository
 
 
+@dataclass(frozen=True)
+class AnalystServices:
+    """Everything Part 5B may read. provider_kind is non-secret and explicit: only "LIVE"
+    ever makes Capabilities.analysis_available true; "FAKE" exists for tests only and is
+    never constructed by production bootstrap."""
+
+    extractions: ExtractionRepository
+    market: MarketRepository
+    calculations: CalculationRepository
+    patterns: PatternRepository
+    market_calculations: MarketCalculationRepository
+    valuations: ValuationRepository
+    documents: DocumentRepository
+    context: ContextRepository
+    artifacts: RawArtifactStore
+    model: AnalystModel
+    repository: AnalysisRepository
+    provider_kind: Literal["LIVE", "FAKE"]
+
+
 class ResearchEngine:
     def __init__(
         self,
@@ -144,8 +174,10 @@ class ResearchEngine:
         market_calculations: MarketCalculationServices | None = None,
         patterns: PatternRepository | None = None,
         valuations: ValuationServices | None = None,
+        analyst: AnalystServices | None = None,
     ) -> None:
         self._repository = repository
+        self._analyst = analyst
         self._extraction = extraction
         self._documents = documents
         self._market = market
@@ -155,6 +187,66 @@ class ResearchEngine:
         self._market_calculations = market_calculations
         self._patterns = patterns
         self._valuations = valuations
+
+    async def analyze_company(
+        self, request: AnalysisRequest, execution: AnalystExecutionSpec
+    ) -> AnalysisSnapshot:
+        services = self._analyst
+        if services is None:
+            raise RuntimeError("Analyst services not configured")
+        company = await self._repository.get(request.company_id)
+        if company is None:
+            raise ValueError("Unknown analysis company")
+        evidence = await analyst_engine.resolve_evidence(
+            request,
+            company,
+            extractions=services.extractions,
+            market=services.market,
+            calculations=services.calculations,
+            patterns=services.patterns,
+            market_calculations=services.market_calculations,
+            valuations=services.valuations,
+            documents=services.documents,
+            context=services.context,
+        )
+        artifacts = {
+            a.id: a
+            for a in (
+                *analyst_engine.direct_raw_artifacts(evidence),
+                *await analyst_engine.transitive_raw_artifacts(
+                    evidence,
+                    extractions=services.extractions,
+                    market=services.market,
+                    calculations=services.calculations,
+                ),
+            )
+        }
+        for artifact in artifacts.values():
+            await services.artifacts.read(artifact)
+        bundle = analyst_engine.assemble_bundle(request, evidence)
+        model_metadata = await services.model.generate(bundle, execution)
+        claims, rejected = validate_response(
+            model_metadata.raw_response, bundle, evidence, request.profile_id
+        )
+        snapshot = AnalysisSnapshot(
+            id=uuid4(),
+            company_id=request.company_id,
+            request=request,
+            execution=execution,
+            input_bundle=bundle,
+            bundle_sha256=digest(bundle),
+            sources=bundle.sources,
+            model_metadata=model_metadata,
+            section_coverage=bundle.section_coverage,
+            claims=claims,
+            management_statements=tuple(
+                c.management_statement for c in claims if c.management_statement is not None
+            ),
+            rejected=rejected,
+            evaluated_at=bundle.assembled_at,
+        )
+        await services.repository.save_analysis(snapshot)
+        return snapshot
 
     async def evaluate_valuation(self, request: ValuationRequest) -> ValuationSnapshot:
         services = self._valuations
@@ -266,7 +358,9 @@ class ResearchEngine:
         return result
 
     async def get_capabilities(self) -> Capabilities:
-        return Capabilities()
+        return Capabilities(
+            analysis_available=self._analyst is not None and self._analyst.provider_kind == "LIVE"
+        )
 
     async def register_company(self, registration: CompanyRegistration) -> Company:
         company = Company(

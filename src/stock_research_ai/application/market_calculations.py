@@ -1,6 +1,5 @@
 """Six deterministic calculations on pinned close observations; no acquisition."""
 
-import hashlib
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
@@ -8,6 +7,7 @@ from fractions import Fraction
 from typing import Any
 from uuid import UUID, uuid4
 
+from stock_research_ai.application.hashing import digest
 from stock_research_ai.application.numerics import root_growth
 from stock_research_ai.domain.calculations import CalculationIssue, FormulaDefinition
 from stock_research_ai.domain.market import MarketExtractionResult, MarketObservation
@@ -53,7 +53,7 @@ def source_reference(source: MarketExtractionResult) -> MarketSourceReference:
     return MarketSourceReference(
         extraction_id=source.id,
         instrument=source.instrument,
-        payload_sha256=hashlib.sha256(source.model_dump_json().encode()).hexdigest(),
+        payload_sha256=digest(source),
     )
 
 

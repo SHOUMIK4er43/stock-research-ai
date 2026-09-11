@@ -1,12 +1,12 @@
 """Small deterministic formula registry; no provider imports or source acquisition."""
 
 import calendar
-import hashlib
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from fractions import Fraction
 from uuid import uuid4
 
+from stock_research_ai.application.hashing import digest
 from stock_research_ai.domain.calculations import (
     CalculationRequest,
     CalculationResult,
@@ -138,7 +138,7 @@ def calculate(source: CompanyExtractionResult, request: CalculationRequest) -> C
     return CalculationSnapshot(
         id=snapshot_id,
         request=request,
-        source_payload_sha256=hashlib.sha256(source.model_dump_json().encode()).hexdigest(),
+        source_payload_sha256=digest(source),
         calculated_at=now,
         results=tuple(results),
     )

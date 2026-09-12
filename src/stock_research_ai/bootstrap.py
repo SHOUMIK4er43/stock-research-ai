@@ -11,6 +11,7 @@ from stock_research_ai.adapters.json_export import (
     check_output,
     export_analysis,
     export_calculation,
+    export_challenge,
     export_context,
     export_document,
     export_market,
@@ -35,6 +36,7 @@ from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
     AnalystServices,
     CalculationServices,
+    ChallengeServices,
     ContextServices,
     DocumentServices,
     ExtractionServices,
@@ -46,6 +48,7 @@ from stock_research_ai.application.engine import (
 )
 from stock_research_ai.application.ports import (
     AnalystModel,
+    ChallengerModel,
     DocumentAcquirer,
     MacroAcquirer,
     MarketSource,
@@ -59,6 +62,11 @@ from stock_research_ai.domain.analysis import (
     AnalystExecutionSpec,
 )
 from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
+from stock_research_ai.domain.challenge import (
+    ChallengeRequest,
+    ChallengerExecutionSpec,
+    ChallengeSnapshot,
+)
 from stock_research_ai.domain.documents import DocumentRequest, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
@@ -458,6 +466,57 @@ async def analyze_company(
         )
         result = await engine.analyze_company(request, execution)
         export_analysis(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def challenge_analysis(
+    settings: Settings,
+    request: ChallengeRequest,
+    output: Path,
+    execution: ChallengerExecutionSpec | None = None,
+    challenger: ChallengerModel | None = None,
+    provider_kind: Literal["LIVE", "FAKE"] | None = None,
+) -> ChallengeSnapshot:
+    """Route through ResearchEngine only. Deterministic challenge review needs no model at
+    all; a model-assisted pass additionally requires an explicit `challenger` and its own
+    explicit `provider_kind` (a LIVE adapter, or a FakeChallengerModel for offline tests) -
+    it is never silently substituted or defaulted, mirroring analyze_company exactly."""
+    check_output(output)
+    if execution is not None and (challenger is None or provider_kind is None):
+        raise RuntimeError(
+            "No LIVE challenger provider is configured for this bootstrap. Model-assisted "
+            "review requires explicitly injecting a ChallengerModel and its provider_kind "
+            "(a LIVE adapter, or FakeChallengerModel for offline tests) - it is never "
+            "silently substituted or defaulted. Omit `execution` for deterministic-only review."
+        )
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        store = FileRawArtifactStore(
+            settings.artifact_path or settings.database_path.parent / "artifacts"
+        )
+        engine = ResearchEngine(
+            database.repository,
+            challenge=ChallengeServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                database.analyses,
+                database.challenges,
+                challenger=challenger,
+                provider_kind=provider_kind,
+            ),
+        )
+        result = await engine.challenge_analysis(request, execution)
+        export_challenge(result, output)
         return result
     finally:
         await database.close()

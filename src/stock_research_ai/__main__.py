@@ -110,6 +110,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     analysis.add_argument("--request", type=Path, required=True)
     analysis.add_argument("--execution", type=Path, required=True)
     analysis.add_argument("--output", type=Path, required=True)
+    challenge = commands.add_parser(
+        "challenge-analysis",
+        help="Independently re-verify a Part 5B analysis snapshot against its own frozen "
+        "closed evidence bundle",
+    )
+    challenge.add_argument("--analysis-snapshot", type=UUID, required=True)
+    challenge.add_argument(
+        "--execution", type=Path, help="ChallengerExecutionSpec JSON; omit for deterministic-only"
+    )
+    challenge.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
@@ -135,6 +145,40 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
         print(f"Analysis exported: {args.output}")
+        raise SystemExit(0)
+    elif args.command == "challenge-analysis":
+        from pydantic import ValidationError
+
+        from stock_research_ai.application.challenge import ChallengeIntegrityError
+        from stock_research_ai.bootstrap import challenge_analysis
+        from stock_research_ai.domain.challenge import ChallengeRequest, ChallengerExecutionSpec
+
+        execution = (
+            ChallengerExecutionSpec.model_validate_json(args.execution.read_text())
+            if args.execution is not None
+            else None
+        )
+        try:
+            asyncio.run(
+                challenge_analysis(
+                    settings,
+                    ChallengeRequest(analysis_snapshot_id=args.analysis_snapshot),
+                    args.output,
+                    execution,
+                )
+            )
+        except RuntimeError as exc:
+            print(f"Challenger provider unavailable: {exc}", file=sys.stderr)
+            raise SystemExit(4) from None
+        except ChallengeIntegrityError as exc:
+            print(f"Challenge integrity failure: {exc}", file=sys.stderr)
+            raise SystemExit(6) from None
+        except ValidationError as exc:
+            print(f"Challenge validator/system failure: {exc}", file=sys.stderr)
+            raise SystemExit(5) from None
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"Challenge exported: {args.output}")
         raise SystemExit(0)
     elif args.command == "evaluate-valuation":
         from stock_research_ai.bootstrap import evaluate_valuation

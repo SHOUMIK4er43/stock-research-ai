@@ -1042,3 +1042,63 @@ input bundle and the exact rendered model request/response — reconstructable f
 append-only history rows keyed by company; a revised template, provider, model, generation
 parameter, or pinned source produces a new, independently reconstructable snapshot, and no
 historical row is ever rewritten. See [the Part 5B proof report](docs/part5b-proof.md).
+
+## Part 5C — Independent Challenger / Evidence Checker
+
+The challenger CLI independently re-verifies a frozen Part 5B `AnalysisSnapshot` against the
+exact same closed evidence bundle Part 5B itself used — no new discovery, no "latest"
+substitution, no Screener/Kite/web calls. It re-derives evidence via the reviewed snapshot's
+own pinned `AnalysisRequest`, independently re-reads every raw artifact byte-for-byte, and
+runs a fixed set of deterministic checks over every accepted claim: citation integrity
+(hash/lineage re-verification), numeric/unit re-checks, period/scope compatibility,
+conflicting-evidence detection, causal/certainty/recommendation language, structural
+sector-policy applicability, evaluative claims on unavailable evidence, forensic-pattern
+misconduct language, management-quote re-verification, scenario/assumption lineage, and
+point-in-time limitation coverage. A fixed `RELEVANCE_REGISTRY` additionally detects material
+evidence that was pinned into the bundle but never cited by a specific claim.
+
+Every accepted `AnalystClaim` receives exactly one `ClaimReview`, whose outcome
+(`SUPPORTED_BY_BUNDLE`/`SUPPORTED_WITH_LIMITATIONS`/`CHALLENGED`/`INVALID_AGAINST_BUNDLE`/
+`UNVERIFIABLE_FROM_BUNDLE`) is a pure deterministic function of its own findings — never set
+independently. A `CHALLENGED`/`INVALID_AGAINST_BUNDLE` outcome is an honest result, not a
+pipeline failure: it means the independent review found something, which is the entire
+point. An optional `ChallengerModel` may additionally suggest findings, but only from a
+closed four-category `suggestion_kind` (material evidence, analytical tension, alternative
+interpretation, language concern) — it can never directly set a `finding_type`, `severity`,
+claim outcome, citation validity, or integrity status; a model-sourced finding can move a
+claim from `SUPPORTED_BY_BUNDLE` to `CHALLENGED`, never to `INVALID_AGAINST_BUNDLE`. No LIVE
+challenger-model provider ships in this part: `Capabilities.deterministic_challenge_available`
+is `true` once the deterministic engine is wired (no provider needed), while
+`Capabilities.live_challenger_available` stays `false` until a provider is explicitly wired
+in a later, separately reviewed increment.
+
+Run the complete offline proof in a **new** output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run python scripts/verify_challenge.py --output output/part5c-proof-manual
+```
+
+This exercises two explicitly separate tracks. **Real retained evidence** (INFY, YESBANK):
+a genuine Part 5B `AnalysisSnapshot` pins both a `SECTOR_KPI` growth metric and its linked
+`PATTERN` evidence, with a claim citing only the growth metric — Part 5C's own
+`RELEVANCE_REGISTRY` independently finds the uncited pattern and raises a real
+`ANALYTICAL_TENSION` finding. **Synthetic mechanical proof**: causal language, model-assisted
+suggestions, and direct checks (calling `review_claim` on hand-built claims) for finding
+types Part 5B's own validator already refuses at claim-creation time and can therefore never
+reach Part 5C through the ordinary pipeline.
+
+For an existing analysis snapshot, run:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run stock-research-ai --database /absolute/path/research.sqlite3 \
+  challenge-analysis --analysis-snapshot <analysis-snapshot-uuid> \
+  --output /absolute/path/new-export
+```
+
+Outputs are `normalized/challenge_snapshot.json` (the full snapshot, including the exact
+reviewed `AnalysisSnapshot` embedded verbatim), `claim_reviews.json`, `section_reviews.json`,
+`findings.json`, `uncited_evidence.json`, and `coverage.json`. Challenge snapshots are
+append-only history rows keyed by analysis snapshot; no historical row is ever rewritten.
+See [the Part 5C proof report](docs/part5c-proof.md).

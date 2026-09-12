@@ -14,6 +14,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from stock_research_ai.domain.analysis import AnalysisSnapshot
 from stock_research_ai.domain.calculations import CalculationSnapshot
+from stock_research_ai.domain.challenge import ChallengeSnapshot
 from stock_research_ai.domain.company import (
     Company,
     ExchangeListing,
@@ -169,6 +170,7 @@ class SQLiteDatabase:
         self.market_calculations = SQLiteMarketCalculationRepository(sessions)
         self.valuations = SQLiteValuationRepository(sessions)
         self.analyses = SQLiteAnalysisRepository(sessions)
+        self.challenges = SQLiteChallengeRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -1127,3 +1129,82 @@ class SQLiteAnalysisRepository:
                 .order_by(_AnalysisRow.evaluated_at, _AnalysisRow.id)
             )
             return tuple(AnalysisSnapshot.model_validate(row.payload) for row in rows)
+
+    async def get_analysis(self, analysis_snapshot_id: UUID) -> AnalysisSnapshot | None:
+        async with self.sessions() as session:
+            row = await session.get(_AnalysisRow, str(analysis_snapshot_id))
+            return AnalysisSnapshot.model_validate(row.payload) if row else None
+
+
+class _ChallengeRow(_Base):
+    __tablename__ = "challenge_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    analysis_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_snapshots.id"), index=True
+    )
+    evaluated_at: Mapped[str] = mapped_column(String)
+    schema_version: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+async def _load_analysis_snapshot_in_session(
+    session: AsyncSession, analysis_snapshot_id: UUID
+) -> AnalysisSnapshot | None:
+    """Same-transaction re-fetch of the reviewed AnalysisSnapshot, mirroring
+    _load_evidence_owner_in_session's pattern for Part 5C's own append."""
+    row = await session.get(_AnalysisRow, str(analysis_snapshot_id))
+    return AnalysisSnapshot.model_validate(row.payload) if row else None
+
+
+class SQLiteChallengeRepository:
+    """Append-only. Re-verifies the reviewed AnalysisSnapshot itself, plus every distinct
+    pinned source across its own bundle and their upstream lineage, inside the SAME
+    session/transaction as the insert - reusing Part 5B's integrity helpers unchanged."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_challenge(self, snapshot: ChallengeSnapshot) -> None:
+        from stock_research_ai.application.challenge import ChallengeIntegrityError
+        from stock_research_ai.application.hashing import digest
+
+        reviewed = snapshot.challenger_bundle.reviewed_analysis
+        distinct = {
+            (r.kind, r.owning_snapshot_id): r.snapshot_payload_sha256 for r in reviewed.sources
+        }
+        snapshot = ChallengeSnapshot.model_validate_json(snapshot.model_dump_json())
+        async with self.sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            fresh_reviewed = await _load_analysis_snapshot_in_session(
+                session, snapshot.analysis_snapshot_id
+            )
+            fresh_hash = digest(fresh_reviewed) if fresh_reviewed is not None else None
+            if fresh_reviewed is None or fresh_hash != snapshot.analysis_snapshot_sha256:
+                raise ChallengeIntegrityError(
+                    "Reviewed analysis snapshot no longer exists or hash mismatch"
+                )
+            for (kind, owning_snapshot_id), expected_sha in distinct.items():
+                source = await _load_evidence_owner_in_session(session, kind, owning_snapshot_id)
+                if source is None or digest(source) != expected_sha:
+                    raise ChallengeIntegrityError(
+                        f"Pinned {kind} source no longer exists or hash mismatch"
+                    )
+                await _verify_upstream_lineage_in_session(session, kind, source)
+            session.add(
+                _ChallengeRow(
+                    id=str(snapshot.id),
+                    analysis_snapshot_id=str(snapshot.analysis_snapshot_id),
+                    evaluated_at=snapshot.evaluated_at.isoformat(),
+                    schema_version=snapshot.schema_version,
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def challenge_history(self, analysis_snapshot_id: UUID) -> tuple[ChallengeSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_ChallengeRow)
+                .where(_ChallengeRow.analysis_snapshot_id == str(analysis_snapshot_id))
+                .order_by(_ChallengeRow.evaluated_at, _ChallengeRow.id)
+            )
+            return tuple(ChallengeSnapshot.model_validate(row.payload) for row in rows)

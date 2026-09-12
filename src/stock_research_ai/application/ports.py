@@ -10,6 +10,11 @@ from stock_research_ai.domain.analysis import (
     ModelMetadata,
 )
 from stock_research_ai.domain.calculations import CalculationSnapshot
+from stock_research_ai.domain.challenge import (
+    ChallengerExecutionSpec,
+    ChallengerInputBundle,
+    ChallengeSnapshot,
+)
 from stock_research_ai.domain.company import Company, SourceCompanyIdentity
 from stock_research_ai.domain.documents import (
     DocumentIdentity,
@@ -224,3 +229,21 @@ class AnalystModel(Protocol):
 class AnalysisRepository(Protocol):
     async def save_analysis(self, snapshot: AnalysisSnapshot) -> None: ...
     async def analysis_history(self, company_id: UUID) -> tuple[AnalysisSnapshot, ...]: ...
+    async def get_analysis(self, analysis_snapshot_id: UUID) -> AnalysisSnapshot | None: ...
+
+
+class ChallengerModel(Protocol):
+    """Provider-neutral: turns a pinned ChallengerInputBundle into a raw structured
+    response. Distinct role/Protocol from AnalystModel, reusing the same provider-neutral
+    value types (PromptTemplate/RenderedModelRequest/RawAnalystResponse/ModelMetadata)."""
+
+    async def review(
+        self, bundle: ChallengerInputBundle, execution: ChallengerExecutionSpec
+    ) -> ModelMetadata: ...
+
+
+class ChallengeRepository(Protocol):
+    async def save_challenge(self, snapshot: ChallengeSnapshot) -> None: ...
+    async def challenge_history(
+        self, analysis_snapshot_id: UUID
+    ) -> tuple[ChallengeSnapshot, ...]: ...

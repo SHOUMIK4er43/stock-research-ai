@@ -7,16 +7,20 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict
 
 from stock_research_ai.application import analysis as analyst_engine
+from stock_research_ai.application import challenge as challenge_engine
 from stock_research_ai.application import patterns as pattern_engine
 from stock_research_ai.application import technicals, valuation
 from stock_research_ai.application.analysis_validation import validate_response
 from stock_research_ai.application.calculations import calculate
+from stock_research_ai.application.challenge_validation import validate_challenger_response
 from stock_research_ai.application.hashing import digest
 from stock_research_ai.application.market_calculations import calculate_market
 from stock_research_ai.application.ports import (
     AnalysisRepository,
     AnalystModel,
     CalculationRepository,
+    ChallengeRepository,
+    ChallengerModel,
     CompanyRepository,
     ContextRepository,
     DocumentAcquirer,
@@ -43,8 +47,14 @@ from stock_research_ai.domain.analysis import (
     AnalysisRequest,
     AnalysisSnapshot,
     AnalystExecutionSpec,
+    ModelMetadata,
 )
 from stock_research_ai.domain.calculations import CalculationRequest, CalculationSnapshot
+from stock_research_ai.domain.challenge import (
+    ChallengeRequest,
+    ChallengerExecutionSpec,
+    ChallengeSnapshot,
+)
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.documents import DocumentRequest, DocumentSearchHit, ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
@@ -73,6 +83,8 @@ class Capabilities(BaseModel):
         Literal["get_capabilities"], Literal["register_company"], Literal["get_company"]
     ] = ("get_capabilities", "register_company", "get_company")
     analysis_available: bool = False
+    deterministic_challenge_available: bool = False
+    live_challenger_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,6 +173,27 @@ class AnalystServices:
     provider_kind: Literal["LIVE", "FAKE"]
 
 
+@dataclass(frozen=True)
+class ChallengeServices:
+    """Everything Part 5C may read to independently re-resolve the same closed evidence
+    Part 5B used. `challenger` is optional: deterministic_challenge_available needs only
+    this bundle wired; live_challenger_available additionally needs provider_kind=="LIVE"."""
+
+    extractions: ExtractionRepository
+    market: MarketRepository
+    calculations: CalculationRepository
+    patterns: PatternRepository
+    market_calculations: MarketCalculationRepository
+    valuations: ValuationRepository
+    documents: DocumentRepository
+    context: ContextRepository
+    artifacts: RawArtifactStore
+    analysis: AnalysisRepository
+    repository: ChallengeRepository
+    challenger: ChallengerModel | None = None
+    provider_kind: Literal["LIVE", "FAKE"] | None = None
+
+
 class ResearchEngine:
     def __init__(
         self,
@@ -175,6 +208,7 @@ class ResearchEngine:
         patterns: PatternRepository | None = None,
         valuations: ValuationServices | None = None,
         analyst: AnalystServices | None = None,
+        challenge: ChallengeServices | None = None,
     ) -> None:
         self._repository = repository
         self._analyst = analyst
@@ -187,6 +221,7 @@ class ResearchEngine:
         self._market_calculations = market_calculations
         self._patterns = patterns
         self._valuations = valuations
+        self._challenge = challenge
 
     async def analyze_company(
         self, request: AnalysisRequest, execution: AnalystExecutionSpec
@@ -246,6 +281,60 @@ class ResearchEngine:
             evaluated_at=bundle.assembled_at,
         )
         await services.repository.save_analysis(snapshot)
+        return snapshot
+
+    async def challenge_analysis(
+        self, request: ChallengeRequest, execution: ChallengerExecutionSpec | None = None
+    ) -> ChallengeSnapshot:
+        services = self._challenge
+        if services is None:
+            raise RuntimeError("Challenge services not configured")
+        reviewed = await services.analysis.get_analysis(request.analysis_snapshot_id)
+        if reviewed is None:
+            raise ValueError("Unknown analysis snapshot")
+        company = await self._repository.get(reviewed.company_id)
+        if company is None:
+            raise ValueError("Unknown analysis company")
+        bundle, evidence = await challenge_engine.build_challenger_bundle(
+            reviewed,
+            company,
+            extractions=services.extractions,
+            market=services.market,
+            calculations=services.calculations,
+            patterns=services.patterns,
+            market_calculations=services.market_calculations,
+            valuations=services.valuations,
+            documents=services.documents,
+            context=services.context,
+            artifacts=services.artifacts,
+        )
+        from stock_research_ai.domain.challenge import (
+            AlternativeInterpretation,
+            ChallengeFinding,
+            RejectedChallengerCandidate,
+        )
+
+        challenger_metadata: ModelMetadata | None = None
+        validated_findings: dict[UUID, tuple[ChallengeFinding, ...]] = {}
+        validated_alternatives: dict[UUID, tuple[AlternativeInterpretation, ...]] = {}
+        rejected: tuple[RejectedChallengerCandidate, ...] = ()
+        if execution is not None:
+            if services.challenger is None:
+                raise RuntimeError("Challenger model not configured")
+            challenger_metadata = await services.challenger.review(bundle, execution)
+            claim_ids = {c.claim_id for c in reviewed.claims}
+            validated_findings, validated_alternatives, rejected = validate_challenger_response(
+                challenger_metadata.raw_response, bundle, claim_ids
+            )
+        snapshot = challenge_engine.review_snapshot(
+            bundle,
+            evidence,
+            challenger_metadata=challenger_metadata,
+            validated_model_findings=validated_findings,
+            validated_alternatives=validated_alternatives,
+            rejected_candidates=rejected,
+        )
+        await services.repository.save_challenge(snapshot)
         return snapshot
 
     async def evaluate_valuation(self, request: ValuationRequest) -> ValuationSnapshot:
@@ -359,7 +448,11 @@ class ResearchEngine:
 
     async def get_capabilities(self) -> Capabilities:
         return Capabilities(
-            analysis_available=self._analyst is not None and self._analyst.provider_kind == "LIVE"
+            analysis_available=self._analyst is not None and self._analyst.provider_kind == "LIVE",
+            deterministic_challenge_available=self._challenge is not None,
+            live_challenger_available=(
+                self._challenge is not None and self._challenge.provider_kind == "LIVE"
+            ),
         )
 
     async def register_company(self, registration: CompanyRegistration) -> Company:

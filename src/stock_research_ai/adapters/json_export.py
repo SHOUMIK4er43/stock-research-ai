@@ -6,6 +6,7 @@ from pathlib import Path
 from stock_research_ai.application.ports import RawArtifactStore
 from stock_research_ai.domain.analysis import AnalysisSnapshot
 from stock_research_ai.domain.calculations import CalculationSnapshot
+from stock_research_ai.domain.challenge import ChallengeSnapshot
 from stock_research_ai.domain.documents import ParsedDocument
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
 from stock_research_ai.domain.macro import MacroSnapshot
@@ -395,5 +396,57 @@ def export_analysis(snapshot: AnalysisSnapshot, output: Path) -> None:
             "sections": [c.model_dump(mode="json") for c in snapshot.section_coverage],
             "rejected_count": len(snapshot.rejected),
             "accepted_count": len(snapshot.claims),
+        },
+    )
+
+
+def export_challenge(snapshot: ChallengeSnapshot, output: Path) -> None:
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    write_json(output / "normalized/challenge_snapshot.json", snapshot.model_dump(mode="json"))
+    write_json(
+        output / "claim_reviews.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "analysis_snapshot_id": str(snapshot.analysis_snapshot_id),
+            "reviews": [r.model_dump(mode="json") for r in snapshot.claim_reviews],
+        },
+    )
+    write_json(
+        output / "section_reviews.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "sections": [r.model_dump(mode="json") for r in snapshot.section_reviews],
+        },
+    )
+    write_json(
+        output / "findings.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "findings": [
+                f.model_dump(mode="json") for r in snapshot.claim_reviews for f in r.findings
+            ],
+        },
+    )
+    write_json(
+        output / "uncited_evidence.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "uncited_relevant_evidence": [
+                e.model_dump(mode="json")
+                for r in snapshot.claim_reviews
+                for e in r.additional_relevant_evidence
+            ],
+        },
+    )
+    write_json(
+        output / "coverage.json",
+        {
+            "snapshot_id": str(snapshot.id),
+            "independence_basis": snapshot.independence_basis,
+            "relevance_registry_version": snapshot.relevance_registry_version,
+            "outcomes": {
+                str(r.analyst_claim_id): r.outcome for r in snapshot.claim_reviews
+            },
         },
     )

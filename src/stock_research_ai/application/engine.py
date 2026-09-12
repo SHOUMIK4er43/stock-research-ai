@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from stock_research_ai.application import analysis as analyst_engine
 from stock_research_ai.application import challenge as challenge_engine
 from stock_research_ai.application import patterns as pattern_engine
+from stock_research_ai.application import report as report_engine
 from stock_research_ai.application import technicals, valuation
 from stock_research_ai.application.analysis_validation import validate_response
 from stock_research_ai.application.calculations import calculate
@@ -37,11 +38,14 @@ from stock_research_ai.application.ports import (
     PublicationAcquirer,
     PublicationParser,
     RawArtifactStore,
+    ReportNarrator,
+    ReportRepository,
     SemanticResolver,
     SourceAcquirer,
     SourceNormalizer,
     ValuationRepository,
 )
+from stock_research_ai.application.report_validation import validate_narrative_response
 from stock_research_ai.application.sector_kpis import evaluate_kpis
 from stock_research_ai.domain.analysis import (
     AnalysisRequest,
@@ -71,6 +75,13 @@ from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.report import (
+    ArtifactManifest,
+    ReportExecutionSpec,
+    ReportRequest,
+    ReproducibilityManifest,
+    ResearchReportSnapshot,
+)
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
 from stock_research_ai.domain.valuation import ValuationRequest, ValuationSnapshot
@@ -85,6 +96,8 @@ class Capabilities(BaseModel):
     analysis_available: bool = False
     deterministic_challenge_available: bool = False
     live_challenger_available: bool = False
+    deterministic_report_assembly_available: bool = False
+    live_report_narrator_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -194,6 +207,28 @@ class ChallengeServices:
     provider_kind: Literal["LIVE", "FAKE"] | None = None
 
 
+@dataclass(frozen=True)
+class ReportServices:
+    """Everything Part 6A may read to independently re-resolve the same closed
+    evidence Part 5B/5C already used. `narrator` is optional:
+    deterministic_report_assembly_available needs only this bundle wired;
+    live_report_narrator_available additionally needs provider_kind=="LIVE"."""
+
+    extractions: ExtractionRepository
+    market: MarketRepository
+    calculations: CalculationRepository
+    patterns: PatternRepository
+    market_calculations: MarketCalculationRepository
+    valuations: ValuationRepository
+    documents: DocumentRepository
+    context: ContextRepository
+    artifacts: RawArtifactStore
+    challenges: ChallengeRepository
+    repository: ReportRepository
+    narrator: ReportNarrator | None = None
+    provider_kind: Literal["LIVE", "FAKE"] | None = None
+
+
 class ResearchEngine:
     def __init__(
         self,
@@ -209,6 +244,7 @@ class ResearchEngine:
         valuations: ValuationServices | None = None,
         analyst: AnalystServices | None = None,
         challenge: ChallengeServices | None = None,
+        report: ReportServices | None = None,
     ) -> None:
         self._repository = repository
         self._analyst = analyst
@@ -222,6 +258,7 @@ class ResearchEngine:
         self._patterns = patterns
         self._valuations = valuations
         self._challenge = challenge
+        self._report = report
 
     async def analyze_company(
         self, request: AnalysisRequest, execution: AnalystExecutionSpec
@@ -335,6 +372,91 @@ class ResearchEngine:
             rejected_candidates=rejected,
         )
         await services.repository.save_challenge(snapshot)
+        return snapshot
+
+    async def generate_report(
+        self, request: ReportRequest, execution: ReportExecutionSpec | None = None
+    ) -> ResearchReportSnapshot:
+        from datetime import UTC, datetime
+
+        services = self._report
+        if services is None:
+            raise RuntimeError("Report services not configured")
+        challenge = await services.challenges.get_challenge(request.challenge_snapshot_id)
+        if challenge is None:
+            raise ValueError("Unknown challenge snapshot")
+        reviewed = challenge.challenger_bundle.reviewed_analysis
+        company = await self._repository.get(reviewed.company_id)
+        if company is None:
+            raise ValueError("Unknown analysis company")
+        evidence = await report_engine.resolve_report_evidence(
+            reviewed,
+            company,
+            extractions=services.extractions,
+            market=services.market,
+            calculations=services.calculations,
+            patterns=services.patterns,
+            market_calculations=services.market_calculations,
+            valuations=services.valuations,
+            documents=services.documents,
+            context=services.context,
+            artifacts=services.artifacts,
+        )
+        assembly = report_engine.assemble_report(challenge, evidence)
+
+        from stock_research_ai.domain.report import RejectedNarrativeBlock, ReportStatement
+
+        narrator_metadata: ModelMetadata | None = None
+        rejected: tuple[RejectedNarrativeBlock, ...] = ()
+        sections = assembly.sections
+        if execution is not None:
+            if services.narrator is None:
+                raise RuntimeError("Report narrator not configured")
+            narrator_metadata = await services.narrator.narrate(sections, execution)
+            narrator_statements, rejected = validate_narrative_response(
+                narrator_metadata.raw_response, sections
+            )
+            if narrator_statements:
+                by_section: dict[str, list[ReportStatement]] = {}
+                for statement in narrator_statements:
+                    by_section.setdefault(statement.section, []).append(statement)
+                sections = tuple(
+                    s.model_copy(
+                        update={"statements": s.statements + tuple(by_section.get(s.section, ()))}
+                    )
+                    for s in sections
+                )
+
+        analysis_sha256 = digest(reviewed)
+        challenge_sha256 = digest(challenge)
+        reproducibility = ReproducibilityManifest(
+            analysis_snapshot_id=reviewed.id,
+            analysis_snapshot_sha256=analysis_sha256,
+            challenge_snapshot_id=challenge.id,
+            challenge_snapshot_sha256=challenge_sha256,
+            relevance_registry_version=challenge.relevance_registry_version,
+            narrator_metadata=narrator_metadata,
+        )
+        snapshot = ResearchReportSnapshot(
+            id=uuid4(),
+            company_id=reviewed.company_id,
+            analysis_snapshot_id=reviewed.id,
+            analysis_snapshot_sha256=analysis_sha256,
+            challenge_snapshot_id=challenge.id,
+            challenge_snapshot_sha256=challenge_sha256,
+            sections=sections,
+            executive_snapshot=assembly.executive_snapshot,
+            synthesis=assembly.synthesis,
+            document_corpus=assembly.document_corpus,
+            monitoring=assembly.monitoring,
+            limitations=assembly.limitations,
+            narrator_metadata=narrator_metadata,
+            rejected_narrative_blocks=rejected,
+            artifact_manifest=ArtifactManifest(),
+            reproducibility=reproducibility,
+            evaluated_at=datetime.now(UTC),
+        )
+        await services.repository.save_report(snapshot)
         return snapshot
 
     async def evaluate_valuation(self, request: ValuationRequest) -> ValuationSnapshot:
@@ -452,6 +574,10 @@ class ResearchEngine:
             deterministic_challenge_available=self._challenge is not None,
             live_challenger_available=(
                 self._challenge is not None and self._challenge.provider_kind == "LIVE"
+            ),
+            deterministic_report_assembly_available=self._report is not None,
+            live_report_narrator_available=(
+                self._report is not None and self._report.provider_kind == "LIVE"
             ),
         )
 

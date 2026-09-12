@@ -14,9 +14,11 @@ from stock_research_ai.adapters.json_export import (
     export_challenge,
     export_context,
     export_document,
+    export_investor_brief,
     export_market,
     export_market_calculation,
     export_patterns,
+    export_report,
     export_result,
     export_sector_kpis,
     export_technicals,
@@ -24,6 +26,7 @@ from stock_research_ai.adapters.json_export import (
 )
 from stock_research_ai.adapters.kite.normalizer import KiteNormalizer
 from stock_research_ai.adapters.kite.source import KiteSource
+from stock_research_ai.adapters.markdown_export import export_markdown
 from stock_research_ai.adapters.mospi.normalizer import MacroNormalizer
 from stock_research_ai.adapters.mospi.source import MospiSource
 from stock_research_ai.adapters.publications.normalizer import PublicationNormalizer
@@ -42,6 +45,7 @@ from stock_research_ai.application.engine import (
     ExtractionServices,
     MarketCalculationServices,
     MarketServices,
+    ReportServices,
     ResearchEngine,
     SectorKPIServices,
     ValuationServices,
@@ -53,6 +57,7 @@ from stock_research_ai.application.ports import (
     MacroAcquirer,
     MarketSource,
     PublicationAcquirer,
+    ReportNarrator,
     SourceAcquirer,
 )
 from stock_research_ai.config import Settings
@@ -79,6 +84,11 @@ from stock_research_ai.domain.patterns import PatternRequest, PatternSnapshot
 from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
+)
+from stock_research_ai.domain.report import (
+    ReportExecutionSpec,
+    ReportRequest,
+    ResearchReportSnapshot,
 )
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
@@ -517,6 +527,62 @@ async def challenge_analysis(
         )
         result = await engine.challenge_analysis(request, execution)
         export_challenge(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def generate_report(
+    settings: Settings,
+    request: ReportRequest,
+    output: Path,
+    execution: ReportExecutionSpec | None = None,
+    narrator: ReportNarrator | None = None,
+    provider_kind: Literal["LIVE", "FAKE"] | None = None,
+) -> ResearchReportSnapshot:
+    """Route through ResearchEngine only. Deterministic report assembly needs no model at
+    all; a narrator-assisted pass additionally requires an explicit `narrator` and its own
+    explicit `provider_kind` (a LIVE adapter, or a FakeReportNarrator for offline tests) -
+    it is never silently substituted or defaulted, mirroring analyze_company/
+    challenge_analysis exactly. `request.challenge_snapshot_id` is mandatory: there is no
+    AnalysisSnapshot-only fallback anywhere in this bootstrap or the engine it calls."""
+    check_output(output)
+    if execution is not None and (narrator is None or provider_kind is None):
+        raise RuntimeError(
+            "No LIVE report narrator is configured for this bootstrap. Narrator-assisted "
+            "report generation requires explicitly injecting a ReportNarrator and its "
+            "provider_kind (a LIVE adapter, or FakeReportNarrator for offline tests) - it is "
+            "never silently substituted or defaulted. Omit `execution` for deterministic-only "
+            "report generation."
+        )
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        await database.check_ready()
+        store = FileRawArtifactStore(
+            settings.artifact_path or settings.database_path.parent / "artifacts"
+        )
+        engine = ResearchEngine(
+            database.repository,
+            report=ReportServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                database.challenges,
+                database.reports,
+                narrator=narrator,
+                provider_kind=provider_kind,
+            ),
+        )
+        result = await engine.generate_report(request, execution)
+        export_report(result, output)
+        export_investor_brief(result, output)
+        export_markdown(result, output)
         return result
     finally:
         await database.close()

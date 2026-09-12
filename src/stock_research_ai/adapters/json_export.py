@@ -16,6 +16,7 @@ from stock_research_ai.domain.patterns import PatternSnapshot
 from stock_research_ai.domain.publications import (
     PublicationSnapshot,
 )
+from stock_research_ai.domain.report import ReportSectionId, ResearchReportSnapshot
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 from stock_research_ai.domain.technicals import TechnicalSnapshot
 from stock_research_ai.domain.valuation import ValuationSnapshot
@@ -450,3 +451,131 @@ def export_challenge(snapshot: ChallengeSnapshot, output: Path) -> None:
             },
         },
     )
+
+
+_COMPANY_RESEARCH_JSON_GROUPS: dict[str, tuple[ReportSectionId, ...]] = {
+    "business": ("BUSINESS_MODEL", "INDUSTRY_AND_COMPETITIVE_STRUCTURE"),
+    "financials": (
+        "ANNUAL_FINANCIAL_PERFORMANCE", "QUARTERLY_PERFORMANCE_AND_INFLECTION",
+        "BALANCE_SHEET_ANALYSIS", "CASH_FLOW_AND_EARNINGS_QUALITY",
+    ),
+    "calculations": ("CALCULATION_APPENDIX",),
+    "sector_kpis": ("SECTOR_SPECIFIC_KPI_ANALYSIS",),
+    "management": (
+        "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE", "CONCALL_INTELLIGENCE",
+        "MANAGEMENT_GUIDANCE_AND_COMMITMENTS", "MANAGEMENT_GUIDANCE_VS_ACTUAL",
+        "MANAGEMENT_NARRATIVE_CHANGE_DETECTION", "AGM_INTELLIGENCE",
+        "ANNUAL_REPORT_INTELLIGENCE", "INVESTOR_PRESENTATION_INTELLIGENCE",
+        "MANAGEMENT_CREDIBILITY_CONSISTENCY", "MANAGEMENT_STATEMENT_APPENDIX",
+    ),
+    "shareholding": ("OWNERSHIP_AND_SHAREHOLDING",),
+    "forensics": ("FORENSIC_AND_QUALITY_REVIEW", "GOVERNANCE_AND_CAPITAL_ALLOCATION"),
+    "market": ("MARKET_AND_PRICE_ANALYSIS",),
+    "technicals": ("TECHNICAL_ANALYSIS",),
+    "valuation": ("VALUATION", "MARKET_IMPLIED_EXPECTATIONS"),
+    "scenarios": ("BULL_BASE_BEAR_SCENARIOS",),
+    "variant_perception": ("VARIANT_PERCEPTION",),
+    "catalysts": ("CATALYSTS",),
+    "risks": ("RISK_REGISTER",),
+    "challenger": ("INDEPENDENT_CHALLENGER_REVIEW", "CHALLENGER_APPENDIX"),
+    "monitoring": ("MONITORING_DASHBOARD",),
+    "evidence": ("EVIDENCE_APPENDIX",),
+}
+
+
+def _sections_payload(
+    snapshot: ResearchReportSnapshot, section_ids: tuple[ReportSectionId, ...]
+) -> dict[str, object]:
+    matching = [s for s in snapshot.sections if s.section in section_ids]
+    return {
+        "coverage": [
+            {"section": s.section, "status": s.coverage.status, "reason": s.coverage.reason,
+             "reason_code": s.coverage.reason_code}
+            for s in matching
+        ],
+        "tables": [t.model_dump(mode="json") for s in matching for t in s.tables],
+        "statements": [st.model_dump(mode="json") for s in matching for st in s.statements],
+    }
+
+
+def export_report(snapshot: ResearchReportSnapshot, output: Path) -> None:
+    """The canonical structured research package - a pure reshaping of the same
+    persisted ResearchReportSnapshot, not a second research process or new data."""
+    check_output(output)
+    (output / "normalized").mkdir(parents=True, exist_ok=True)
+    write_json(output / "normalized/report_snapshot.json", snapshot.model_dump(mode="json"))
+
+    coverage_by_section = {
+        s.section: {"status": s.coverage.status, "reason": s.coverage.reason,
+                    "reason_code": s.coverage.reason_code}
+        for s in snapshot.sections
+    }
+    analyst_claim_ids = sorted(
+        {str(cid) for s in snapshot.sections for st in s.statements for cid in st.source_claim_ids}
+    )
+    payload = {
+        "metadata": {
+            "schema_version": snapshot.schema_version,
+            "report_id": str(snapshot.id),
+            "evaluated_at": snapshot.evaluated_at.isoformat(),
+        },
+        "company": {"company_id": str(snapshot.company_id)},
+        "coverage": coverage_by_section,
+        "document_corpus": snapshot.document_corpus.model_dump(mode="json"),
+        **{
+            key: _sections_payload(snapshot, section_ids)
+            for key, section_ids in _COMPANY_RESEARCH_JSON_GROUPS.items()
+        },
+        "assumptions": [
+            st.model_dump(mode="json")
+            for s in snapshot.sections
+            for st in s.statements
+            if st.epistemic_class == "ASSUMPTION"
+        ],
+        "analyst_claims": analyst_claim_ids,
+        "synthesis": snapshot.synthesis.model_dump(mode="json"),
+        "limitations": [limit.model_dump(mode="json") for limit in snapshot.limitations],
+        "lineage": {
+            "analysis_snapshot_id": str(snapshot.analysis_snapshot_id),
+            "analysis_snapshot_sha256": snapshot.analysis_snapshot_sha256,
+            "challenge_snapshot_id": str(snapshot.challenge_snapshot_id),
+            "challenge_snapshot_sha256": snapshot.challenge_snapshot_sha256,
+        },
+        "reproducibility": snapshot.reproducibility.model_dump(mode="json"),
+    }
+    write_json(output / "COMPANY_RESEARCH.json", payload)
+
+
+def export_investor_brief(snapshot: ResearchReportSnapshot, output: Path) -> None:
+    """A pure projection of the SAME persisted ResearchReportSnapshot - no second
+    research process, no independent conclusions; it cannot contradict the
+    institutional report because it shares its exact source content. Does not gate on a
+    fresh/empty directory itself - callers writing multiple artifacts into the same output
+    directory should call check_output once, before the first exporter runs."""
+    output.mkdir(parents=True, exist_ok=True)
+    exec_snap = snapshot.executive_snapshot
+
+    def texts(statements: object) -> list[str]:
+        return [st.text for st in statements]  # type: ignore[attr-defined]
+
+    payload = {
+        "report_id": str(snapshot.id),
+        "what_the_company_does": texts(exec_snap.company_overview),
+        "what_is_improving": texts(exec_snap.supporting_evidence),
+        "financial_trends": texts(exec_snap.key_financial_trend),
+        "sector_kpis": texts(exec_snap.key_sector_trend),
+        "management_document_takeaways": texts(exec_snap.document_highlights),
+        "valuation": texts(exec_snap.valuation_evidence),
+        "market_implied_expectations": texts(exec_snap.market_implied_expectations),
+        "catalysts": texts(exec_snap.catalysts),
+        "risks": texts(exec_snap.risks),
+        "challenger_findings": [str(fid) for fid in exec_snap.material_challenger_finding_ids],
+        "disconfirming_evidence": [
+            ref.model_dump(mode="json") for ref in exec_snap.disconfirming_evidence
+        ],
+        "data_gaps": [gap.model_dump(mode="json") for gap in exec_snap.major_data_gaps],
+        "research_completeness": exec_snap.research_completeness,
+        "valuation_evidence_state": exec_snap.valuation_evidence_state,
+        "unresolved_questions": list(exec_snap.unresolved_questions),
+    }
+    write_json(output / "investor_brief.json", payload)

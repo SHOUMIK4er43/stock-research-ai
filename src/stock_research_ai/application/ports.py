@@ -33,6 +33,11 @@ from stock_research_ai.domain.publications import (
     PublicationRequest,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.report import (
+    ReportExecutionSpec,
+    ReportSection,
+    ResearchReportSnapshot,
+)
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SemanticResolution
 from stock_research_ai.domain.technicals import TechnicalSnapshot
 from stock_research_ai.domain.valuation import ValuationSnapshot
@@ -247,3 +252,22 @@ class ChallengeRepository(Protocol):
     async def challenge_history(
         self, analysis_snapshot_id: UUID
     ) -> tuple[ChallengeSnapshot, ...]: ...
+    async def get_challenge(self, challenge_snapshot_id: UUID) -> ChallengeSnapshot | None: ...
+
+
+class ReportNarrator(Protocol):
+    """Provider-neutral: turns an already-assembled ReportSection tuple into raw
+    narrative text. Distinct role/Protocol, reusing the same provider-neutral
+    value types (PromptTemplate/RenderedModelRequest/RawAnalystResponse/
+    ModelMetadata) Part 5B/5C's own models already use."""
+
+    async def narrate(
+        self, sections: tuple[ReportSection, ...], execution: ReportExecutionSpec
+    ) -> ModelMetadata: ...
+
+
+class ReportRepository(Protocol):
+    async def save_report(self, snapshot: ResearchReportSnapshot) -> None: ...
+    async def report_history(
+        self, challenge_snapshot_id: UUID
+    ) -> tuple[ResearchReportSnapshot, ...]: ...

@@ -167,6 +167,7 @@ async def test_snapshot_history_and_identity_binding(yesbank_result, fixture_dir
             "valuation_snapshots",
             "analysis_snapshots",
             "challenge_snapshots",
+            "report_snapshots",
         }
         for table, count in {
             "companies": 1,

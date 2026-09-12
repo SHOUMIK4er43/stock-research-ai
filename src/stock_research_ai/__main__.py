@@ -120,6 +120,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--execution", type=Path, help="ChallengerExecutionSpec JSON; omit for deterministic-only"
     )
     challenge.add_argument("--output", type=Path, required=True)
+    report = commands.add_parser(
+        "generate-report",
+        help="Assemble the final institutional report over an exact frozen Part 5C "
+        "ChallengeSnapshot - no ChallengeSnapshot means no report",
+    )
+    report.add_argument("--challenge-snapshot", type=UUID, required=True)
+    report.add_argument(
+        "--execution", type=Path, help="ReportExecutionSpec JSON; omit for deterministic-only"
+    )
+    report.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
@@ -179,6 +189,40 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
         print(f"Challenge exported: {args.output}")
+        raise SystemExit(0)
+    elif args.command == "generate-report":
+        from pydantic import ValidationError
+
+        from stock_research_ai.application.report import ReportIntegrityError
+        from stock_research_ai.bootstrap import generate_report
+        from stock_research_ai.domain.report import ReportExecutionSpec, ReportRequest
+
+        report_execution = (
+            ReportExecutionSpec.model_validate_json(args.execution.read_text())
+            if args.execution is not None
+            else None
+        )
+        try:
+            asyncio.run(
+                generate_report(
+                    settings,
+                    ReportRequest(challenge_snapshot_id=args.challenge_snapshot),
+                    args.output,
+                    report_execution,
+                )
+            )
+        except RuntimeError as exc:
+            print(f"Report narrator unavailable: {exc}", file=sys.stderr)
+            raise SystemExit(4) from None
+        except ReportIntegrityError as exc:
+            print(f"Report integrity failure: {exc}", file=sys.stderr)
+            raise SystemExit(6) from None
+        except ValidationError as exc:
+            print(f"Report validator/system failure: {exc}", file=sys.stderr)
+            raise SystemExit(5) from None
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        print(f"Report exported: {args.output}")
         raise SystemExit(0)
     elif args.command == "evaluate-valuation":
         from stock_research_ai.bootstrap import evaluate_valuation

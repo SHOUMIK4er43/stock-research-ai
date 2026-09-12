@@ -1102,3 +1102,72 @@ reviewed `AnalysisSnapshot` embedded verbatim), `claim_reviews.json`, `section_r
 `findings.json`, `uncited_evidence.json`, and `coverage.json`. Challenge snapshots are
 append-only history rows keyed by analysis snapshot; no historical row is ever rewritten.
 See [the Part 5C proof report](docs/part5c-proof.md).
+
+## Part 6A — Final Report Engine
+
+The report CLI turns a frozen Part 5C `ChallengeSnapshot` into the final research package.
+The chain is enforced structurally: evidence → deterministic calculations → Part 5B
+`AnalysisSnapshot` → Part 5C `ChallengeSnapshot` → Part 6A `ResearchReportSnapshot`. A
+`ReportRequest` carries exactly one field, `challenge_snapshot_id` — there is no
+`AnalysisSnapshot`-only fallback anywhere in the engine; a missing `ChallengeSnapshot`
+refuses report generation outright.
+
+Every deterministic table cell is a verbatim re-display of an already-canonical upstream
+value — no new arithmetic runs in this part. Coverage is rendered using the exact frozen
+8-value vocabulary from Part 5B (`AVAILABLE`/`PARTIAL`/`INSUFFICIENT_INPUT`/`NOT_APPLICABLE`/
+`UNAVAILABLE`/`UNVERIFIED_METRIC_SEMANTICS`/`INCOMPATIBLE_SCOPE`/`INCOMPATIBLE_PERIOD`), never
+widened; sections with no upstream support (management guidance, guidance-vs-actual, AGM
+intelligence, governance, competitive structure) render an honest coverage status plus a
+closed reason code (`REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED`,
+`UPSTREAM_CAPABILITY_NOT_IMPLEMENTED`, `NO_DOCUMENTS_OF_TYPE_PINNED`) rather than fabricated
+content. `INVALID_AGAINST_BUNDLE` claims never appear as a standalone conclusion in any
+topical section — only inside the Independent Challenger Review section, always paired with
+the finding that invalidated them; `CHALLENGED` claims are always rendered alongside their
+findings. There is no global investment stance, no BUY/SELL/HOLD, and no 0–100 score —
+`research_completeness` and `valuation_evidence_state` are the only synthesis-level fields,
+both pure, threshold-free functions of already-computed coverage/category data.
+
+A quote from a `CONCALL_TRANSCRIPT` (mixed management/analyst/moderator voices, with no
+speaker field anywhere upstream) is always labeled the neutral `TRANSCRIPT_STATEMENT`, never
+`MANAGEMENT_STATEMENT` — speaker identity is never inferred from prose or position. Document
+Corpus coverage is explicitly `corpus_scope: PINNED_REPORT_INPUT_ONLY`: it shows only
+documents the original Part 5B request actually pinned, never a claim about the full
+document universe retained for the company.
+
+An optional `ReportNarrator` may add bounded prose, but every numeric token in its text must
+already appear in that section's own deterministic tables (numeric closure), and it can never
+author an evidence ID, hash, coverage status, or challenge outcome — its only output shape is
+`{section, text}`. A rejected narrator block falls back to deterministic-only content; it
+never fails the whole report. No live narrator provider ships in this part.
+
+Run the complete offline proof in a **new** output directory:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run python scripts/verify_report.py --output output/part6a-proof-manual
+```
+
+This exercises two explicitly separate tracks. **Real retained evidence** (INFY, YESBANK):
+the full frozen chain over real Screener/document fixtures — for YESBANK, both genuinely
+retained document fixtures (an investor presentation and a concall transcript) are ingested
+through the normal Part 3A pipeline and cited, proving Document Corpus and Concall/Investor-
+Presentation Intelligence render from real evidence with the transcript-neutral speaker rule
+applied for real. **Synthetic mechanical proof**: narrator numeric-closure/forbidden-language
+rejection and fallback, report-revision append-only history, and raw-artifact-corruption
+atomicity.
+
+For an existing challenge snapshot, run:
+
+```sh
+UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1 \
+  uv run stock-research-ai --database /absolute/path/research.sqlite3 \
+  generate-report --challenge-snapshot <challenge-snapshot-uuid> \
+  --output /absolute/path/new-export
+```
+
+Outputs are `COMPANY_RESEARCH.json` (the canonical structured package), `COMPANY_INSTITUTIONAL_
+RESEARCH.md` and `COMPANY_INVESTOR_BRIEF.md` (deterministic Markdown renderings), and
+`investor_brief.json`. The investor brief is a pure projection of the same persisted
+`ResearchReportSnapshot` — it runs no second research process and cannot contradict the
+institutional report. Report snapshots are append-only history rows keyed by challenge
+snapshot; no historical row is ever rewritten. See [the Part 6A proof report](docs/part6a-proof.md).

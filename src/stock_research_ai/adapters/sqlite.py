@@ -38,6 +38,7 @@ from stock_research_ai.domain.publications import (
     PublicationHit,
     PublicationSnapshot,
 )
+from stock_research_ai.domain.report import ResearchReportSnapshot
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 from stock_research_ai.domain.technicals import TechnicalSnapshot
 from stock_research_ai.domain.valuation import ValuationSnapshot
@@ -171,6 +172,7 @@ class SQLiteDatabase:
         self.valuations = SQLiteValuationRepository(sessions)
         self.analyses = SQLiteAnalysisRepository(sessions)
         self.challenges = SQLiteChallengeRepository(sessions)
+        self.reports = SQLiteReportRepository(sessions)
 
     @property
     def repository(self) -> SQLiteCompanyRepository:
@@ -1208,3 +1210,101 @@ class SQLiteChallengeRepository:
                 .order_by(_ChallengeRow.evaluated_at, _ChallengeRow.id)
             )
             return tuple(ChallengeSnapshot.model_validate(row.payload) for row in rows)
+
+    async def get_challenge(self, challenge_snapshot_id: UUID) -> ChallengeSnapshot | None:
+        async with self.sessions() as session:
+            row = await session.get(_ChallengeRow, str(challenge_snapshot_id))
+            return ChallengeSnapshot.model_validate(row.payload) if row else None
+
+
+async def _load_challenge_snapshot_in_session(
+    session: AsyncSession, challenge_snapshot_id: UUID
+) -> ChallengeSnapshot | None:
+    """Same-transaction re-fetch of the pinned ChallengeSnapshot, mirroring
+    _load_analysis_snapshot_in_session's pattern for Part 6A's own append."""
+    row = await session.get(_ChallengeRow, str(challenge_snapshot_id))
+    return ChallengeSnapshot.model_validate(row.payload) if row else None
+
+
+class _ReportRow(_Base):
+    __tablename__ = "report_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    challenge_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("challenge_snapshots.id"), index=True
+    )
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), index=True)
+    evaluated_at: Mapped[str] = mapped_column(String)
+    schema_version: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class SQLiteReportRepository:
+    """Append-only. Re-verifies the pinned ChallengeSnapshot AND its own transitively
+    embedded AnalysisSnapshot, plus every distinct pinned evidence source and its
+    upstream lineage and raw bytes, inside the SAME session/transaction as the
+    insert - reusing Part 5B/5C's integrity helpers unchanged (Option B: this row
+    never re-embeds the full upstream chain, only pins it by ID + hash)."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def save_report(self, snapshot: ResearchReportSnapshot) -> None:
+        from stock_research_ai.application.hashing import digest
+        from stock_research_ai.application.report import ReportIntegrityError
+
+        snapshot = ResearchReportSnapshot.model_validate_json(snapshot.model_dump_json())
+        async with self.sessions() as session, session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            fresh_challenge = await _load_challenge_snapshot_in_session(
+                session, snapshot.challenge_snapshot_id
+            )
+            fresh_challenge_hash = digest(fresh_challenge) if fresh_challenge is not None else None
+            expected_challenge_hash = snapshot.challenge_snapshot_sha256
+            if fresh_challenge is None or fresh_challenge_hash != expected_challenge_hash:
+                raise ReportIntegrityError(
+                    "Pinned challenge snapshot no longer exists or hash mismatch"
+                )
+            fresh_reviewed = await _load_analysis_snapshot_in_session(
+                session, snapshot.analysis_snapshot_id
+            )
+            fresh_reviewed_hash = digest(fresh_reviewed) if fresh_reviewed is not None else None
+            if fresh_reviewed is None or fresh_reviewed_hash != snapshot.analysis_snapshot_sha256:
+                raise ReportIntegrityError(
+                    "Pinned analysis snapshot no longer exists or hash mismatch"
+                )
+            if fresh_challenge.analysis_snapshot_id != snapshot.analysis_snapshot_id:
+                raise ReportIntegrityError(
+                    "Pinned challenge snapshot no longer references the pinned analysis snapshot"
+                )
+            distinct = {
+                (r.kind, r.owning_snapshot_id): r.snapshot_payload_sha256
+                for r in fresh_reviewed.sources
+            }
+            for (kind, owning_snapshot_id), expected_sha in distinct.items():
+                source = await _load_evidence_owner_in_session(session, kind, owning_snapshot_id)
+                if source is None or digest(source) != expected_sha:
+                    raise ReportIntegrityError(
+                        f"Pinned {kind} source no longer exists or hash mismatch"
+                    )
+                await _verify_upstream_lineage_in_session(session, kind, source)
+            session.add(
+                _ReportRow(
+                    id=str(snapshot.id),
+                    challenge_snapshot_id=str(snapshot.challenge_snapshot_id),
+                    company_id=str(snapshot.company_id),
+                    evaluated_at=snapshot.evaluated_at.isoformat(),
+                    schema_version=snapshot.schema_version,
+                    payload=snapshot.model_dump(mode="json"),
+                )
+            )
+
+    async def report_history(
+        self, challenge_snapshot_id: UUID
+    ) -> tuple[ResearchReportSnapshot, ...]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(_ReportRow)
+                .where(_ReportRow.challenge_snapshot_id == str(challenge_snapshot_id))
+                .order_by(_ReportRow.evaluated_at, _ReportRow.id)
+            )
+            return tuple(ResearchReportSnapshot.model_validate(row.payload) for row in rows)

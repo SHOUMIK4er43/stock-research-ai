@@ -60,6 +60,12 @@ from stock_research_ai.application.ports import (
     ReportNarrator,
     SourceAcquirer,
 )
+from stock_research_ai.application.research_plan import (
+    FullResearchRequest,
+    FullResearchResult,
+    ProgressSink,
+    run_full_research,
+)
 from stock_research_ai.config import Settings
 from stock_research_ai.domain.analysis import (
     AnalysisRequest,
@@ -583,6 +589,133 @@ async def generate_report(
         export_report(result, output)
         export_investor_brief(result, output)
         export_markdown(result, output)
+        return result
+    finally:
+        await database.close()
+
+
+async def live_analyst_model(
+    settings: Settings,
+) -> tuple[AnalystModel | None, Literal["LIVE"] | None]:
+    """Settings -> optional concrete live AnalystModel, mirroring the existing
+    KiteSource.from_environment() convention: absent configuration returns (None, None);
+    present-but-unsupported configuration raises explicitly rather than silently
+    degrading. Never returns a FakeAnalystModel - that stays test-only."""
+    if settings.analyst_provider is None or settings.analyst_api_key is None:
+        return None, None
+    if settings.analyst_provider != "anthropic":
+        raise RuntimeError(
+            f"Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER: {settings.analyst_provider!r}"
+        )
+    from stock_research_ai.adapters.anthropic.analyst import AnthropicAnalystModel
+
+    model: AnalystModel = AnthropicAnalystModel(
+        api_key=settings.analyst_api_key.get_secret_value(),
+        model=settings.analyst_model,
+        base_url=settings.analyst_base_url,
+        timeout_seconds=settings.analyst_timeout_seconds,
+        max_output_tokens=settings.analyst_max_output_tokens,
+    )
+    return model, "LIVE"
+
+
+async def full_research(
+    settings: Settings,
+    request: FullResearchRequest,
+    output: Path,
+    progress: ProgressSink | None = None,
+) -> FullResearchResult:
+    """The FULL_RESEARCH_V1 CLI/pre-browser entry point. Thin: constructs the live
+    analyst provider and a fully-wired ResearchEngine, then delegates all sequencing to
+    application.research_plan.run_full_research. No orchestration logic lives here."""
+    check_output(output)
+    model, provider_kind = await live_analyst_model(settings)
+    if model is None or provider_kind is None:
+        raise RuntimeError(
+            "No LIVE analyst provider is configured for this bootstrap. FULL_RESEARCH_V1 "
+            "requires STOCK_RESEARCH_AI_ANALYST_PROVIDER and STOCK_RESEARCH_AI_ANALYST_API_KEY "
+            "- it is never silently substituted with a fake."
+        )
+    database = SQLiteDatabase(settings.database_path)
+    store = FileRawArtifactStore(
+        settings.artifact_path or settings.database_path.parent / "artifacts"
+    )
+    try:
+        await database.check_ready()
+        engine = ResearchEngine(
+            database.repository,
+            extraction=ExtractionServices(
+                source=ScreenerSource(),
+                artifacts=store,
+                normalizer=ScreenerNormalizer(),
+                repository=database.extractions,
+            ),
+            documents=DocumentServices(
+                DocumentSource(), store, PDFNormalizer(), database.documents
+            ),
+            sector_kpis=SectorKPIServices(
+                database.extractions, database.calculations, ScreenerSemanticResolver(), store
+            ),
+            valuations=ValuationServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                ScreenerSemanticResolver(),
+                store,
+                database.valuations,
+            ),
+            analyst=AnalystServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                model,
+                database.analyses,
+                provider_kind=provider_kind,
+            ),
+            challenge=ChallengeServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                database.analyses,
+                database.challenges,
+            ),
+            report=ReportServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                database.challenges,
+                database.reports,
+            ),
+        )
+        execution = AnalystExecutionSpec(
+            template_id="full-research-v1",
+            template_version=1,
+            generation_parameters={"max_output_tokens": settings.analyst_max_output_tokens},
+        )
+        from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
+
+        result = await run_full_research(
+            engine, store, ScreenerBroadIndustrySource(), request, execution, progress
+        )
+        output.write_text(result.model_dump_json(indent=2))
         return result
     finally:
         await database.close()

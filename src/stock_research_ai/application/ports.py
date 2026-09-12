@@ -27,7 +27,12 @@ from stock_research_ai.domain.macro import MacroRequest, MacroSnapshot
 from stock_research_ai.domain.market import MarketExtractionResult, MarketInstrument, MarketRequest
 from stock_research_ai.domain.market_calculations import MarketCalculationSnapshot
 from stock_research_ai.domain.patterns import PatternSnapshot
-from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact, SourceRetrieval
+from stock_research_ai.domain.provenance import (
+    AcquiredPayload,
+    RawArtifact,
+    SourceLocation,
+    SourceRetrieval,
+)
 from stock_research_ai.domain.publications import (
     PublicationHit,
     PublicationRequest,
@@ -60,6 +65,14 @@ class SourceAcquirer(Protocol):
 class RawArtifactStore(Protocol):
     async def put(self, payload: AcquiredPayload) -> RawArtifact: ...
     async def read(self, artifact: RawArtifact) -> bytes: ...
+
+
+class BroadIndustrySource(Protocol):
+    """Part 6B0: read a deterministic sector-classification label from bytes the caller
+    already acquired (no acquisition of its own). application.sector_resolution consumes
+    this Protocol only - it never imports an adapters.* module directly."""
+
+    def extract(self, content: bytes, encoding: str) -> tuple[str, SourceLocation] | None: ...
 
 
 class SourceNormalizer(Protocol):

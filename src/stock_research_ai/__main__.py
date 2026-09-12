@@ -130,6 +130,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--execution", type=Path, help="ReportExecutionSpec JSON; omit for deterministic-only"
     )
     report.add_argument("--output", type=Path, required=True)
+    full_research_cmd = commands.add_parser(
+        "full-research",
+        help="Run the server-owned FULL_RESEARCH_V1 plan end-to-end for one supported "
+        "Screener company - the pre-browser proof that a real report can be produced "
+        "without test fakes",
+    )
+    full_research_cmd.add_argument("--source-url", required=True)
+    full_research_cmd.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
@@ -223,6 +231,25 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
         print(f"Report exported: {args.output}")
+        raise SystemExit(0)
+    elif args.command == "full-research":
+        from stock_research_ai.application.research_plan import FullResearchRequest
+        from stock_research_ai.bootstrap import full_research
+
+        try:
+            full_research_result = asyncio.run(
+                full_research(
+                    settings, FullResearchRequest(source_url=args.source_url), args.output
+                )
+            )
+        except RuntimeError as exc:
+            print(f"Analyst provider unavailable: {exc}", file=sys.stderr)
+            raise SystemExit(4) from None
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        for warning in full_research_result.stage_warnings:
+            print(f"warning [{warning.stage}] {warning.code}: {warning.message}", file=sys.stderr)
+        print(f"Full research exported: {args.output}")
         raise SystemExit(0)
     elif args.command == "evaluate-valuation":
         from stock_research_ai.bootstrap import evaluate_valuation

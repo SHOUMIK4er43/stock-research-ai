@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Stock Research AI",
+  "version": "0.1.0",
+  "description": "Institutional-grade equity research for a supported Screener company page, run entirely by your local Stock Research AI service.",
+  "action": {},
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "sidePanel"],
+  "host_permissions": ["https://www.screener.in/*", "http://127.0.0.1/*"]
+}

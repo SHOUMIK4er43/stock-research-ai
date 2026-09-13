@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Stock Research AI</title>
+    <link rel="stylesheet" href="css/sidepanel.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Stock Research AI</h1>
+      <p id="service-status-line" class="status-line" aria-live="polite"></p>
+    </header>
+
+    <main id="main-content">
+      <section id="panel-service-unavailable" class="panel" hidden>
+        <p class="panel-title">Stock Research AI is not running.</p>
+        <p>Start it locally, then retry:</p>
+        <pre><code id="start-command"></code></pre>
+        <div class="button-row">
+          <button id="copy-start-command" type="button">Copy start command</button>
+          <button id="retry-service" type="button">Retry</button>
+        </div>
+      </section>
+
+      <section id="panel-incompatible" class="panel" hidden>
+        <p class="panel-title" role="alert">
+          Stock Research AI extension and local service versions are incompatible.
+        </p>
+        <p id="incompatible-detail" class="muted"></p>
+      </section>
+
+      <section id="panel-unpaired" class="panel" hidden>
+        <p class="panel-title">Pair with your local service</p>
+        <ol class="steps">
+          <li>Start Stock Research AI locally: <code id="pairing-start-command"></code></li>
+          <li>Run: <code id="pair-code-command"></code></li>
+          <li>Paste the one-time pairing code below.</li>
+        </ol>
+        <label for="pairing-code-input">Pairing code</label>
+        <input id="pairing-code-input" type="text" autocomplete="off" spellcheck="false" />
+        <div class="button-row">
+          <button id="pair-button" type="button">Pair</button>
+        </div>
+        <p id="pairing-error" class="error-text" role="alert" hidden></p>
+      </section>
+
+      <section id="panel-unsupported" class="panel" hidden>
+        <p class="panel-title">Open a Screener company page to research a company.</p>
+      </section>
+
+      <section id="panel-ready" class="panel" hidden>
+        <p id="current-page-label" class="muted"></p>
+        <div class="button-row">
+          <button id="research-button" type="button">Research Company</button>
+        </div>
+        <p id="analyst-warning" class="warning-text" hidden></p>
+      </section>
+
+      <section id="panel-running" class="panel" hidden aria-live="polite">
+        <p class="status-chip" id="stage-chip"></p>
+        <p id="started-at-label" class="muted"></p>
+        <p class="muted">Research in progress. You may close this panel - it will keep running.</p>
+      </section>
+
+      <section id="panel-completed" class="panel" hidden>
+        <p class="panel-title">Research complete</p>
+        <div class="button-row">
+          <button id="view-research-button" type="button">View Research</button>
+          <button id="research-again-button" type="button">Research Again</button>
+        </div>
+      </section>
+
+      <section id="panel-failed" class="panel" hidden>
+        <p class="panel-title error-text" id="failure-label" role="alert"></p>
+        <details id="failure-details" hidden>
+          <summary>Technical details</summary>
+          <p id="failure-technical" class="muted"></p>
+        </details>
+        <div class="button-row">
+          <button id="retry-button" type="button">Try Again</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <button id="repair-button" type="button" class="link-button">Forget pairing / Re-pair</button>
+      <span id="version-label" class="muted"></span>
+    </footer>
+
+    <script type="module" src="src/sidepanel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,2245 @@
+{
+  "schema_version": "6A.1",
+  "id": "c49fb14f-085e-4043-b6bf-39c43a4a2dd4",
+  "company_id": "624535ed-ba67-42c1-92dc-03a38a32e5f0",
+  "analysis_snapshot_id": "76993d9d-d7e0-4659-a2c8-580ca74659a0",
+  "analysis_snapshot_sha256": "0b3e74ff17d1d5c14d4d1fc26d825302fa5bdd4b6c0d1ce13d2f90609f6696e2",
+  "challenge_snapshot_id": "4f3035c8-c668-4212-85ce-10b7e2dadf23",
+  "challenge_snapshot_sha256": "4ee5a91113dfbfb27c4b65678bbbb05e4062aae34cd4d9879f957ed19162a7a4",
+  "sections": [
+    {
+      "section": "BUSINESS_MODEL",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "business_model_evidence",
+          "title": "Business Model",
+          "section": "BUSINESS_MODEL",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "Company",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "COMPANY",
+                  "owning_snapshot_id": "624535ed-ba67-42c1-92dc-03a38a32e5f0",
+                  "item_key": null,
+                  "snapshot_payload_sha256": "127cf4be8b7fd635bbb4b63c29c7e6c368bd7021d7ded4bfadf1ed365abe5c17",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "Document chunk",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "DOCUMENT_CHUNK",
+                  "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+                  "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+                  "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+                  "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "Document chunk",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "DOCUMENT_CHUNK",
+                  "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+                  "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+                  "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+                  "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "ANNUAL_FINANCIAL_PERFORMANCE",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "QUARTERLY_PERFORMANCE_AND_INFLECTION",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "BALANCE_SHEET_ANALYSIS",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "balance_sheet_analysis_evidence",
+          "title": "Balance Sheet Evidence",
+          "section": "BALANCE_SHEET_ANALYSIS",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "source:Profit before tax",
+                "display_value": "8910000000",
+                "unit": "CURRENCY",
+                "period": "Sep 2025",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "FINANCIAL",
+                  "owning_snapshot_id": "a3f8f07e-b783-451c-9bec-f7bb3770d4a7",
+                  "item_key": "00c56e93-fb2a-5a2b-a697-1a8ae9cdd1da",
+                  "snapshot_payload_sha256": "6c00b056a0665d5df8c96a07f8cf6a33bf69833fa59eb4c45b4d0d8654c40476",
+                  "raw_artifact_sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "source:Investments",
+                "display_value": "437480000000",
+                "unit": "CURRENCY",
+                "period": "Mar 2020",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "FINANCIAL",
+                  "owning_snapshot_id": "a3f8f07e-b783-451c-9bec-f7bb3770d4a7",
+                  "item_key": "00daa932-1e05-5429-88d0-c45252eb607e",
+                  "snapshot_payload_sha256": "6c00b056a0665d5df8c96a07f8cf6a33bf69833fa59eb4c45b4d0d8654c40476",
+                  "raw_artifact_sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "source:Tax %",
+                "display_value": "25",
+                "unit": "PERCENT",
+                "period": "Jun 2024",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "FINANCIAL",
+                  "owning_snapshot_id": "a3f8f07e-b783-451c-9bec-f7bb3770d4a7",
+                  "item_key": "00df7e82-e455-5296-b1d9-616d70365e86",
+                  "snapshot_payload_sha256": "6c00b056a0665d5df8c96a07f8cf6a33bf69833fa59eb4c45b4d0d8654c40476",
+                  "raw_artifact_sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb"
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "CASH_FLOW_AND_EARNINGS_QUALITY",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "cash_flow_and_earnings_quality_evidence",
+          "title": "Cash Flow & Earnings Quality Evidence",
+          "section": "CASH_FLOW_AND_EARNINGS_QUALITY",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "DEPOSIT_GROWTH_DECELERATION",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "PATTERN",
+                  "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+                  "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+                  "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "SECTOR_SPECIFIC_KPI_ANALYSIS",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "All relevant evidence is available.",
+        "reason_code": null,
+        "contributing_evidence_kinds": [
+          "SECTOR_KPI"
+        ]
+      },
+      "tables": [
+        {
+          "table_id": "sector_specific_kpi_analysis_evidence",
+          "title": "Sector KPI Evidence",
+          "section": "SECTOR_SPECIFIC_KPI_ANALYSIS",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "DEPOSIT_GROWTH",
+                "display_value": "6.83",
+                "unit": "PERCENT",
+                "period": "2025-03",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SECTOR_KPI",
+                  "owning_snapshot_id": "8a9e5bc2-5f42-49e3-9de6-a672aaa1bfcf",
+                  "item_key": "DEPOSIT_GROWTH",
+                  "snapshot_payload_sha256": "b225cd7259d5c8cf960c2624335ddbfc7678e61d388ca2e4feaac05cea54c791",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": [
+        {
+          "statement_id": "b8de738e-d15d-4f9e-a863-8653941b6a00",
+          "section": "SECTOR_SPECIFIC_KPI_ANALYSIS",
+          "text": "Deposit growth evidence is cited on its own.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [
+            "ac5c7dc1-29bd-417c-906d-e7a2af6398af"
+          ],
+          "challenge_finding_ids": [
+            "589948ed-1b90-4c74-b0e6-05915a983f84"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [],
+          "challenge_outcome": "CHALLENGED",
+          "limitations": [
+            "PINNED_EXTRACTION_NOT_LATEST_ASSERTION"
+          ],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "2bb2274d-b8f3-4b80-bf8d-3cbd65885630",
+          "section": "SECTOR_SPECIFIC_KPI_ANALYSIS",
+          "text": "Relevance rule BANK_DEPOSIT_GROWTH_VS_DECELERATION: related evidence is pinned in the bundle but not cited by this claim.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "589948ed-1b90-4c74-b0e6-05915a983f84"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "PATTERN",
+              "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+              "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+              "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+              "raw_artifact_sha256": null
+            }
+          ],
+          "challenge_outcome": "CHALLENGED",
+          "limitations": [],
+          "quote_attribution": null
+        }
+      ]
+    },
+    {
+      "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "All relevant evidence is available.",
+        "reason_code": null,
+        "contributing_evidence_kinds": [
+          "DOCUMENT_CHUNK"
+        ]
+      },
+      "tables": [
+        {
+          "table_id": "deep_management_and_document_intelligence_evidence",
+          "title": "Deep Management And Document Intelligence",
+          "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "Document chunk",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "DOCUMENT_CHUNK",
+                  "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+                  "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+                  "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+                  "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "Document chunk",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "DOCUMENT_CHUNK",
+                  "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+                  "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+                  "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+                  "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": [
+        {
+          "statement_id": "ca71c05d-9d5b-48e3-8529-10201ad4919c",
+          "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+          "text": "The investor presentation contains this exact retained passage.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [
+            "04c94082-a880-4975-9035-ac6e4c4cb43a"
+          ],
+          "challenge_finding_ids": [
+            "de7eaf38-9617-4847-bf5e-7b4d866e13df"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "4e990ad2-3740-45a6-9419-1f0a5aa97e9a",
+          "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+          "text": "A management quote is presented without any offsetting qualifier.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "de7eaf38-9617-4847-bf5e-7b4d866e13df"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+              "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+              "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+              "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "9c40c8b2-1b4c-476a-936d-84e9971675a8",
+          "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+          "text": "The concall transcript contains this exact retained passage.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [
+            "dccea9e6-94d6-46f3-97b6-b889a53e9322"
+          ],
+          "challenge_finding_ids": [
+            "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        }
+      ]
+    },
+    {
+      "section": "OWNERSHIP_AND_SHAREHOLDING",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "ownership_and_shareholding_evidence",
+          "title": "Shareholding Evidence",
+          "section": "OWNERSHIP_AND_SHAREHOLDING",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "public holding",
+                "display_value": "33.12",
+                "unit": "PERCENT",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SHAREHOLDING",
+                  "owning_snapshot_id": "a3f8f07e-b783-451c-9bec-f7bb3770d4a7",
+                  "item_key": "0141bb03-96c6-5648-9749-6254c6c8d88a",
+                  "snapshot_payload_sha256": "6c00b056a0665d5df8c96a07f8cf6a33bf69833fa59eb4c45b4d0d8654c40476",
+                  "raw_artifact_sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "government holding",
+                "display_value": "0.00",
+                "unit": "PERCENT",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SHAREHOLDING",
+                  "owning_snapshot_id": "a3f8f07e-b783-451c-9bec-f7bb3770d4a7",
+                  "item_key": "02390142-92db-530d-9ab9-121723ac1d29",
+                  "snapshot_payload_sha256": "6c00b056a0665d5df8c96a07f8cf6a33bf69833fa59eb4c45b4d0d8654c40476",
+                  "raw_artifact_sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "government holding",
+                "display_value": "0.01",
+                "unit": "PERCENT",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SHAREHOLDING",
+                  "owning_snapshot_id": "a3f8f07e-b783-451c-9bec-f7bb3770d4a7",
+                  "item_key": "04344a17-5f52-55fb-b895-5d2463453df0",
+                  "snapshot_payload_sha256": "6c00b056a0665d5df8c96a07f8cf6a33bf69833fa59eb4c45b4d0d8654c40476",
+                  "raw_artifact_sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb"
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "MACRO_POLICY_REGULATION",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "MARKET_AND_PRICE_ANALYSIS",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "TECHNICAL_ANALYSIS",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "VALUATION",
+      "coverage": {
+        "status": "PARTIAL",
+        "reason": "Some but not all relevant evidence is available.",
+        "reason_code": null,
+        "contributing_evidence_kinds": [
+          "VALUATION"
+        ]
+      },
+      "tables": [
+        {
+          "table_id": "valuation_evidence",
+          "title": "Valuation Evidence",
+          "section": "VALUATION",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "PRICE_TO_BOOK",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "UNVERIFIED_METRIC_SEMANTICS",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "2801529d-8865-49d6-a9de-7d26ab2249f1",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_EARNINGS",
+                "display_value": "20.00",
+                "unit": "MULTIPLE_X",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "ff68b369-1922-4341-af93-338131beaf11",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": [
+        {
+          "statement_id": "83eebd93-22ce-4397-8038-a007851efa59",
+          "section": "VALUATION",
+          "text": "Observed valuation evidence is cited.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [
+            "8c3b45af-7b77-459c-a9f7-c137740948b6"
+          ],
+          "challenge_finding_ids": [],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [],
+          "challenge_outcome": "SUPPORTED_BY_BUNDLE",
+          "limitations": [
+            "POINT_IN_TIME_AVAILABILITY_UNVERIFIED",
+            "UNVERIFIED_ADJUSTMENT",
+            "UNVERIFIED_BVPS"
+          ],
+          "quote_attribution": null
+        }
+      ]
+    },
+    {
+      "section": "MARKET_IMPLIED_EXPECTATIONS",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "market_implied_expectations_evidence",
+          "title": "Market-Implied Expectation Evidence",
+          "section": "MARKET_IMPLIED_EXPECTATIONS",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "PRICE_TO_BOOK",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "UNVERIFIED_METRIC_SEMANTICS",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "2801529d-8865-49d6-a9de-7d26ab2249f1",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_EARNINGS",
+                "display_value": "20.00",
+                "unit": "MULTIPLE_X",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "ff68b369-1922-4341-af93-338131beaf11",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "CATALYSTS",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "catalysts_evidence",
+          "title": "Catalysts",
+          "section": "CATALYSTS",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "DEPOSIT_GROWTH_DECELERATION",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "PATTERN",
+                  "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+                  "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+                  "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "DEPOSIT_GROWTH",
+                "display_value": "6.83",
+                "unit": "PERCENT",
+                "period": "2025-03",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SECTOR_KPI",
+                  "owning_snapshot_id": "8a9e5bc2-5f42-49e3-9de6-a672aaa1bfcf",
+                  "item_key": "DEPOSIT_GROWTH",
+                  "snapshot_payload_sha256": "b225cd7259d5c8cf960c2624335ddbfc7678e61d388ca2e4feaac05cea54c791",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_BOOK",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "UNVERIFIED_METRIC_SEMANTICS",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "2801529d-8865-49d6-a9de-7d26ab2249f1",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "RISK_REGISTER",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "risk_register_evidence",
+          "title": "Risk Register",
+          "section": "RISK_REGISTER",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "DEPOSIT_GROWTH_DECELERATION",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "PATTERN",
+                  "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+                  "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+                  "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "DEPOSIT_GROWTH",
+                "display_value": "6.83",
+                "unit": "PERCENT",
+                "period": "2025-03",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SECTOR_KPI",
+                  "owning_snapshot_id": "8a9e5bc2-5f42-49e3-9de6-a672aaa1bfcf",
+                  "item_key": "DEPOSIT_GROWTH",
+                  "snapshot_payload_sha256": "b225cd7259d5c8cf960c2624335ddbfc7678e61d388ca2e4feaac05cea54c791",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_BOOK",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "UNVERIFIED_METRIC_SEMANTICS",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "2801529d-8865-49d6-a9de-7d26ab2249f1",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "BULL_BASE_BEAR_SCENARIOS",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "bull_base_bear_scenarios_evidence",
+          "title": "Bull Base Bear Scenarios",
+          "section": "BULL_BASE_BEAR_SCENARIOS",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "PRICE_TO_BOOK",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "UNVERIFIED_METRIC_SEMANTICS",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "2801529d-8865-49d6-a9de-7d26ab2249f1",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_EARNINGS",
+                "display_value": "20.00",
+                "unit": "MULTIPLE_X",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "ff68b369-1922-4341-af93-338131beaf11",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "VARIANT_PERCEPTION",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "variant_perception_evidence",
+          "title": "Variant Perception",
+          "section": "VARIANT_PERCEPTION",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "DEPOSIT_GROWTH",
+                "display_value": "6.83",
+                "unit": "PERCENT",
+                "period": "2025-03",
+                "reporting_scope": "consolidated",
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SECTOR_KPI",
+                  "owning_snapshot_id": "8a9e5bc2-5f42-49e3-9de6-a672aaa1bfcf",
+                  "item_key": "DEPOSIT_GROWTH",
+                  "snapshot_payload_sha256": "b225cd7259d5c8cf960c2624335ddbfc7678e61d388ca2e4feaac05cea54c791",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_BOOK",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "UNVERIFIED_METRIC_SEMANTICS",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "2801529d-8865-49d6-a9de-7d26ab2249f1",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "PRICE_TO_EARNINGS",
+                "display_value": "20.00",
+                "unit": "MULTIPLE_X",
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "VALUATION",
+                  "owning_snapshot_id": "3d9098a6-e52f-471d-a46e-86c510e4a5dd",
+                  "item_key": "ff68b369-1922-4341-af93-338131beaf11",
+                  "snapshot_payload_sha256": "57a27f20f704a6cb7b13d4fdd222a9e4c2c2c867d761234a33e767af41fb197f",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "FORENSIC_AND_QUALITY_REVIEW",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Section was not requested in the pinned Part 5B analysis.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "forensic_and_quality_review_evidence",
+          "title": "Forensic Pattern Evidence",
+          "section": "FORENSIC_AND_QUALITY_REVIEW",
+          "columns": [
+            "Metric",
+            "Value",
+            "Unit",
+            "Period",
+            "Scope",
+            "Status"
+          ],
+          "rows": [
+            [
+              {
+                "label": "DEPOSIT_GROWTH_DECELERATION",
+                "display_value": null,
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "PATTERN",
+                  "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+                  "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+                  "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "INDUSTRY_AND_COMPETITIVE_STRUCTURE",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Competitive/peer evidence is not independently citable in the closed evidence bundle.",
+        "reason_code": "UPSTREAM_CAPABILITY_NOT_IMPLEMENTED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "COMPANY_IDENTITY_AND_EVIDENCE_FILE",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "Company overview not requested.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "DOCUMENT_CORPUS_AND_EVIDENCE_COVERAGE",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "2 document(s) present in the pinned research corpus.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "CONCALL_INTELLIGENCE",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "1 retained statement(s) found in pinned documents of this type.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": [
+        {
+          "statement_id": "7a10c979-43bb-40bd-8f54-6a1de118a7f1",
+          "section": "CONCALL_INTELLIGENCE",
+          "text": " \n \n \nYBL/CS/2025-26/180 \n \nJanuary 22, 2026 \n \nNational Stock Exchange of India Limited  BSE Limited \nExchange Plaza, Plot no. C/1, G Block, Corporate Relations Department \nBandra - Kurla Complex, Bandra (E)   P.J. Towers, Dalal Street \nMumbai - 400 051 Mumbai \u2013 400 001  \nNSE Symbol: YESBANK    BSE Scrip Code: 532648 \n \nDear Sir/Madam, \n \nSub.: Transcript of Earnings Call for the un-audited Financial Results for the Quarter (Q3) \nand nine months ended December 31, 2025 \nRef.:   Reg. 30 of SEBI (Listing Obligations and Disclosure Requirements) Regulations, \n2015  \nPlease find attached the transcript of the earnings call hosted by YES Bank Limited (\u201cthe \nBank\u201d) on January 17, 2026, for the un-audited Financial Results for the Quarter (Q3) and nine \nmonths ended December 31, 2025 . The same is made available on the Bank\u2019s website within \nthe timeline prescribed under the SEBI (Listing Obligations and Disclosure Requirements) \nRegulations, 2015 and can be accessed at the following link. \nhttps://www.yes.bank.in/pdf?name=ybl_analyst_transcript_q3fy26.pdf \nThe weblink of BSE Limited and National Stock Exchange of India Limited providing the \nabove information is being hosted on the Bank\u2019s website www.yes.bank.in pursuant to Listing \nRegulations, as amended. \nYou are requested to take the same on record. \n \nYours faithfully, \n \nFor YES BANK LIMITED \n \n  \n \nSanjay Abhyankar \nCompany Secretary \n \nEncl.: As above \n \n ",
+          "epistemic_class": "FACT",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [
+            "dccea9e6-94d6-46f3-97b6-b889a53e9322"
+          ],
+          "challenge_finding_ids": [],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+              "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+              "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+              "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": "TRANSCRIPT_STATEMENT"
+        }
+      ]
+    },
+    {
+      "section": "ANNUAL_REPORT_INTELLIGENCE",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "No documents of this type were pinned into the reviewed Part 5B analysis request.",
+        "reason_code": "NO_DOCUMENTS_OF_TYPE_PINNED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "INVESTOR_PRESENTATION_INTELLIGENCE",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "1 retained statement(s) found in pinned documents of this type.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": [
+        {
+          "statement_id": "2f3d9655-3b22-45da-9e3b-d645611e78ea",
+          "section": "INVESTOR_PRESENTATION_INTELLIGENCE",
+          "text": " \n \nYBL/CS/2025-26/70 \n       \nJuly 19, 2025 \n \nNational Stock Exchange of India Limited \nExchange Plaza, \nPlot no. C/1, G Block, \nBandra - Kurla Complex \nBandra (E), Mumbai - 400 051 \nNSE Symbol: YESBANK \nBSE Limited \nCorporate Relations Department \nP.J. Towers, Dalal Street \nMumbai \u2013 400 001 \nBSE Scrip Code: 532648 \n \n \nDear Sir / Madam, \n \nSub.: Press Release and Investor Presentation on the Financial Results  for the Quarter \n(Q1) ended on June 30, 2025 \nRef.:   Reg. 30 of SEBI (Listing Obligations and Disclosure Requirements) Regulations, \n2015 (\u201cListing Regulations\u201d) \n \nThis is further to the Outcome of Board Meeting held on July 19, 2025, wherein the Bank had \ndisclosed the Un-Audited Standalone and Consolidated Financial Results of the Bank for the \nQuarter (Q 1) ended on  June 30 , 2025, along with the Limited Review Report of the Joint \nStatutory Auditors of YES Bank Limited (\u201cthe Bank\u201d). \n \nA Press Release and Investor Presentation on the Financial Results for the Quarter (Q1) ended \non June 30, 2025, is also enclosed herewith for appropriate dissemination.  \n \nThe weblink of BSE Limited and National Stock Exchange of India Limited providing the \nabove information is being hosted on the Bank\u2019s website www.yesbank.in pursuant to Listing \nRegulations, as amended.  \n \nYou are requested to take the same on record and acknowledge the receipt.  \n \nThanking you, \n \nYours faithfully, \n \nFor YES BANK LIMITED \n \n \n \nSanjay Abhyankar \nCompany Secretary \n \nEncl: Press Release and Investor Presentation \n ",
+          "epistemic_class": "FACT",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [
+            "04c94082-a880-4975-9035-ac6e4c4cb43a"
+          ],
+          "challenge_finding_ids": [],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+              "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+              "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+              "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": "MANAGEMENT_STATEMENT"
+        }
+      ]
+    },
+    {
+      "section": "MANAGEMENT_NARRATIVE_CHANGE_DETECTION",
+      "coverage": {
+        "status": "INSUFFICIENT_INPUT",
+        "reason": "Fewer than two retained versions of the same document are pinned; no narrative-change comparison is possible.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "MANAGEMENT_GUIDANCE_AND_COMMITMENTS",
+      "coverage": {
+        "status": "INSUFFICIENT_INPUT",
+        "reason": "No structured management-guidance evidence model exists upstream.",
+        "reason_code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "MANAGEMENT_GUIDANCE_VS_ACTUAL",
+      "coverage": {
+        "status": "INSUFFICIENT_INPUT",
+        "reason": "No structured management-guidance evidence model exists upstream.",
+        "reason_code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "AGM_INTELLIGENCE",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "No AGM-specific document classification exists upstream.",
+        "reason_code": "UPSTREAM_CAPABILITY_NOT_IMPLEMENTED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "MANAGEMENT_CREDIBILITY_CONSISTENCY",
+      "coverage": {
+        "status": "INSUFFICIENT_INPUT",
+        "reason": "Management credibility review requires the same structured guidance evidence that does not yet exist upstream.",
+        "reason_code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "GOVERNANCE_AND_CAPITAL_ALLOCATION",
+      "coverage": {
+        "status": "UNAVAILABLE",
+        "reason": "No governance/capital-allocation evidence model exists upstream.",
+        "reason_code": "UPSTREAM_CAPABILITY_NOT_IMPLEMENTED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "INDEPENDENT_CHALLENGER_REVIEW",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Independent Part 5C review completed for every claim.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": [
+        {
+          "statement_id": "2a440c74-2cb6-42b8-9658-fe8212b3f237",
+          "section": "INDEPENDENT_CHALLENGER_REVIEW",
+          "text": "Relevance rule BANK_DEPOSIT_GROWTH_VS_DECELERATION: related evidence is pinned in the bundle but not cited by this claim.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "589948ed-1b90-4c74-b0e6-05915a983f84"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "PATTERN",
+              "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+              "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+              "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+              "raw_artifact_sha256": null
+            }
+          ],
+          "challenge_outcome": "CHALLENGED",
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "1d62e50b-1d1b-471f-a667-28afad148634",
+          "section": "INDEPENDENT_CHALLENGER_REVIEW",
+          "text": "A management quote is presented without any offsetting qualifier.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "de7eaf38-9617-4847-bf5e-7b4d866e13df"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+              "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+              "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+              "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "30209036-9ade-4d8c-876f-44d47f83ac82",
+          "section": "INDEPENDENT_CHALLENGER_REVIEW",
+          "text": "A management quote is presented without any offsetting qualifier.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+              "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+              "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+              "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        }
+      ]
+    },
+    {
+      "section": "RESEARCH_SYNTHESIS",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Deterministic synthesis fields computed.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "MONITORING_DASHBOARD",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Static snapshot of already-known monitoring variables.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "DATA_GAPS_AND_LIMITATIONS",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Deterministic aggregation of every non-AVAILABLE section and omission review.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "EVIDENCE_APPENDIX",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Full pinned evidence list.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "evidence_appendix",
+          "title": "Evidence Appendix",
+          "section": "EVIDENCE_APPENDIX",
+          "columns": [
+            "Kind",
+            "Owning Snapshot",
+            "Item Key",
+            "Hash"
+          ],
+          "rows": [
+            [
+              {
+                "label": "COMPANY:",
+                "display_value": "127cf4be8b7f",
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "COMPANY",
+                  "owning_snapshot_id": "624535ed-ba67-42c1-92dc-03a38a32e5f0",
+                  "item_key": null,
+                  "snapshot_payload_sha256": "127cf4be8b7fd635bbb4b63c29c7e6c368bd7021d7ded4bfadf1ed365abe5c17",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "DOCUMENT_CHUNK:27024036-1d85-58a8-bef8-3c40f4a2651f",
+                "display_value": "2fdf4a14a8fb",
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "DOCUMENT_CHUNK",
+                  "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+                  "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+                  "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+                  "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+                },
+                "issues": []
+              }
+            ],
+            [
+              {
+                "label": "DOCUMENT_CHUNK:88613750-9bed-5507-b922-c2af46a697d6",
+                "display_value": "08d59957db98",
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "DOCUMENT_CHUNK",
+                  "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+                  "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+                  "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+                  "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "CALCULATION_APPENDIX",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Pinned calculation-kind evidence.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [
+        {
+          "table_id": "calculation_appendix",
+          "title": "Calculation Appendix",
+          "section": "CALCULATION_APPENDIX",
+          "columns": [
+            "Kind",
+            "Item Key",
+            "Hash"
+          ],
+          "rows": [
+            [
+              {
+                "label": "SECTOR_KPI:DEPOSIT_GROWTH",
+                "display_value": "b225cd7259d5",
+                "unit": null,
+                "period": null,
+                "reporting_scope": null,
+                "status": "AVAILABLE",
+                "evidence_ref": {
+                  "kind": "SECTOR_KPI",
+                  "owning_snapshot_id": "8a9e5bc2-5f42-49e3-9de6-a672aaa1bfcf",
+                  "item_key": "DEPOSIT_GROWTH",
+                  "snapshot_payload_sha256": "b225cd7259d5c8cf960c2624335ddbfc7678e61d388ca2e4feaac05cea54c791",
+                  "raw_artifact_sha256": null
+                },
+                "issues": []
+              }
+            ]
+          ]
+        }
+      ],
+      "statements": []
+    },
+    {
+      "section": "MANAGEMENT_STATEMENT_APPENDIX",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Pinned management statements.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": [
+        {
+          "statement_id": "fc10628e-4391-4835-96a7-25bd740d161e",
+          "section": "MANAGEMENT_STATEMENT_APPENDIX",
+          "text": " \n \nYBL/CS/2025-26/70 \n       \nJuly 19, 2025 \n \nNational Stock Exchange of India Limited \nExchange Plaza, \nPlot no. C/1, G Block, \nBandra - Kurla Complex \nBandra (E), Mumbai - 400 051 \nNSE Symbol: YESBANK \nBSE Limited \nCorporate Relations Department \nP.J. Towers, Dalal Street \nMumbai \u2013 400 001 \nBSE Scrip Code: 532648 \n \n \nDear Sir / Madam, \n \nSub.: Press Release and Investor Presentation on the Financial Results  for the Quarter \n(Q1) ended on June 30, 2025 \nRef.:   Reg. 30 of SEBI (Listing Obligations and Disclosure Requirements) Regulations, \n2015 (\u201cListing Regulations\u201d) \n \nThis is further to the Outcome of Board Meeting held on July 19, 2025, wherein the Bank had \ndisclosed the Un-Audited Standalone and Consolidated Financial Results of the Bank for the \nQuarter (Q 1) ended on  June 30 , 2025, along with the Limited Review Report of the Joint \nStatutory Auditors of YES Bank Limited (\u201cthe Bank\u201d). \n \nA Press Release and Investor Presentation on the Financial Results for the Quarter (Q1) ended \non June 30, 2025, is also enclosed herewith for appropriate dissemination.  \n \nThe weblink of BSE Limited and National Stock Exchange of India Limited providing the \nabove information is being hosted on the Bank\u2019s website www.yesbank.in pursuant to Listing \nRegulations, as amended.  \n \nYou are requested to take the same on record and acknowledge the receipt.  \n \nThanking you, \n \nYours faithfully, \n \nFor YES BANK LIMITED \n \n \n \nSanjay Abhyankar \nCompany Secretary \n \nEncl: Press Release and Investor Presentation \n ",
+          "epistemic_class": "FACT",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+              "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+              "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+              "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+            }
+          ],
+          "challenge_outcome": null,
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "363e119c-0a39-4593-b4e4-bba308628d79",
+          "section": "MANAGEMENT_STATEMENT_APPENDIX",
+          "text": " \n \n \nYBL/CS/2025-26/180 \n \nJanuary 22, 2026 \n \nNational Stock Exchange of India Limited  BSE Limited \nExchange Plaza, Plot no. C/1, G Block, Corporate Relations Department \nBandra - Kurla Complex, Bandra (E)   P.J. Towers, Dalal Street \nMumbai - 400 051 Mumbai \u2013 400 001  \nNSE Symbol: YESBANK    BSE Scrip Code: 532648 \n \nDear Sir/Madam, \n \nSub.: Transcript of Earnings Call for the un-audited Financial Results for the Quarter (Q3) \nand nine months ended December 31, 2025 \nRef.:   Reg. 30 of SEBI (Listing Obligations and Disclosure Requirements) Regulations, \n2015  \nPlease find attached the transcript of the earnings call hosted by YES Bank Limited (\u201cthe \nBank\u201d) on January 17, 2026, for the un-audited Financial Results for the Quarter (Q3) and nine \nmonths ended December 31, 2025 . The same is made available on the Bank\u2019s website within \nthe timeline prescribed under the SEBI (Listing Obligations and Disclosure Requirements) \nRegulations, 2015 and can be accessed at the following link. \nhttps://www.yes.bank.in/pdf?name=ybl_analyst_transcript_q3fy26.pdf \nThe weblink of BSE Limited and National Stock Exchange of India Limited providing the \nabove information is being hosted on the Bank\u2019s website www.yes.bank.in pursuant to Listing \nRegulations, as amended. \nYou are requested to take the same on record. \n \nYours faithfully, \n \nFor YES BANK LIMITED \n \n  \n \nSanjay Abhyankar \nCompany Secretary \n \nEncl.: As above \n \n ",
+          "epistemic_class": "FACT",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+              "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+              "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+              "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+            }
+          ],
+          "challenge_outcome": null,
+          "limitations": [],
+          "quote_attribution": null
+        }
+      ]
+    },
+    {
+      "section": "GUIDANCE_VS_ACTUAL_APPENDIX",
+      "coverage": {
+        "status": "INSUFFICIENT_INPUT",
+        "reason": "No structured management-guidance evidence model exists upstream.",
+        "reason_code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "CHALLENGER_APPENDIX",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Full Part 5C review dump.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": [
+        {
+          "statement_id": "694a6edd-e8e6-484e-8678-9e433f1e08d6",
+          "section": "CHALLENGER_APPENDIX",
+          "text": "Relevance rule BANK_DEPOSIT_GROWTH_VS_DECELERATION: related evidence is pinned in the bundle but not cited by this claim.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "589948ed-1b90-4c74-b0e6-05915a983f84"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "PATTERN",
+              "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+              "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+              "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+              "raw_artifact_sha256": null
+            }
+          ],
+          "challenge_outcome": "CHALLENGED",
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "ee881116-6e60-4940-8cf0-617c76461522",
+          "section": "CHALLENGER_APPENDIX",
+          "text": "A management quote is presented without any offsetting qualifier.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "de7eaf38-9617-4847-bf5e-7b4d866e13df"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+              "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+              "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+              "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        },
+        {
+          "statement_id": "6be2b059-51f5-46e7-8f7f-f0643a54e64a",
+          "section": "CHALLENGER_APPENDIX",
+          "text": "A management quote is presented without any offsetting qualifier.",
+          "epistemic_class": "INTERPRETATION",
+          "origin": "DETERMINISTIC",
+          "source_claim_ids": [],
+          "challenge_finding_ids": [
+            "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+          ],
+          "alternative_interpretation_ids": [],
+          "evidence_refs": [
+            {
+              "kind": "DOCUMENT_CHUNK",
+              "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+              "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+              "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+              "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+            }
+          ],
+          "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+          "limitations": [],
+          "quote_attribution": null
+        }
+      ]
+    },
+    {
+      "section": "REPRODUCIBILITY_APPENDIX",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Hash/provenance manifest.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "REPORT_METADATA",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Generation provenance.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    },
+    {
+      "section": "EXECUTIVE_RESEARCH_SNAPSHOT",
+      "coverage": {
+        "status": "AVAILABLE",
+        "reason": "Deterministic projection.",
+        "reason_code": null,
+        "contributing_evidence_kinds": []
+      },
+      "tables": [],
+      "statements": []
+    }
+  ],
+  "executive_snapshot": {
+    "company_overview": [],
+    "key_financial_trend": [],
+    "key_sector_trend": [],
+    "supporting_evidence": [
+      {
+        "statement_id": "83eebd93-22ce-4397-8038-a007851efa59",
+        "section": "VALUATION",
+        "text": "Observed valuation evidence is cited.",
+        "epistemic_class": "INTERPRETATION",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [
+          "8c3b45af-7b77-459c-a9f7-c137740948b6"
+        ],
+        "challenge_finding_ids": [],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [],
+        "challenge_outcome": "SUPPORTED_BY_BUNDLE",
+        "limitations": [
+          "POINT_IN_TIME_AVAILABILITY_UNVERIFIED",
+          "UNVERIFIED_ADJUSTMENT",
+          "UNVERIFIED_BVPS"
+        ],
+        "quote_attribution": null
+      }
+    ],
+    "disconfirming_evidence": [
+      {
+        "kind": "PATTERN",
+        "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+        "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+        "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+        "raw_artifact_sha256": null
+      },
+      {
+        "kind": "DOCUMENT_CHUNK",
+        "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+        "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+        "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+        "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+      },
+      {
+        "kind": "DOCUMENT_CHUNK",
+        "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+        "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+        "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+        "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+      }
+    ],
+    "document_highlights": [
+      {
+        "statement_id": "ca71c05d-9d5b-48e3-8529-10201ad4919c",
+        "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+        "text": "The investor presentation contains this exact retained passage.",
+        "epistemic_class": "INTERPRETATION",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [
+          "04c94082-a880-4975-9035-ac6e4c4cb43a"
+        ],
+        "challenge_finding_ids": [
+          "de7eaf38-9617-4847-bf5e-7b4d866e13df"
+        ],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [],
+        "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+        "limitations": [],
+        "quote_attribution": null
+      },
+      {
+        "statement_id": "4e990ad2-3740-45a6-9419-1f0a5aa97e9a",
+        "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+        "text": "A management quote is presented without any offsetting qualifier.",
+        "epistemic_class": "INTERPRETATION",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [],
+        "challenge_finding_ids": [
+          "de7eaf38-9617-4847-bf5e-7b4d866e13df"
+        ],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [
+          {
+            "kind": "DOCUMENT_CHUNK",
+            "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+            "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+            "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+            "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+          }
+        ],
+        "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+        "limitations": [],
+        "quote_attribution": null
+      },
+      {
+        "statement_id": "9c40c8b2-1b4c-476a-936d-84e9971675a8",
+        "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+        "text": "The concall transcript contains this exact retained passage.",
+        "epistemic_class": "INTERPRETATION",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [
+          "dccea9e6-94d6-46f3-97b6-b889a53e9322"
+        ],
+        "challenge_finding_ids": [
+          "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+        ],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [],
+        "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+        "limitations": [],
+        "quote_attribution": null
+      },
+      {
+        "statement_id": "070b003f-b98c-46ed-8555-d26e8d5425f0",
+        "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+        "text": "A management quote is presented without any offsetting qualifier.",
+        "epistemic_class": "INTERPRETATION",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [],
+        "challenge_finding_ids": [
+          "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+        ],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [
+          {
+            "kind": "DOCUMENT_CHUNK",
+            "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+            "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+            "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+            "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+          }
+        ],
+        "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+        "limitations": [],
+        "quote_attribution": null
+      },
+      {
+        "statement_id": "2f3d9655-3b22-45da-9e3b-d645611e78ea",
+        "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+        "text": " \n \nYBL/CS/2025-26/70 \n       \nJuly 19, 2025 \n \nNational Stock Exchange of India Limited \nExchange Plaza, \nPlot no. C/1, G Block, \nBandra - Kurla Complex \nBandra (E), Mumbai - 400 051 \nNSE Symbol: YESBANK \nBSE Limited \nCorporate Relations Department \nP.J. Towers, Dalal Street \nMumbai \u2013 400 001 \nBSE Scrip Code: 532648 \n \n \nDear Sir / Madam, \n \nSub.: Press Release and Investor Presentation on the Financial Results  for the Quarter \n(Q1) ended on June 30, 2025 \nRef.:   Reg. 30 of SEBI (Listing Obligations and Disclosure Requirements) Regulations, \n2015 (\u201cListing Regulations\u201d) \n \nThis is further to the Outcome of Board Meeting held on July 19, 2025, wherein the Bank had \ndisclosed the Un-Audited Standalone and Consolidated Financial Results of the Bank for the \nQuarter (Q 1) ended on  June 30 , 2025, along with the Limited Review Report of the Joint \nStatutory Auditors of YES Bank Limited (\u201cthe Bank\u201d). \n \nA Press Release and Investor Presentation on the Financial Results for the Quarter (Q1) ended \non June 30, 2025, is also enclosed herewith for appropriate dissemination.  \n \nThe weblink of BSE Limited and National Stock Exchange of India Limited providing the \nabove information is being hosted on the Bank\u2019s website www.yesbank.in pursuant to Listing \nRegulations, as amended.  \n \nYou are requested to take the same on record and acknowledge the receipt.  \n \nThanking you, \n \nYours faithfully, \n \nFor YES BANK LIMITED \n \n \n \nSanjay Abhyankar \nCompany Secretary \n \nEncl: Press Release and Investor Presentation \n ",
+        "epistemic_class": "FACT",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [
+          "04c94082-a880-4975-9035-ac6e4c4cb43a"
+        ],
+        "challenge_finding_ids": [],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [
+          {
+            "kind": "DOCUMENT_CHUNK",
+            "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+            "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+            "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+            "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+          }
+        ],
+        "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+        "limitations": [],
+        "quote_attribution": "MANAGEMENT_STATEMENT"
+      },
+      {
+        "statement_id": "7a10c979-43bb-40bd-8f54-6a1de118a7f1",
+        "section": "DEEP_MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
+        "text": " \n \n \nYBL/CS/2025-26/180 \n \nJanuary 22, 2026 \n \nNational Stock Exchange of India Limited  BSE Limited \nExchange Plaza, Plot no. C/1, G Block, Corporate Relations Department \nBandra - Kurla Complex, Bandra (E)   P.J. Towers, Dalal Street \nMumbai - 400 051 Mumbai \u2013 400 001  \nNSE Symbol: YESBANK    BSE Scrip Code: 532648 \n \nDear Sir/Madam, \n \nSub.: Transcript of Earnings Call for the un-audited Financial Results for the Quarter (Q3) \nand nine months ended December 31, 2025 \nRef.:   Reg. 30 of SEBI (Listing Obligations and Disclosure Requirements) Regulations, \n2015  \nPlease find attached the transcript of the earnings call hosted by YES Bank Limited (\u201cthe \nBank\u201d) on January 17, 2026, for the un-audited Financial Results for the Quarter (Q3) and nine \nmonths ended December 31, 2025 . The same is made available on the Bank\u2019s website within \nthe timeline prescribed under the SEBI (Listing Obligations and Disclosure Requirements) \nRegulations, 2015 and can be accessed at the following link. \nhttps://www.yes.bank.in/pdf?name=ybl_analyst_transcript_q3fy26.pdf \nThe weblink of BSE Limited and National Stock Exchange of India Limited providing the \nabove information is being hosted on the Bank\u2019s website www.yes.bank.in pursuant to Listing \nRegulations, as amended. \nYou are requested to take the same on record. \n \nYours faithfully, \n \nFor YES BANK LIMITED \n \n  \n \nSanjay Abhyankar \nCompany Secretary \n \nEncl.: As above \n \n ",
+        "epistemic_class": "FACT",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [
+          "dccea9e6-94d6-46f3-97b6-b889a53e9322"
+        ],
+        "challenge_finding_ids": [],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [
+          {
+            "kind": "DOCUMENT_CHUNK",
+            "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+            "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+            "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+            "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+          }
+        ],
+        "challenge_outcome": "SUPPORTED_WITH_LIMITATIONS",
+        "limitations": [],
+        "quote_attribution": "TRANSCRIPT_STATEMENT"
+      }
+    ],
+    "valuation_evidence": [
+      {
+        "statement_id": "83eebd93-22ce-4397-8038-a007851efa59",
+        "section": "VALUATION",
+        "text": "Observed valuation evidence is cited.",
+        "epistemic_class": "INTERPRETATION",
+        "origin": "DETERMINISTIC",
+        "source_claim_ids": [
+          "8c3b45af-7b77-459c-a9f7-c137740948b6"
+        ],
+        "challenge_finding_ids": [],
+        "alternative_interpretation_ids": [],
+        "evidence_refs": [],
+        "challenge_outcome": "SUPPORTED_BY_BUNDLE",
+        "limitations": [
+          "POINT_IN_TIME_AVAILABILITY_UNVERIFIED",
+          "UNVERIFIED_ADJUSTMENT",
+          "UNVERIFIED_BVPS"
+        ],
+        "quote_attribution": null
+      }
+    ],
+    "market_implied_expectations": [],
+    "catalysts": [],
+    "risks": [],
+    "material_challenger_finding_ids": [
+      "589948ed-1b90-4c74-b0e6-05915a983f84",
+      "de7eaf38-9617-4847-bf5e-7b4d866e13df",
+      "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+    ],
+    "unresolved_questions": [],
+    "major_data_gaps": [
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "BUSINESS_MODEL",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "ANNUAL_FINANCIAL_PERFORMANCE",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "QUARTERLY_PERFORMANCE_AND_INFLECTION",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "BALANCE_SHEET_ANALYSIS",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "CASH_FLOW_AND_EARNINGS_QUALITY",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "OWNERSHIP_AND_SHAREHOLDING",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "MACRO_POLICY_REGULATION",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "MARKET_AND_PRICE_ANALYSIS",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "TECHNICAL_ANALYSIS",
+        "evidence_refs": []
+      },
+      {
+        "code": "PARTIAL",
+        "message": "Some but not all relevant evidence is available.",
+        "section": "VALUATION",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "MARKET_IMPLIED_EXPECTATIONS",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "CATALYSTS",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "RISK_REGISTER",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "BULL_BASE_BEAR_SCENARIOS",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "VARIANT_PERCEPTION",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Section was not requested in the pinned Part 5B analysis.",
+        "section": "FORENSIC_AND_QUALITY_REVIEW",
+        "evidence_refs": []
+      },
+      {
+        "code": "UPSTREAM_CAPABILITY_NOT_IMPLEMENTED",
+        "message": "Competitive/peer evidence is not independently citable in the closed evidence bundle.",
+        "section": "INDUSTRY_AND_COMPETITIVE_STRUCTURE",
+        "evidence_refs": []
+      },
+      {
+        "code": "UNAVAILABLE",
+        "message": "Company overview not requested.",
+        "section": "COMPANY_IDENTITY_AND_EVIDENCE_FILE",
+        "evidence_refs": []
+      },
+      {
+        "code": "NO_DOCUMENTS_OF_TYPE_PINNED",
+        "message": "No documents of this type were pinned into the reviewed Part 5B analysis request.",
+        "section": "ANNUAL_REPORT_INTELLIGENCE",
+        "evidence_refs": []
+      },
+      {
+        "code": "INSUFFICIENT_INPUT",
+        "message": "Fewer than two retained versions of the same document are pinned; no narrative-change comparison is possible.",
+        "section": "MANAGEMENT_NARRATIVE_CHANGE_DETECTION",
+        "evidence_refs": []
+      },
+      {
+        "code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "message": "No structured management-guidance evidence model exists upstream.",
+        "section": "MANAGEMENT_GUIDANCE_AND_COMMITMENTS",
+        "evidence_refs": []
+      },
+      {
+        "code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "message": "No structured management-guidance evidence model exists upstream.",
+        "section": "MANAGEMENT_GUIDANCE_VS_ACTUAL",
+        "evidence_refs": []
+      },
+      {
+        "code": "UPSTREAM_CAPABILITY_NOT_IMPLEMENTED",
+        "message": "No AGM-specific document classification exists upstream.",
+        "section": "AGM_INTELLIGENCE",
+        "evidence_refs": []
+      },
+      {
+        "code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "message": "Management credibility review requires the same structured guidance evidence that does not yet exist upstream.",
+        "section": "MANAGEMENT_CREDIBILITY_CONSISTENCY",
+        "evidence_refs": []
+      },
+      {
+        "code": "UPSTREAM_CAPABILITY_NOT_IMPLEMENTED",
+        "message": "No governance/capital-allocation evidence model exists upstream.",
+        "section": "GOVERNANCE_AND_CAPITAL_ALLOCATION",
+        "evidence_refs": []
+      },
+      {
+        "code": "REQUIRED_STRUCTURED_GUIDANCE_NOT_RETAINED",
+        "message": "No structured management-guidance evidence model exists upstream.",
+        "section": "GUIDANCE_VS_ACTUAL_APPENDIX",
+        "evidence_refs": []
+      }
+    ],
+    "research_completeness": "MODERATE",
+    "valuation_evidence_state": "OBSERVED",
+    "narrative": null
+  },
+  "synthesis": {
+    "research_completeness": "MODERATE",
+    "valuation_evidence_state": "OBSERVED",
+    "supporting_claim_ids": [
+      "8c3b45af-7b77-459c-a9f7-c137740948b6"
+    ],
+    "challenged_claim_ids": [
+      "ac5c7dc1-29bd-417c-906d-e7a2af6398af",
+      "04c94082-a880-4975-9035-ac6e4c4cb43a",
+      "dccea9e6-94d6-46f3-97b6-b889a53e9322"
+    ],
+    "invalid_claim_ids": [],
+    "unverifiable_claim_ids": [],
+    "material_disconfirming_evidence": [
+      {
+        "kind": "PATTERN",
+        "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+        "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+        "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+        "raw_artifact_sha256": null
+      },
+      {
+        "kind": "DOCUMENT_CHUNK",
+        "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+        "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+        "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+        "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+      },
+      {
+        "kind": "DOCUMENT_CHUNK",
+        "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+        "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+        "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+        "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+      }
+    ],
+    "material_challenger_finding_ids": [
+      "589948ed-1b90-4c74-b0e6-05915a983f84",
+      "de7eaf38-9617-4847-bf5e-7b4d866e13df",
+      "4ee2aaa5-bbfb-4de3-b7fe-5ae7fd4d1077"
+    ],
+    "evidence_limitations": [],
+    "unresolved_questions": [],
+    "narrative": null
+  },
+  "document_corpus": {
+    "corpus_scope": "PINNED_REPORT_INPUT_ONLY",
+    "entries": [
+      {
+        "document_type": "investor_presentation",
+        "document_id": "60af8c19-d750-5eea-9ffb-39b2c223e282",
+        "version_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+        "fiscal_label": null,
+        "publication_date": null,
+        "coverage_status": "COMPLETE",
+        "evidence_ref": {
+          "kind": "DOCUMENT_CHUNK",
+          "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+          "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+          "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+          "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+        }
+      },
+      {
+        "document_type": "concall_transcript",
+        "document_id": "246c9150-62c5-52ea-bdb2-aaf8240bffa5",
+        "version_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+        "fiscal_label": null,
+        "publication_date": null,
+        "coverage_status": "COMPLETE",
+        "evidence_ref": {
+          "kind": "DOCUMENT_CHUNK",
+          "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+          "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+          "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+          "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+        }
+      }
+    ]
+  },
+  "monitoring": [
+    {
+      "metric": "DEPOSIT_GROWTH",
+      "current_value": "6.83",
+      "prior_value": null,
+      "direction": "UNKNOWN",
+      "source": {
+        "kind": "SECTOR_KPI",
+        "owning_snapshot_id": "8a9e5bc2-5f42-49e3-9de6-a672aaa1bfcf",
+        "item_key": "DEPOSIT_GROWTH",
+        "snapshot_payload_sha256": "b225cd7259d5c8cf960c2624335ddbfc7678e61d388ca2e4feaac05cea54c791",
+        "raw_artifact_sha256": null
+      },
+      "period": "2025-03",
+      "coverage": "AVAILABLE",
+      "monitoring_rationale": "Cited in a CHALLENGED claim."
+    },
+    {
+      "metric": "DEPOSIT_GROWTH_DECELERATION",
+      "current_value": null,
+      "prior_value": null,
+      "direction": "UNKNOWN",
+      "source": {
+        "kind": "PATTERN",
+        "owning_snapshot_id": "2eb05e96-9ea9-495a-8186-8deff7b972f8",
+        "item_key": "e9db7065-2230-4530-9ff2-5ccec75f6e5d",
+        "snapshot_payload_sha256": "62e78bc4d39f5036bea769a6607802c17a2c0d9f44c5851fb16ba8885c0f9702",
+        "raw_artifact_sha256": null
+      },
+      "period": null,
+      "coverage": "AVAILABLE",
+      "monitoring_rationale": "Identified as relevant but uncited by the independent challenger's omission review."
+    },
+    {
+      "metric": "Document chunk",
+      "current_value": null,
+      "prior_value": null,
+      "direction": "UNKNOWN",
+      "source": {
+        "kind": "DOCUMENT_CHUNK",
+        "owning_snapshot_id": "c3059cf4-2d76-5306-a9b9-88e3136808ad",
+        "item_key": "88613750-9bed-5507-b922-c2af46a697d6",
+        "snapshot_payload_sha256": "08d59957db98805e3897f0710912fbd10ac6ba0aef27b9d408f577cddcb8b822",
+        "raw_artifact_sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2"
+      },
+      "period": null,
+      "coverage": "AVAILABLE",
+      "monitoring_rationale": "Cited in a SUPPORTED_WITH_LIMITATIONS claim."
+    },
+    {
+      "metric": "Document chunk",
+      "current_value": null,
+      "prior_value": null,
+      "direction": "UNKNOWN",
+      "source": {
+        "kind": "DOCUMENT_CHUNK",
+        "owning_snapshot_id": "0ca5ac2c-e53f-5079-9bb5-e0792090ac9f",
+        "item_key": "27024036-1d85-58a8-bef8-3c40f4a2651f",
+        "snapshot_payload_sha256": "2fdf4a14a8fb5c4a89089c6ce9b67bcdedc282b12139a707118cb8d5e059bc3f",
+        "raw_artifact_sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c"
+      },
+      "period": null,
+      "coverage": "AVAILABLE",
+      "monitoring_rationale": "Cited in a SUPPORTED_WITH_LIMITATIONS claim."
+    }
+  ],
+  "limitations": [
+    {
+      "code": "UNAVAILABLE",
+      "message": "Section was not requested in the pinned Part 5B analysis.",
+      "section": "BUSINESS_MODEL",
+      "evidence_refs": []
+    },
+    {
+      "code": "UNAVAILABLE",
+      "message": "Section was not requested in the pinned Part 5B analysis.",
+      "section": "ANNUAL_FINANCIAL_PERFORMANCE",
+      "evidence_refs": []
+    },
+    {
+      "code": "UNAVAILABLE",
+      "message": "Section was not requested in the pinned Part 5B analysis.",
+      "section": "QUARTERLY_PERFORMANCE_AND_INFLECTION",
+      "evidence_refs": []
+    },
+    {
+      "code": "UNAVAILABLE",
+      "message": "Section was not requested in the pinned Part 5B analysis.",
+      "section": "BALANCE_SHEET_ANALYSIS",
+      "evidence_refs": []
+    },
+    {
+      "code": "UNAVAILABLE",
+      "message": "Section was not requested in the pinned Part 5B analysis.",
+      "section": "CASH_FLOW_AND_EARNINGS_QUALITY",
+      "evidence_refs": []
+    }
+  ],
+  "narrator_metadata": null,
+  "rejected_narrative_blocks": [],
+  "artifact_manifest": {
+    "entries": []
+  },
+  "reproducibility": {
+    "analysis_snapshot_id": "76993d9d-d7e0-4659-a2c8-580ca74659a0",
+    "analysis_snapshot_sha256": "0b3e74ff17d1d5c14d4d1fc26d825302fa5bdd4b6c0d1ce13d2f90609f6696e2",
+    "challenge_snapshot_id": "4f3035c8-c668-4212-85ce-10b7e2dadf23",
+    "challenge_snapshot_sha256": "4ee5a91113dfbfb27c4b65678bbbb05e4062aae34cd4d9879f957ed19162a7a4",
+    "relevance_registry_version": "5C.1-v1",
+    "narrator_metadata": null
+  },
+  "validation_issues": [],
+  "evaluated_at": "2026-09-12T05:35:55.042338Z"
+}

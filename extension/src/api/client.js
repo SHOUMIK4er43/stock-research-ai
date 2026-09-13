@@ -15,7 +15,13 @@
  *   POST /v1/research-jobs
  *   GET  /v1/research-jobs/{job_id}
  *   GET  /v1/reports/{report_id}
+ *   GET  /v1/reports/{report_id}/artifacts/{artifact_kind}
  */
+
+/** Closed ArtifactKind enum (Part 6B-A) - the client only ever sends one of these three
+ * exact values, never a path or filename, so there is no way to request an arbitrary
+ * file from the local service. */
+export const ARTIFACT_KINDS = Object.freeze(["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON"]);
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1"]);
 
@@ -144,5 +150,45 @@ export class ApiClient {
 
   getReport(token, reportId) {
     return this._request(`/v1/reports/${encodeURIComponent(reportId)}`, { token });
+  }
+
+  /**
+   * Artifacts (markdown or JSON-as-text) are never JSON-decoded response bodies, so this
+   * bypasses `_request`'s JSON parsing and returns the raw text plus the content-type the
+   * server actually sent - but still re-validates the loopback origin and attaches the
+   * Bearer token exactly like every other authenticated call.
+   * @param {string} token
+   * @param {string} reportId
+   * @param {"INSTITUTIONAL_REPORT"|"INVESTOR_BRIEF"|"RESEARCH_JSON"} artifactKind
+   * @returns {Promise<{text: string, contentType: string}>}
+   */
+  async getArtifact(token, reportId, artifactKind) {
+    if (!ARTIFACT_KINDS.includes(artifactKind)) {
+      throw new ApiError("INVALID_ARTIFACT_KIND", "Unknown artifact kind", 0);
+    }
+    const origin = validateServiceUrl(this._baseUrl).origin;
+    const path = `/v1/reports/${encodeURIComponent(reportId)}/artifacts/${encodeURIComponent(artifactKind)}`;
+    let response;
+    try {
+      response = await this._fetch(origin + path, {
+        method: "GET",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      throw new ApiError("NETWORK_ERROR", "The local service is not reachable", 0);
+    }
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      const { code, message } = normalizeDetail(payload && payload.detail);
+      throw new ApiError(code, message, response.status);
+    }
+    const text = await response.text();
+    const contentType = (response.headers && response.headers.get && response.headers.get("content-type")) || "";
+    return { text, contentType };
   }
 }

@@ -40,3 +40,22 @@ export function interpretJobFetchError(error) {
   }
   return "TRANSIENT";
 }
+
+/**
+ * A persisted report pointer (Part 6B-C) is keyed by report_snapshot_id, not by job
+ * lifetime - it must stay viewable on reopen even with no active job, and even after a
+ * server restart lost the in-memory job that produced it (Part 6B-A's persistence
+ * boundary). This decides only whether the CURRENT page should offer that pointer as
+ * "this company's research" - it never decides whether the pointer itself is kept.
+ * Navigating to a different company's page must never mislabel an old report as the new
+ * page's research, but the stored pointer is left untouched either way (no history
+ * system, just a single "last completed report" pointer that the caller never clears
+ * here).
+ * @param {{reportId: string, sourceUrl: string} | null} lastReport
+ * @param {string | null} currentSourceUrl
+ * @returns {boolean}
+ */
+export function isReportForCurrentPage(lastReport, currentSourceUrl) {
+  if (!lastReport || !lastReport.reportId || !currentSourceUrl) return false;
+  return lastReport.sourceUrl === currentSourceUrl;
+}

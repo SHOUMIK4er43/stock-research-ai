@@ -13,6 +13,11 @@ export const States = Object.freeze({
   RUNNING: "RUNNING",
   COMPLETED: "COMPLETED",
   FAILED: "FAILED",
+  REPORT_LOADING: "REPORT_LOADING",
+  REPORT_READY: "REPORT_READY",
+  REPORT_NOT_FOUND: "REPORT_NOT_FOUND",
+  REPORT_INTEGRITY_ERROR: "REPORT_INTEGRITY_ERROR",
+  REPORT_LOAD_FAILED: "REPORT_LOAD_FAILED",
 });
 
 /**
@@ -23,12 +28,18 @@ export const States = Object.freeze({
  * @property {boolean} pageSupported
  * @property {boolean} [launching]
  * @property {{status: string} | null} [job]
+ * @property {{status: string} | null} [reportView]
  */
 
 /**
  * Precedence, most fundamental first: an unreachable service outranks everything else;
- * an incompatible version outranks pairing; being unpaired outranks page support; page
- * support outranks an in-flight job (a job cannot exist without having been on a
+ * an incompatible version outranks pairing; being unpaired outranks page support. A
+ * `reportView` fact (the user has explicitly opened a persisted report, keyed by
+ * report_snapshot_id, not by job lifetime) is checked next - it deliberately outranks
+ * page support and job status, because a previously completed report must stay viewable
+ * even after navigating away from the originating Screener page, or after a server
+ * restart lost the in-memory job that produced it (Part 6B-A's persistence boundary).
+ * Page support outranks an in-flight job (a job cannot exist without having been on a
  * supported page, but this keeps the function honest under any input); a transient
  * "launching" flag outranks any stale prior job; finally the job's own status.
  *
@@ -43,11 +54,19 @@ export function deriveState(facts) {
     pageSupported,
     launching = false,
     job = null,
+    reportView = null,
   } = facts;
 
   if (!serviceReachable) return States.SERVICE_UNAVAILABLE;
   if (!versionCompatible) return States.INCOMPATIBLE;
   if (!paired) return States.UNPAIRED;
+  if (reportView) {
+    if (reportView.status === "LOADING") return States.REPORT_LOADING;
+    if (reportView.status === "READY") return States.REPORT_READY;
+    if (reportView.status === "NOT_FOUND") return States.REPORT_NOT_FOUND;
+    if (reportView.status === "INTEGRITY_ERROR") return States.REPORT_INTEGRITY_ERROR;
+    if (reportView.status === "LOAD_FAILED") return States.REPORT_LOAD_FAILED;
+  }
   if (!pageSupported) return States.UNSUPPORTED_PAGE;
   if (launching) return States.LAUNCHING;
   if (job) {

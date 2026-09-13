@@ -85,3 +85,48 @@ test("failureLabel maps every committed Part 6B-A typed failure code", () => {
 test("failureLabel handles an unknown code safely", () => {
   assert.equal(failureLabel("SOMETHING_NEW"), "Research failed for an unknown reason.");
 });
+
+test("reportView LOADING/READY/NOT_FOUND/INTEGRITY_ERROR/LOAD_FAILED map to their own states", () => {
+  assert.equal(deriveState({ ...baseFacts, reportView: { status: "LOADING" } }), States.REPORT_LOADING);
+  assert.equal(deriveState({ ...baseFacts, reportView: { status: "READY" } }), States.REPORT_READY);
+  assert.equal(deriveState({ ...baseFacts, reportView: { status: "NOT_FOUND" } }), States.REPORT_NOT_FOUND);
+  assert.equal(
+    deriveState({ ...baseFacts, reportView: { status: "INTEGRITY_ERROR" } }),
+    States.REPORT_INTEGRITY_ERROR,
+  );
+  assert.equal(deriveState({ ...baseFacts, reportView: { status: "LOAD_FAILED" } }), States.REPORT_LOAD_FAILED);
+});
+
+test("a reportView outranks page support and job status (sticky report view)", () => {
+  assert.equal(
+    deriveState({ ...baseFacts, pageSupported: false, reportView: { status: "READY" } }),
+    States.REPORT_READY,
+  );
+  assert.equal(
+    deriveState({
+      ...baseFacts,
+      job: { status: "RUNNING" },
+      reportView: { status: "READY" },
+    }),
+    States.REPORT_READY,
+  );
+});
+
+test("service unreachable / incompatible / unpaired still outrank an open reportView", () => {
+  assert.equal(
+    deriveState({ ...baseFacts, serviceReachable: false, reportView: { status: "READY" } }),
+    States.SERVICE_UNAVAILABLE,
+  );
+  assert.equal(
+    deriveState({ ...baseFacts, versionCompatible: false, reportView: { status: "READY" } }),
+    States.INCOMPATIBLE,
+  );
+  assert.equal(
+    deriveState({ ...baseFacts, paired: false, reportView: { status: "READY" } }),
+    States.UNPAIRED,
+  );
+});
+
+test("no reportView falls through to the ordinary page/job-driven state", () => {
+  assert.equal(deriveState({ ...baseFacts, reportView: null }), States.READY);
+});

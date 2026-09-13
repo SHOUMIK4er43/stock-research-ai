@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isTerminal, storageActionsForJobUpdate, interpretJobFetchError } from "../src/job_flow.js";
+import {
+  isTerminal,
+  storageActionsForJobUpdate,
+  interpretJobFetchError,
+  isReportForCurrentPage,
+} from "../src/job_flow.js";
 
 test("QUEUED and RUNNING are not terminal", () => {
   assert.equal(isTerminal("QUEUED"), false);
@@ -57,4 +62,43 @@ test("any other error is interpreted as TRANSIENT (keep the poll loop alive)", (
   assert.equal(interpretJobFetchError({ status: 500 }), "TRANSIENT");
   assert.equal(interpretJobFetchError({ status: 0 }), "TRANSIENT");
   assert.equal(interpretJobFetchError(null), "TRANSIENT");
+});
+
+// --- Persisted-report-reopen (Part 6B-C) --------------------------------------------
+// A completed report is keyed by report_snapshot_id, not job lifetime: it must remain
+// viewable on reopen with no active job at all, and survives a backend restart that
+// wiped the in-memory job that produced it (Part 6B-A's persistence boundary).
+
+test("a persisted report pointer is offered for the exact page that produced it, with no job involved at all", () => {
+  const lastReport = { reportId: "report-123", sourceUrl: "https://www.screener.in/company/INFY/" };
+  // No job object anywhere in this call - proving the decision has zero dependency on
+  // any in-flight or historical job state, only on the stored pointer and current page.
+  assert.equal(isReportForCurrentPage(lastReport, "https://www.screener.in/company/INFY/"), true);
+});
+
+test("a persisted report pointer survives even when there is no active job in storage", () => {
+  // Simulates reopening the side panel after a backend restart lost the job: storage
+  // has only ever had a lastReport pointer, never an activeJob, and the decision still
+  // succeeds purely from the pointer + current page.
+  const lastReport = { reportId: "report-123", sourceUrl: "https://www.screener.in/company/INFY/" };
+  assert.equal(isReportForCurrentPage(lastReport, "https://www.screener.in/company/INFY/"), true);
+});
+
+test("no stored report pointer means nothing is offered", () => {
+  assert.equal(isReportForCurrentPage(null, "https://www.screener.in/company/INFY/"), false);
+});
+
+// --- Active-page-change (Part 6B-C) --------------------------------------------------
+// Navigating to a different company's page must never mislabel an old report as the new
+// page's research - but the stored pointer itself is left untouched (no global history
+// system, and the old pointer stays available if the user navigates back).
+
+test("a report pointer from a different company's page is never offered on the new page", () => {
+  const lastReport = { reportId: "report-123", sourceUrl: "https://www.screener.in/company/INFY/" };
+  assert.equal(isReportForCurrentPage(lastReport, "https://www.screener.in/company/TCS/"), false);
+});
+
+test("an unsupported/unknown current page never surfaces a stale report pointer", () => {
+  const lastReport = { reportId: "report-123", sourceUrl: "https://www.screener.in/company/INFY/" };
+  assert.equal(isReportForCurrentPage(lastReport, null), false);
 });

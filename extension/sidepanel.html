@@ -53,6 +53,9 @@
         <p id="current-page-label" class="muted"></p>
         <div class="button-row">
           <button id="research-button" type="button">Research Company</button>
+          <button id="view-last-research-button" type="button" class="secondary" hidden>
+            View last research
+          </button>
         </div>
         <p id="analyst-warning" class="warning-text" hidden></p>
       </section>
@@ -79,6 +82,54 @@
         </details>
         <div class="button-row">
           <button id="retry-button" type="button">Try Again</button>
+        </div>
+      </section>
+
+      <section id="panel-report-loading" class="panel" hidden aria-live="polite">
+        <p class="muted">Loading research report…</p>
+      </section>
+
+      <section id="panel-report-not-found" class="panel" hidden>
+        <p class="panel-title error-text" role="alert">This research report no longer exists.</p>
+        <div class="button-row">
+          <button id="report-not-found-back" type="button" class="secondary">Back</button>
+        </div>
+      </section>
+
+      <section id="panel-report-integrity-error" class="panel" hidden>
+        <p class="panel-title error-text" role="alert">
+          Stored research failed an integrity check and cannot be displayed.
+        </p>
+        <div class="button-row">
+          <button id="report-integrity-back" type="button" class="secondary">Back</button>
+        </div>
+      </section>
+
+      <section id="panel-report-load-failed" class="panel" hidden>
+        <p class="panel-title error-text" role="alert">Could not load this research report.</p>
+        <p id="report-load-failed-detail" class="muted"></p>
+        <div class="button-row">
+          <button id="report-load-failed-retry" type="button">Retry</button>
+          <button id="report-load-failed-back" type="button" class="secondary">Back</button>
+        </div>
+      </section>
+
+      <section id="panel-report-ready" class="panel" hidden>
+        <div class="report-toolbar">
+          <button id="report-back-button" type="button" class="secondary">← Back</button>
+          <div class="button-row">
+            <button id="artifact-institutional-report" type="button" class="secondary">
+              Institutional report
+            </button>
+            <button id="artifact-investor-brief" type="button" class="secondary">Investor brief</button>
+            <button id="artifact-research-json" type="button" class="secondary">Research JSON</button>
+          </div>
+          <p id="artifact-error" class="error-text muted" role="alert" hidden></p>
+        </div>
+        <div id="report-challenges-banner" hidden></div>
+        <div id="report-body" class="report-body">
+          <nav id="report-nav" aria-label="Report sections"></nav>
+          <div id="report-content"></div>
         </div>
       </section>
     </main>

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ApiClient, ApiError, InvalidServiceUrlError } from "../src/api/client.js";
+import { ApiClient, ApiError, InvalidServiceUrlError, ARTIFACT_KINDS } from "../src/api/client.js";
 
 const BASE_URL = "http://127.0.0.1:8000";
 
@@ -146,6 +146,87 @@ test("an invalid base URL refuses to send anything, including credentials", asyn
   const client = new ApiClient("https://evil.example", fetchImpl);
   await assert.rejects(client.createResearchJob("secret-token", {}), InvalidServiceUrlError);
   assert.equal(fetchImpl.calls.length, 0); // fetch was never even attempted
+});
+
+function textResponse(status, { text = "", contentType = "text/markdown; charset=utf-8" } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: String(status),
+    text: async () => text,
+    json: async () => {
+      throw new Error("not json");
+    },
+    headers: { get: (name) => (name.toLowerCase() === "content-type" ? contentType : null) },
+  };
+}
+
+test("ARTIFACT_KINDS is exactly the closed 3-value backend enum", () => {
+  assert.deepEqual([...ARTIFACT_KINDS].sort(), ["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON"].sort());
+});
+
+test("getArtifact calls exactly GET /v1/reports/{id}/artifacts/{kind} with Bearer auth", async () => {
+  const fetchImpl = fakeFetch(() => textResponse(200, { text: "# Report\n" }));
+  const client = new ApiClient(BASE_URL, fetchImpl);
+  const result = await client.getArtifact("secret-tok", "report-1", "INSTITUTIONAL_REPORT");
+  const call = fetchImpl.calls[0];
+  assert.equal(call.url, "http://127.0.0.1:8000/v1/reports/report-1/artifacts/INSTITUTIONAL_REPORT");
+  assert.equal(call.init.headers.Authorization, "Bearer secret-tok");
+  assert.ok(!call.url.includes("secret-tok"));
+  assert.equal(result.text, "# Report\n");
+  assert.equal(result.contentType, "text/markdown; charset=utf-8");
+});
+
+test("getArtifact returns raw text, never attempting JSON parsing of a markdown body", async () => {
+  const fetchImpl = fakeFetch(() => textResponse(200, { text: "not json at all: {{{", contentType: "text/markdown; charset=utf-8" }));
+  const client = new ApiClient(BASE_URL, fetchImpl);
+  const result = await client.getArtifact("t", "report-1", "RESEARCH_JSON");
+  assert.equal(result.text, "not json at all: {{{");
+});
+
+test("getArtifact refuses an artifact kind outside the closed enum without ever calling fetch", async () => {
+  const fetchImpl = fakeFetch(() => textResponse(200, {}));
+  const client = new ApiClient(BASE_URL, fetchImpl);
+  await assert.rejects(client.getArtifact("t", "report-1", "../../etc/passwd"), (error) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, "INVALID_ARTIFACT_KIND");
+    return true;
+  });
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test("getArtifact still URL-encodes the report id", async () => {
+  const fetchImpl = fakeFetch(() => textResponse(200, { text: "x" }));
+  const client = new ApiClient(BASE_URL, fetchImpl);
+  await client.getArtifact("t", "../../etc/passwd", "RESEARCH_JSON");
+  assert.equal(
+    fetchImpl.calls[0].url,
+    "http://127.0.0.1:8000/v1/reports/..%2F..%2Fetc%2Fpasswd/artifacts/RESEARCH_JSON",
+  );
+});
+
+test("getArtifact normalizes a 404 into ApiError", async () => {
+  const fetchImpl = fakeFetch(() =>
+    textResponse(404, { text: "" }),
+  );
+  fetchImpl.calls; // no-op reference for lint clarity
+  const client = new ApiClient(BASE_URL, async (...args) => {
+    const res = await fetchImpl(...args);
+    res.json = async () => ({ detail: "Unknown report_id" });
+    return res;
+  });
+  await assert.rejects(client.getArtifact("t", "missing", "RESEARCH_JSON"), (error) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 404);
+    return true;
+  });
+});
+
+test("getArtifact refuses to target a non-loopback base URL", async () => {
+  const fetchImpl = fakeFetch(() => textResponse(200, { text: "x" }));
+  const client = new ApiClient("https://evil.example", fetchImpl);
+  await assert.rejects(client.getArtifact("t", "report-1", "RESEARCH_JSON"), InvalidServiceUrlError);
+  assert.equal(fetchImpl.calls.length, 0);
 });
 
 test("the client never targets a screener.in URL", async () => {

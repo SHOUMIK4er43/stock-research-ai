@@ -1308,3 +1308,11 @@ class SQLiteReportRepository:
                 .order_by(_ReportRow.evaluated_at, _ReportRow.id)
             )
             return tuple(ResearchReportSnapshot.model_validate(row.payload) for row in rows)
+
+    async def get_report(self, report_snapshot_id: UUID) -> ResearchReportSnapshot | None:
+        """Exact-ID lookup, mirroring get_analysis/get_challenge above verbatim. Read-only:
+        no re-verification, no mutation, no new snapshot - integrity was already
+        established once, permanently, inside save_report's own atomic transaction."""
+        async with self.sessions() as session:
+            row = await session.get(_ReportRow, str(report_snapshot_id))
+            return ResearchReportSnapshot.model_validate(row.payload) if row else None

@@ -22,6 +22,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     commands.add_parser("init-db", help="Create the company registry if it does not exist")
     commands.add_parser("serve-http", help="Serve the local FastAPI interface")
     commands.add_parser("serve-mcp", help="Serve MCP over stdin/stdout")
+    commands.add_parser(
+        "pair-code",
+        help="Issue a one-time browser-extension pairing code (Part 6B-A); printed once, "
+        "used with POST /v1/pair",
+    )
     extract = commands.add_parser(
         "extract-screener", help="Acquire or replay a public company page"
     )
@@ -438,6 +443,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         from stock_research_ai.interfaces.mcp import create_server
 
         create_server(settings=settings).run()
+    elif args.command == "pair-code":
+        from stock_research_ai.adapters.http.browser_auth import PairingStore
+
+        code = PairingStore(settings.browser_auth_path).issue_pairing_code()
+        print(code)
 
     elif args.command == "ingest-document":
         from stock_research_ai.bootstrap import ingest_document

@@ -52,11 +52,13 @@ from stock_research_ai.application.engine import (
 )
 from stock_research_ai.application.ports import (
     AnalystModel,
+    BroadIndustrySource,
     ChallengerModel,
     DocumentAcquirer,
     MacroAcquirer,
     MarketSource,
     PublicationAcquirer,
+    RawArtifactStore,
     ReportNarrator,
     SourceAcquirer,
 )
@@ -719,3 +721,104 @@ async def full_research(
         return result
     finally:
         await database.close()
+
+
+@asynccontextmanager
+async def browser_engine(
+    settings: Settings,
+) -> AsyncIterator[tuple[ResearchEngine, RawArtifactStore, BroadIndustrySource]]:
+    """A long-lived, fully-wired ResearchEngine for the Part 6B-A browser HTTP job
+    manager - the same wiring `full_research` uses per CLI invocation, held open for the
+    HTTP app's lifetime instead of one-shot. AnalystServices is attached only when a
+    live provider is actually configured (mirroring `research_engine()`'s bare-engine
+    convention below); Capabilities.analysis_available reflects this exactly as it
+    already does everywhere else - never a silent fake substitution."""
+    database = SQLiteDatabase(settings.database_path)
+    store = FileRawArtifactStore(
+        settings.artifact_path or settings.database_path.parent / "artifacts"
+    )
+    try:
+        await database.check_ready()
+        model, provider_kind = await live_analyst_model(settings)
+        analyst_services = (
+            AnalystServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                model,
+                database.analyses,
+                provider_kind=provider_kind,
+            )
+            if model is not None and provider_kind is not None
+            else None
+        )
+        engine = ResearchEngine(
+            database.repository,
+            extraction=ExtractionServices(
+                source=ScreenerSource(),
+                artifacts=store,
+                normalizer=ScreenerNormalizer(),
+                repository=database.extractions,
+            ),
+            documents=DocumentServices(
+                DocumentSource(), store, PDFNormalizer(), database.documents
+            ),
+            sector_kpis=SectorKPIServices(
+                database.extractions, database.calculations, ScreenerSemanticResolver(), store
+            ),
+            valuations=ValuationServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                ScreenerSemanticResolver(),
+                store,
+                database.valuations,
+            ),
+            analyst=analyst_services,
+            challenge=ChallengeServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                database.analyses,
+                database.challenges,
+            ),
+            report=ReportServices(
+                database.extractions,
+                database.market,
+                database.calculations,
+                database.patterns,
+                database.market_calculations,
+                database.valuations,
+                database.documents,
+                database.context,
+                store,
+                database.challenges,
+                database.reports,
+            ),
+        )
+        from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
+
+        yield engine, store, ScreenerBroadIndustrySource()
+    finally:
+        await database.close()
+
+
+def browser_execution_spec(settings: Settings) -> AnalystExecutionSpec:
+    """The exact same AnalystExecutionSpec construction `full_research` already uses."""
+    return AnalystExecutionSpec(
+        template_id="full-research-v1",
+        template_version=1,
+        generation_parameters={"max_output_tokens": settings.analyst_max_output_tokens},
+    )

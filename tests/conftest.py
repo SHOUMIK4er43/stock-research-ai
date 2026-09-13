@@ -17,6 +17,9 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STOCK_RESEARCH_AI_DATABASE_PATH", str(tmp_path / "default.sqlite3"))
     monkeypatch.setenv("STOCK_RESEARCH_AI_HTTP_HOST", "127.0.0.1")
     monkeypatch.setenv("STOCK_RESEARCH_AI_HTTP_PORT", "8000")
+    monkeypatch.setenv(
+        "STOCK_RESEARCH_AI_BROWSER_AUTH_PATH", str(tmp_path / "browser_auth.json")
+    )
 
 
 @pytest.fixture

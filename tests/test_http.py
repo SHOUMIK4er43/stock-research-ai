@@ -30,8 +30,14 @@ async def test_http_company_round_trip(engine: ResearchEngine) -> None:
         ("/v1/capabilities", "GET"),
         ("/v1/companies", "POST"),
         ("/v1/companies/{company_id}", "GET"),
+        ("/v1/version", "GET"),
+        ("/v1/pair", "POST"),
+        ("/v1/research-jobs", "POST"),
+        ("/v1/research-jobs/{job_id}", "GET"),
+        ("/v1/reports/{report_id}", "GET"),
+        ("/v1/reports/{report_id}/artifacts/{artifact_kind}", "GET"),
     }
-    assert len(app.routes) == 4
+    assert len(app.routes) == 10
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -90,16 +96,27 @@ async def test_http_resource_ownership(
         finally:
             events.append("closed")
 
+    @asynccontextmanager
+    async def tracked_browser_engine(_: Settings) -> AsyncIterator[tuple[object, object, object]]:
+        events.append("browser-opened")
+        try:
+            yield engine, object(), object()
+        finally:
+            events.append("browser-closed")
+
     monkeypatch.setattr(http_interface, "research_engine", tracked_engine)
+    monkeypatch.setattr(http_interface, "browser_engine", tracked_browser_engine)
     app = http_interface.create_app(engine=engine if injected else None)
     assert events == []
     async with app.router.lifespan_context(app):
-        assert events == ([] if injected else ["opened"])
+        assert events == ([] if injected else ["opened", "browser-opened"])
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
             assert (await client.get("/v1/capabilities")).status_code == 200
-    assert events == ([] if injected else ["opened", "closed"])
+    assert events == (
+        [] if injected else ["opened", "browser-opened", "browser-closed", "closed"]
+    )
 
 
 async def test_http_bootstrap_persists_company_to_sqlite(database: SQLiteDatabase) -> None:

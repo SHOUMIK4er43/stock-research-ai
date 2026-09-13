@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     analyst_timeout_seconds: float = Field(default=90.0, gt=0)
     analyst_max_output_tokens: int = Field(default=4096, ge=1)
 
+    #: Browser extension pairing/auth state (Part 6B-A) - a security domain completely
+    #: separate from analyst_* (Anthropic) credentials above. User-local, never in the
+    #: research/report DB, never under the Git repo.
+    browser_auth_path: Path = Field(
+        default_factory=lambda: Path.home() / ".stock-research-ai" / "browser_auth.json"
+    )
+
     @field_validator("database_path")
     @classmethod
     def absolute_database_path(cls, value: Path) -> Path:
@@ -43,3 +50,8 @@ class Settings(BaseSettings):
     @classmethod
     def absolute_artifact_path(cls, value: Path | None) -> Path | None:
         return value.expanduser().resolve() if value is not None else None
+
+    @field_validator("browser_auth_path")
+    @classmethod
+    def absolute_browser_auth_path(cls, value: Path) -> Path:
+        return value.expanduser().resolve()

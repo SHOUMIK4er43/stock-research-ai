@@ -41,6 +41,13 @@ class Settings(BaseSettings):
         default_factory=lambda: Path.home() / ".stock-research-ai" / "browser_auth.json"
     )
 
+    #: Part 6C-A: user-local rotating log file for `serve-http` (logging_setup.py).
+    #: Never under the Git repo; never contains a secret value (see that module's
+    #: redaction filter).
+    log_path: Path = Field(
+        default_factory=lambda: Path.home() / ".stock-research-ai" / "logs" / "service.log"
+    )
+
     @field_validator("database_path")
     @classmethod
     def absolute_database_path(cls, value: Path) -> Path:
@@ -54,4 +61,9 @@ class Settings(BaseSettings):
     @field_validator("browser_auth_path")
     @classmethod
     def absolute_browser_auth_path(cls, value: Path) -> Path:
+        return value.expanduser().resolve()
+
+    @field_validator("log_path")
+    @classmethod
+    def absolute_log_path(cls, value: Path) -> Path:
         return value.expanduser().resolve()

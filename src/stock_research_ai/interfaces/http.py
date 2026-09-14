@@ -12,8 +12,13 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 
+from stock_research_ai import __version__
 from stock_research_ai.adapters.http.browser_artifacts import media_type_for, render_artifact
-from stock_research_ai.adapters.http.browser_auth import PairingError, PairingStore
+from stock_research_ai.adapters.http.browser_auth import (
+    PairingError,
+    PairingLockedOutError,
+    PairingStore,
+)
 from stock_research_ai.adapters.http.browser_schemas import (
     ArtifactKind,
     BrowserResearchRequest,
@@ -187,7 +192,7 @@ def create_app(
 
     app = FastAPI(
         title="Stock Research AI",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -270,6 +275,11 @@ def create_app(
             )
         try:
             token = active_pairing_store.complete_pairing(origin, payload.pairing_code)
+        except PairingLockedOutError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": "PAIRING_LOCKED_OUT", "message": str(exc)},
+            ) from exc
         except PairingError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

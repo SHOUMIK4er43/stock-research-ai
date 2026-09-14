@@ -17,9 +17,26 @@ from stock_research_ai.bootstrap import (
 from stock_research_ai.config import Settings
 
 
+class _NoCredentialSecretStore:
+    """Part 6C-A: a deterministic stand-in for the real macOS Keychain, so this test
+    proves "absent configuration returns None" without ever touching the actual OS
+    Keychain on the machine running the test suite."""
+
+    def get(self, name: str) -> str | None:
+        return None
+
+    def set(self, name: str, value: str) -> None:
+        raise AssertionError("not expected to be called")
+
+    def delete(self, name: str) -> None:
+        raise AssertionError("not expected to be called")
+
+
 async def test_live_analyst_model_absent_configuration_returns_none(tmp_path):
     settings = Settings(database_path=tmp_path / "db.sqlite3")
-    model, provider_kind = await live_analyst_model(settings)
+    model, provider_kind = await live_analyst_model(
+        settings, secret_store=_NoCredentialSecretStore()
+    )
     assert model is None
     assert provider_kind is None
 
@@ -51,6 +68,7 @@ async def test_full_research_raises_explicitly_at_analysis_when_unconfigured(tmp
             settings,
             FullResearchRequest(source_url="https://www.screener.in/company/YESBANK/"),
             tmp_path / "out.json",
+            secret_store=_NoCredentialSecretStore(),
         )
     # Never partially written, never a silent fake: no output file was produced.
     assert not (tmp_path / "out.json").exists()

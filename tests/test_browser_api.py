@@ -102,6 +102,19 @@ async def test_version_reports_expected_fields_and_no_secrets(paired):
     assert "application_version" in body
 
 
+async def test_application_version_matches_the_single_authoritative_source(paired):
+    """Part 6C-A: application_version must come from importlib.metadata (backed by
+    pyproject.toml's [project].version), never a second hand-duplicated string that
+    could silently drift from it."""
+    import importlib.metadata
+
+    client, _token, _jm, _model, _ps = paired
+    response = await client.get("/v1/version")
+    assert response.json()["application_version"] == importlib.metadata.version(
+        "stock-research-ai"
+    )
+
+
 # --- PAIRING (HTTP layer) -----------------------------------------------------------
 
 
@@ -135,6 +148,23 @@ async def test_pair_with_invalid_code_is_refused(paired):
         "/v1/pair", json={"pairing_code": "wrong"}, headers={"Origin": EXTENSION_ORIGIN}
     )
     assert response.status_code == 401
+
+
+async def test_pair_is_locked_out_with_429_after_5_failed_attempts_within_60s(paired):
+    """Part 6C-A pairing brute-force hardening, exercised through the real HTTP route."""
+    client, _token, _jm, _model, pairing_store = paired
+    pairing_store.issue_pairing_code()
+    for _ in range(5):
+        response = await client.post(
+            "/v1/pair", json={"pairing_code": "wrong"}, headers={"Origin": EXTENSION_ORIGIN}
+        )
+        assert response.status_code == 401
+
+    locked = await client.post(
+        "/v1/pair", json={"pairing_code": "wrong"}, headers={"Origin": EXTENSION_ORIGIN}
+    )
+    assert locked.status_code == 429
+    assert locked.json()["detail"]["code"] == "PAIRING_LOCKED_OUT"
 
 
 async def test_pair_without_origin_header_is_refused(paired):

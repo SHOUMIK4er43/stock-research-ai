@@ -1,6 +1,7 @@
 """Explicitly initialized SQLite persistence for the company registry."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -12,6 +13,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from stock_research_ai.adapters.migrations import (
+    CURRENT_SCHEMA_VERSION,
+    MigrationFailedError,
+    UnsupportedSchemaVersionError,
+    ensure_schema_version,
+)
 from stock_research_ai.domain.analysis import AnalysisSnapshot
 from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.challenge import ChallengeSnapshot
@@ -154,9 +161,43 @@ class SQLiteDatabase:
         self._engine = create_async_engine(url)
 
         @event.listens_for(self._engine.sync_engine, "connect")
-        def enable_foreign_keys(connection: Any, record: object) -> None:
+        def configure_connection(connection: Any, record: object) -> None:
             cursor = connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            # Part 6C-A production hardening. Applied to every connection this engine
+            # ever opens - including both of the two independent SQLiteDatabase
+            # instances the running HTTP process constructs (research_engine's and
+            # browser_engine's), which is exactly the composition WAL is meant to make
+            # safe: a background research write and an HTTP report read no longer
+            # race into an immediate "database is locked" error.
+            #
+            # journal_mode=WAL: readers no longer block behind a writer (and vice
+            # versa) - the two-connection composition documented since Part 6B-A
+            # becomes safe for this single-user V1 without an engine-consolidation
+            # refactor. WAL requires local-filesystem support for shared memory
+            # mmap; production is documented as local-disk-only (never a network
+            # filesystem), so this is never a concern here. WAL leaves `-wal`/`-shm`
+            # sidecar files beside the main DB file - backup.py checkpoints
+            # (TRUNCATE) before copying so a backup never needs those sidecars.
+            #
+            # busy_timeout=5000: a writer holding a transaction now makes a
+            # contending connection wait up to 5s (SQLite's own retry loop) instead
+            # of raising "database is locked" instantly. 5s comfortably exceeds any
+            # single ORM write in this codebase (each `save_*` is one short
+            # `session.begin()` block, never held open across a network/LLM await -
+            # see docs/part6c-a-proof.md's transaction-duration audit) while staying
+            # well under any human-perceptible delay for the rare contended case.
+            #
+            # synchronous=NORMAL: safe specifically *because* journal_mode=WAL is
+            # already set - SQLite's own documentation guarantees WAL+NORMAL can
+            # never corrupt the database, only (in the event of an OS-level crash or
+            # power loss, not an ordinary application crash) lose the most recent
+            # committed transaction(s) since the last checkpoint. For a local
+            # single-user research tool that is not a financial ledger, this is an
+            # acceptable, well-documented tradeoff for materially fewer fsyncs.
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
 
         sessions = async_sessionmaker(self._engine, expire_on_commit=False)
@@ -185,27 +226,43 @@ class SQLiteDatabase:
             self.path.touch(exist_ok=False)
         except FileExistsError:
             pass
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass  # best-effort: not every filesystem/OS supports POSIX permission bits
         async with self._engine.begin() as connection:
             await connection.run_sync(_Base.metadata.create_all)
             await connection.run_sync(_check_schema)
+            # A freshly created database already has the complete, current structural
+            # shape (create_all just built it) - there is nothing for the forward
+            # migration registry to apply, so its version is set directly rather than
+            # replayed through history.
+            await connection.execute(text(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))
         async with self._sessions() as session, session.begin():
             for row in (await session.scalars(select(_CompanyRow))).all():
                 await _backfill_company(session, row)
 
     async def check_ready(self) -> None:
-        """Validate an existing database without creating a file or any tables."""
+        """Validate an existing database without creating a file or any tables, and -
+        Part 6C-A - bring its PRAGMA user_version forward to CURRENT_SCHEMA_VERSION if
+        it is an older (or never-versioned, i.e. legacy value 0) database. Never
+        creates the file/initial tables (that remains initialize()'s sole job) and
+        never touches a single research/report row - see adapters/migrations.py."""
         if not self.path.is_file():
             raise DatabaseNotReadyError(
                 f"SQLite database does not exist at {self.path}. "
                 "Run `stock-research-ai init-db` first."
             )
         try:
-            async with self._engine.connect() as connection:
+            async with self._engine.begin() as connection:
                 await connection.run_sync(_check_schema)
+                await ensure_schema_version(connection)
         except SQLAlchemyError as exc:
             raise DatabaseNotReadyError(
                 f"Unable to read the SQLite database at {self.path}."
             ) from exc
+        except (UnsupportedSchemaVersionError, MigrationFailedError) as exc:
+            raise DatabaseNotReadyError(str(exc)) from exc
 
     async def close(self) -> None:
         await self._engine.dispose()

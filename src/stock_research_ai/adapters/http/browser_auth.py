@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,10 +19,24 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 DEFAULT_PAIRING_CODE_TTL_SECONDS = 300
 
+#: Part 6C-A pairing brute-force hardening. In-memory only (no new DB table, no
+#: persisted state) - a restart clears any active cooldown, and this protects only
+#: against accidental/brute-force local guessing of a short-lived pairing code, not
+#: internet-scale abuse (there is no internet-facing surface to abuse: loopback only).
+_MAX_FAILED_PAIRING_ATTEMPTS = 5
+_FAILED_ATTEMPT_WINDOW_SECONDS = 60.0
+_COOLDOWN_SECONDS = 60.0
+
 
 class PairingError(ValueError):
     """A typed, non-secret-leaking pairing failure (invalid/expired/reused code, or a
     non chrome-extension:// origin attempting to pair)."""
+
+
+class PairingLockedOutError(PairingError):
+    """Too many failed pairing attempts happened recently; a short, self-clearing
+    cooldown is in effect. Never a permanent lockout - the counter and cooldown are
+    both purely in-memory and a service restart clears them entirely."""
 
 
 class _PendingPairing(BaseModel):
@@ -59,6 +74,10 @@ class PairingStore:
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        # Part 6C-A: in-memory brute-force state - deliberately never persisted (see
+        # module docstring above the constants).
+        self._failed_attempt_times: list[float] = []
+        self._locked_out_until: float | None = None
 
     def _read(self) -> _PairingFile:
         if not self._path.exists():
@@ -93,21 +112,55 @@ class PairingStore:
         )
         return code
 
+    def _check_not_locked_out(self) -> None:
+        if self._locked_out_until is None:
+            return
+        remaining = self._locked_out_until - time.monotonic()
+        if remaining <= 0:
+            self._locked_out_until = None
+            self._failed_attempt_times = []
+            return
+        raise PairingLockedOutError(
+            f"Too many failed pairing attempts. Try again in {remaining:.0f}s."
+        )
+
+    def _record_failed_attempt(self) -> None:
+        now = time.monotonic()
+        self._failed_attempt_times = [
+            t for t in self._failed_attempt_times if now - t < _FAILED_ATTEMPT_WINDOW_SECONDS
+        ]
+        self._failed_attempt_times.append(now)
+        if len(self._failed_attempt_times) >= _MAX_FAILED_PAIRING_ATTEMPTS:
+            self._locked_out_until = now + _COOLDOWN_SECONDS
+
+    def _reset_failed_attempts(self) -> None:
+        self._failed_attempt_times = []
+        self._locked_out_until = None
+
     def complete_pairing(self, origin: str, pairing_code: str) -> str:
         """Validates a one-time pairing code against the CURRENT request's own Origin
         (never a client-supplied body field - callers must pass the value read from the
         real HTTP Origin header) and, on success, replaces any previous paired extension
-        with (origin, new token). Returns the new token in plaintext exactly once."""
-        if not origin.startswith("chrome-extension://"):
-            raise PairingError("Pairing is only permitted for a chrome-extension:// origin")
-        data = self._read()
-        pending = data.pending
-        if pending is None or pending.used:
-            raise PairingError("No pairing is currently pending")
-        if datetime.now(UTC) > pending.expires_at:
-            raise PairingError("Pairing code has expired")
-        if not hmac.compare_digest(pending.code_hash, _hash(pairing_code)):
-            raise PairingError("Invalid pairing code")
+        with (origin, new token). Returns the new token in plaintext exactly once.
+
+        Part 6C-A: raises PairingLockedOutError (never attempting validation at all)
+        if too many attempts have failed recently - see the module-level constants.
+        A successful pairing resets the failure counter entirely."""
+        self._check_not_locked_out()
+        try:
+            if not origin.startswith("chrome-extension://"):
+                raise PairingError("Pairing is only permitted for a chrome-extension:// origin")
+            data = self._read()
+            pending = data.pending
+            if pending is None or pending.used:
+                raise PairingError("No pairing is currently pending")
+            if datetime.now(UTC) > pending.expires_at:
+                raise PairingError("Pairing code has expired")
+            if not hmac.compare_digest(pending.code_hash, _hash(pairing_code)):
+                raise PairingError("Invalid pairing code")
+        except PairingError:
+            self._record_failed_attempt()
+            raise
         token = secrets.token_urlsafe(32)
         self._write(
             _PairingFile(
@@ -118,6 +171,7 @@ class PairingStore:
                 ),
             )
         )
+        self._reset_failed_attempts()
         return token
 
     def verify(self, origin: str | None, token: str | None) -> bool:

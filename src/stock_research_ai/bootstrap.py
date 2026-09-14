@@ -35,6 +35,7 @@ from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.screener.normalizer import ScreenerNormalizer
 from stock_research_ai.adapters.screener.semantic_mappings import ScreenerSemanticResolver
 from stock_research_ai.adapters.screener.source import ScreenerSource
+from stock_research_ai.adapters.secret_store import SecretStore
 from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.engine import (
     AnalystServices,
@@ -598,21 +599,33 @@ async def generate_report(
 
 async def live_analyst_model(
     settings: Settings,
+    secret_store: SecretStore | None = None,
 ) -> tuple[AnalystModel | None, Literal["LIVE"] | None]:
     """Settings -> optional concrete live AnalystModel, mirroring the existing
     KiteSource.from_environment() convention: absent configuration returns (None, None);
     present-but-unsupported configuration raises explicitly rather than silently
-    degrading. Never returns a FakeAnalystModel - that stays test-only."""
-    if settings.analyst_provider is None or settings.analyst_api_key is None:
+    degrading. Never returns a FakeAnalystModel - that stays test-only.
+
+    Part 6C-A: the API key itself may come from the environment (unchanged, and
+    checked first) or, if absent there, from the macOS Keychain via
+    adapters.secret_store.resolve_analyst_api_key - see that module for the full
+    precedence policy. `settings.analyst_provider` stays the explicit, required
+    provider selector when set; when it is unset but a Keychain credential exists,
+    "anthropic" (the only provider this build supports) is assumed, so a customer who
+    configured a key via `stock-research-ai configure-analyst` never also needs to set
+    an environment variable just to select the provider."""
+    from stock_research_ai.adapters.secret_store import resolve_analyst_api_key
+
+    api_key, source = resolve_analyst_api_key(settings, secret_store)
+    provider = settings.analyst_provider or ("anthropic" if source != "none" else None)
+    if provider is None or api_key is None:
         return None, None
-    if settings.analyst_provider != "anthropic":
-        raise RuntimeError(
-            f"Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER: {settings.analyst_provider!r}"
-        )
+    if provider != "anthropic":
+        raise RuntimeError(f"Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER: {provider!r}")
     from stock_research_ai.adapters.anthropic.analyst import AnthropicAnalystModel
 
     model: AnalystModel = AnthropicAnalystModel(
-        api_key=settings.analyst_api_key.get_secret_value(),
+        api_key=api_key,
         model=settings.analyst_model,
         base_url=settings.analyst_base_url,
         timeout_seconds=settings.analyst_timeout_seconds,
@@ -626,12 +639,13 @@ async def full_research(
     request: FullResearchRequest,
     output: Path,
     progress: ProgressSink | None = None,
+    secret_store: SecretStore | None = None,
 ) -> FullResearchResult:
     """The FULL_RESEARCH_V1 CLI/pre-browser entry point. Thin: constructs the live
     analyst provider and a fully-wired ResearchEngine, then delegates all sequencing to
     application.research_plan.run_full_research. No orchestration logic lives here."""
     check_output(output)
-    model, provider_kind = await live_analyst_model(settings)
+    model, provider_kind = await live_analyst_model(settings, secret_store)
     if model is None or provider_kind is None:
         raise RuntimeError(
             "No LIVE analyst provider is configured for this bootstrap. FULL_RESEARCH_V1 "
@@ -726,6 +740,7 @@ async def full_research(
 @asynccontextmanager
 async def browser_engine(
     settings: Settings,
+    secret_store: SecretStore | None = None,
 ) -> AsyncIterator[tuple[ResearchEngine, RawArtifactStore, BroadIndustrySource]]:
     """A long-lived, fully-wired ResearchEngine for the Part 6B-A browser HTTP job
     manager - the same wiring `full_research` uses per CLI invocation, held open for the
@@ -739,7 +754,7 @@ async def browser_engine(
     )
     try:
         await database.check_ready()
-        model, provider_kind = await live_analyst_model(settings)
+        model, provider_kind = await live_analyst_model(settings, secret_store)
         analyst_services = (
             AnalystServices(
                 database.extractions,

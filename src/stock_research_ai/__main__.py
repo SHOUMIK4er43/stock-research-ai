@@ -27,6 +27,32 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Issue a one-time browser-extension pairing code (Part 6B-A); printed once, "
         "used with POST /v1/pair",
     )
+    commands.add_parser(
+        "configure-analyst",
+        help="Store the Anthropic API key in the macOS Keychain (Part 6C-A); prompted "
+        "securely, never echoed, never written to a plaintext config file",
+    )
+    commands.add_parser(
+        "diagnostics",
+        help="Print safe, non-secret production state for troubleshooting (Part 6C-A)",
+    )
+    backup_cmd = commands.add_parser(
+        "backup", help="Back up the research database and artifacts (Part 6C-A)"
+    )
+    backup_cmd.add_argument(
+        "--output", type=Path, required=True, help="Empty destination directory"
+    )
+    restore_cmd = commands.add_parser(
+        "restore", help="Restore a backup created by `backup` (Part 6C-A)"
+    )
+    restore_cmd.add_argument(
+        "--input", type=Path, required=True, help="Backup directory to restore"
+    )
+    restore_cmd.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing database (a safety backup is taken first)",
+    )
     extract = commands.add_parser(
         "extract-screener", help="Acquire or replay a public company page"
     )
@@ -434,11 +460,39 @@ def main(argv: Sequence[str] | None = None) -> None:
         asyncio.run(initialize_database(settings))
         logging.getLogger(__name__).info("Company registry ready: %s", settings.database_path)
     elif args.command == "serve-http":
+        import errno
+
         import uvicorn
 
         from stock_research_ai.interfaces.http import create_app
+        from stock_research_ai.logging_setup import configure_logging
 
-        uvicorn.run(create_app(settings=settings), host=settings.http_host, port=settings.http_port)
+        service_logger = configure_logging(settings.log_path)
+        # Part 6C-A single-process/single-worker invariant: BrowserJobManager holds
+        # in-flight research jobs in memory, so a second worker process would never
+        # see (and could never resolve) jobs launched against the first - there is
+        # deliberately no `--workers` flag exposed anywhere in this CLI, and
+        # `uvicorn.run(app_instance, ...)` (an app object, not an import string) is
+        # itself incompatible with uvicorn's multi-worker mode, which requires an
+        # import-string target. This log line exists so the invariant is visible and
+        # tested, not just implicit.
+        service_logger.info(
+            "starting serve-http in single-worker mode (required: BrowserJobManager is in-memory)"
+        )
+        try:
+            uvicorn.run(
+                create_app(settings=settings),
+                host=settings.http_host,
+                port=settings.http_port,
+            )
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                parser.error(
+                    f"Could not start: port {settings.http_port} on {settings.http_host} is "
+                    "already in use. Stop the process using it, or set "
+                    "STOCK_RESEARCH_AI_HTTP_PORT to a different port."
+                )
+            raise
     elif args.command == "serve-mcp":
         from stock_research_ai.interfaces.mcp import create_server
 
@@ -448,7 +502,45 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         code = PairingStore(settings.browser_auth_path).issue_pairing_code()
         print(code)
+    elif args.command == "configure-analyst":
+        import getpass
 
+        from stock_research_ai.adapters.secret_store import (
+            SecretStoreUnavailableError,
+            store_analyst_api_key_in_keychain,
+        )
+
+        api_key = getpass.getpass("Anthropic API key (input hidden): ").strip()
+        if not api_key:
+            parser.error("No API key entered.")
+        try:
+            store_analyst_api_key_in_keychain(api_key)
+        except SecretStoreUnavailableError as exc:
+            parser.error(f"Could not store the key in Keychain: {exc}")
+        print(
+            "Stored in the macOS Keychain. STOCK_RESEARCH_AI_ANALYST_API_KEY, if set, "
+            "still takes precedence over this."
+        )
+    elif args.command == "diagnostics":
+        from stock_research_ai.diagnostics import format_diagnostics, gather_diagnostics
+
+        print(format_diagnostics(asyncio.run(gather_diagnostics(settings))))
+    elif args.command == "backup":
+        from stock_research_ai.backup import BackupError, create_backup
+
+        try:
+            output = asyncio.run(create_backup(settings, args.output))
+        except BackupError as exc:
+            parser.error(str(exc))
+        print(f"Backup written to {output}")
+    elif args.command == "restore":
+        from stock_research_ai.backup import BackupError, restore_backup
+
+        try:
+            asyncio.run(restore_backup(settings, args.input, force=args.force))
+        except BackupError as exc:
+            parser.error(str(exc))
+        print(f"Restored from {args.input}")
     elif args.command == "ingest-document":
         from stock_research_ai.bootstrap import ingest_document
         from stock_research_ai.domain.documents import (

@@ -5,7 +5,11 @@ import time
 
 import pytest
 
-from stock_research_ai.adapters.http.browser_auth import PairingError, PairingStore
+from stock_research_ai.adapters.http.browser_auth import (
+    PairingError,
+    PairingLockedOutError,
+    PairingStore,
+)
 
 EXTENSION_ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
 
@@ -111,5 +115,134 @@ def test_pair_code_cli_issues_and_prints_a_usable_code(tmp_path, monkeypatch):
     assert len(code) > 10
 
     store = PairingStore(auth_path)
+    token = store.complete_pairing(EXTENSION_ORIGIN, code)
+    assert store.verify(EXTENSION_ORIGIN, token) is True
+
+
+# --- Part 6C-A: pairing brute-force hardening ---------------------------------------
+
+
+class _FakeClock:
+    """Deterministic, controllable stand-in for time.monotonic() - no real 60s sleeps
+    in this test suite."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _patched_clock(monkeypatch: pytest.MonkeyPatch, start: float = 0.0) -> _FakeClock:
+    clock = _FakeClock(start)
+    monkeypatch.setattr(
+        "stock_research_ai.adapters.http.browser_auth.time.monotonic", clock
+    )
+    return clock
+
+
+def test_five_failed_attempts_within_60_seconds_trigger_a_cooldown(tmp_path, monkeypatch):
+    _patched_clock(monkeypatch)
+    store = PairingStore(tmp_path / "auth.json")
+    store.issue_pairing_code()
+
+    for _ in range(5):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+
+    with pytest.raises(PairingLockedOutError):
+        store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+
+
+def test_locked_out_error_never_leaks_the_pairing_code_or_token(tmp_path, monkeypatch):
+    _patched_clock(monkeypatch)
+    store = PairingStore(tmp_path / "auth.json")
+    store.issue_pairing_code()
+    for _ in range(5):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+
+    with pytest.raises(PairingLockedOutError) as excinfo:
+        store.complete_pairing(EXTENSION_ORIGIN, "some-other-guess")
+    assert "wrong-code" not in str(excinfo.value)
+    assert "some-other-guess" not in str(excinfo.value)
+
+
+def test_cooldown_clears_itself_after_60_seconds(tmp_path, monkeypatch):
+    clock = _patched_clock(monkeypatch)
+    store = PairingStore(tmp_path / "auth.json")
+    for _ in range(5):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+    with pytest.raises(PairingLockedOutError):
+        store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+
+    clock.advance(61.0)
+
+    # The cooldown has cleared, so a fresh pairing attempt is evaluated normally
+    # again (still fails because the original code is long expired/unused, but with
+    # an ordinary PairingError, never PairingLockedOutError).
+    code = store.issue_pairing_code()
+    token = store.complete_pairing(EXTENSION_ORIGIN, code)
+    assert store.verify(EXTENSION_ORIGIN, token) is True
+
+
+def test_a_successful_pair_resets_the_failure_counter(tmp_path, monkeypatch):
+    _patched_clock(monkeypatch)
+    store = PairingStore(tmp_path / "auth.json")
+    code = store.issue_pairing_code()
+
+    for _ in range(4):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+
+    # A successful pairing on the 5th attempt must reset the counter, not lock out.
+    token = store.complete_pairing(EXTENSION_ORIGIN, code)
+    assert store.verify(EXTENSION_ORIGIN, token) is True
+
+    # Confirm the counter really was reset: 4 more failures (against a fresh code)
+    # should not yet trigger a lockout.
+    new_code = store.issue_pairing_code()
+    for _ in range(4):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "still-wrong")
+    token2 = store.complete_pairing(EXTENSION_ORIGIN, new_code)
+    assert store.verify(EXTENSION_ORIGIN, token2) is True
+
+
+def test_lockout_state_is_in_memory_only_a_fresh_store_is_never_locked_out(tmp_path, monkeypatch):
+    _patched_clock(monkeypatch)
+    path = tmp_path / "auth.json"
+    store = PairingStore(path)
+    for _ in range(5):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+    with pytest.raises(PairingLockedOutError):
+        store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+
+    # Simulates a service restart: a brand new PairingStore instance over the same
+    # file has no in-memory failure history at all.
+    fresh_store = PairingStore(path)
+    code = fresh_store.issue_pairing_code()
+    token = fresh_store.complete_pairing(EXTENSION_ORIGIN, code)
+    assert fresh_store.verify(EXTENSION_ORIGIN, token) is True
+
+
+def test_old_failures_outside_the_60_second_window_do_not_count(tmp_path, monkeypatch):
+    clock = _patched_clock(monkeypatch)
+    store = PairingStore(tmp_path / "auth.json")
+
+    for _ in range(4):
+        with pytest.raises(PairingError):
+            store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")
+    clock.advance(61.0)  # the first 4 failures age out of the window
+    with pytest.raises(PairingError):
+        store.complete_pairing(EXTENSION_ORIGIN, "wrong-code")  # only the 1st in-window failure
+
+    # Still well under 5 failures within any 60s window, so this must not be locked out.
+    code = store.issue_pairing_code()
     token = store.complete_pairing(EXTENSION_ORIGIN, code)
     assert store.verify(EXTENSION_ORIGIN, token) is True

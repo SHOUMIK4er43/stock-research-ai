@@ -53,6 +53,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="Overwrite an existing database (a safety backup is taken first)",
     )
+    launchagent_cmd = commands.add_parser(
+        "render-launchagent",
+        help="Write a macOS LaunchAgent plist for this installed binary (Part 6C-B "
+        "installer plumbing); never embeds a secret",
+    )
+    launchagent_cmd.add_argument("--output", type=Path, required=True)
+    launchagent_cmd.add_argument(
+        "--executable",
+        help="Path to the stock-research-ai binary to launch (default: this process's "
+        "own resolved executable path)",
+    )
     extract = commands.add_parser(
         "extract-screener", help="Acquire or replay a public company page"
     )
@@ -541,6 +552,27 @@ def main(argv: Sequence[str] | None = None) -> None:
         except BackupError as exc:
             parser.error(str(exc))
         print(f"Restored from {args.input}")
+    elif args.command == "render-launchagent":
+        from stock_research_ai.release_tools import (
+            LAUNCH_AGENT_LABEL,
+            render_launch_agent_plist,
+            validate_launch_agent_plist,
+        )
+
+        executable = args.executable or sys.argv[0]
+        log_dir = settings.log_path.parent
+        plist_bytes = render_launch_agent_plist(
+            label=LAUNCH_AGENT_LABEL,
+            program_arguments=[executable, "serve-http"],
+            stdout_path=log_dir / "launchd-stdout.log",
+            stderr_path=log_dir / "launchd-stderr.log",
+        )
+        problems = validate_launch_agent_plist(plist_bytes, LAUNCH_AGENT_LABEL)
+        if problems:
+            parser.error("refusing to write an invalid LaunchAgent plist: " + "; ".join(problems))
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_bytes(plist_bytes)
+        print(args.output)
     elif args.command == "ingest-document":
         from stock_research_ai.bootstrap import ingest_document
         from stock_research_ai.domain.documents import (

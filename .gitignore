@@ -18,6 +18,10 @@ dist/
 build/
 *.egg-info/
 
+# Part 6C-B: generated release bundles (scripts/build-release.sh output) - source
+# scripts/templates/docs that produce these stay tracked; the generated output does not.
+/release/
+
 # Local evidence and extraction packages (test fixtures remain tracked).
 /.local/
 /artifacts/

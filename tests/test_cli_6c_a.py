@@ -175,3 +175,49 @@ def test_serve_http_never_passes_a_worker_count_to_uvicorn(tmp_path, monkeypatch
     # A bare FastAPI app instance, not an "module:attr" import string - uvicorn's own
     # multi-worker mode requires the latter, so this call shape cannot run >1 worker.
     assert not isinstance(args[0], str)
+
+
+# --- Part 6C-B: render-launchagent (installer plumbing) -----------------------------
+
+
+def test_render_launchagent_cli_writes_a_valid_secret_free_plist(tmp_path, monkeypatch) -> None:
+    import plistlib
+
+    monkeypatch.setenv("STOCK_RESEARCH_AI_DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("STOCK_RESEARCH_AI_BROWSER_AUTH_PATH", str(tmp_path / "auth.json"))
+    monkeypatch.setenv("STOCK_RESEARCH_AI_LOG_PATH", str(tmp_path / "logs" / "service.log"))
+    plist_path = tmp_path / "ai.stockresearch.local.plist"
+
+    _run_and_capture(
+        monkeypatch,
+        [
+            "render-launchagent",
+            "--output",
+            str(plist_path),
+            "--executable",
+            "/opt/homebrew/bin/stock-research-ai",
+        ],
+    )
+
+    assert plist_path.is_file()
+    data = plistlib.loads(plist_path.read_bytes())
+    assert data["Label"] == "ai.stockresearch.local"
+    assert data["ProgramArguments"] == ["/opt/homebrew/bin/stock-research-ai", "serve-http"]
+    raw = plist_path.read_text()
+    assert "sk-ant-" not in raw
+    assert ".env" not in raw
+
+
+def test_render_launchagent_cli_defaults_executable_to_argv0(tmp_path, monkeypatch) -> None:
+    import plistlib
+
+    monkeypatch.setenv("STOCK_RESEARCH_AI_DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("STOCK_RESEARCH_AI_BROWSER_AUTH_PATH", str(tmp_path / "auth.json"))
+    monkeypatch.setenv("STOCK_RESEARCH_AI_LOG_PATH", str(tmp_path / "logs" / "service.log"))
+    plist_path = tmp_path / "out.plist"
+
+    main(["render-launchagent", "--output", str(plist_path)])
+
+    data = plistlib.loads(plist_path.read_bytes())
+    assert data["ProgramArguments"][1] == "serve-http"
+    assert data["ProgramArguments"][0]  # some resolved executable path, non-empty

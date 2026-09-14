@@ -28,7 +28,7 @@ The commands below deliberately disable environment synchronization, lockfile
 updates, and Python bytecode writes:
 
 ```sh
-cd /Users/shoumikganguly/stock-research-ai
+cd /path/to/stock-research-ai
 export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
 uv run stock-research-ai --help
 ```
@@ -71,7 +71,7 @@ uv run stock-research-ai --database /tmp/stock-research-ai-demo.sqlite3 serve-ht
 In the first terminal:
 
 ```sh
-cd /Users/shoumikganguly/stock-research-ai
+cd /path/to/stock-research-ai
 export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
 uv run stock-research-ai init-db
 uv run stock-research-ai serve-http
@@ -103,7 +103,7 @@ outside Part 1; use it as a local development service.
 The MCP interface uses **stdio**. Start it with:
 
 ```sh
-cd /Users/shoumikganguly/stock-research-ai
+cd /path/to/stock-research-ai
 export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
 uv run stock-research-ai init-db
 uv run stock-research-ai serve-mcp
@@ -207,7 +207,7 @@ schema `2.0` JSON snapshots. Extraction snapshots are append-only through the re
 Run the offline fixture replay (choose a fresh output directory on subsequent runs):
 
 ```sh
-cd /Users/shoumikganguly/stock-research-ai
+cd /path/to/stock-research-ai
 export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
 uv run stock-research-ai --database .local/part2-proof.sqlite3 init-db
 uv run stock-research-ai --database .local/part2-proof.sqlite3 extract-screener \
@@ -265,7 +265,7 @@ historical fixture financial equality. It makes one anonymous acquisition, follo
 only validated public company-page redirects; no document bodies are downloaded.
 
 ```sh
-cd /Users/shoumikganguly/stock-research-ai
+cd /path/to/stock-research-ai
 export UV_NO_SYNC=1 UV_FROZEN=1 PYTHONDONTWRITEBYTECODE=1
 uv run stock-research-ai --database .local/part2-proof.sqlite3 init-db
 uv run stock-research-ai --database .local/part2-proof.sqlite3 extract-screener \

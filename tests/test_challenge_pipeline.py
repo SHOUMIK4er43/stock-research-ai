@@ -586,3 +586,31 @@ async def test_cli_reports_integrity_failure_with_dedicated_exit_code(world, tmp
     )
     assert result.returncode == 6, result.stderr
     assert not (tmp_path / "cli-out").exists()
+
+
+async def test_r1_projection_provenance_preserves_challenger_closed_sources(world, tmp_path):
+    """Richer model transport must not change Part 5C's closed evidence universe."""
+    settings, _, _, _, request, execution = world
+    bundle = await _bundle_for(settings, request)
+    _, claim = valid_claim(bundle)
+    analysis = await _analyzed(settings, request, execution, claim, tmp_path)
+    from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
+
+    rendered = analysis.model_metadata.request.rendered_text
+    assert '"projection_version":"ANALYST_MODEL_INPUT_V1"' in rendered
+    database = SQLiteDatabase(settings.database_path)
+    try:
+        stored = await database.analyses.get_analysis(analysis.id)
+        assert stored == analysis
+        company = await database.repository.get(analysis.company_id)
+        closed, _ = await challenge_engine.build_challenger_bundle(
+            stored, company,
+            extractions=database.extractions, market=database.market,
+            calculations=database.calculations, patterns=database.patterns,
+            market_calculations=database.market_calculations, valuations=database.valuations,
+            documents=database.documents, context=database.context,
+            artifacts=FileRawArtifactStore(settings.artifact_path),
+        )
+        assert closed.reviewed_analysis.input_bundle == analysis.input_bundle
+    finally:
+        await database.close()

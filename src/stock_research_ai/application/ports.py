@@ -9,6 +9,7 @@ from stock_research_ai.domain.analysis import (
     AnstInputBundle,
     ModelMetadata,
 )
+from stock_research_ai.domain.analyst_model_input import AnalystModelInput
 from stock_research_ai.domain.calculations import CalculationSnapshot
 from stock_research_ai.domain.challenge import (
     ChallengerExecutionSpec,
@@ -233,14 +234,18 @@ class ValuationRepository(Protocol):
 
 
 class AnalystModel(Protocol):
-    """Provider-neutral: turns a pinned bundle into a raw structured response.
+    """Provider-neutral: turns a pinned bundle and its content projection into a response.
 
     Never receives or returns a provider SDK object; secrets are read by the concrete
     adapter directly from its own environment, never through this protocol or its inputs.
     """
 
     async def generate(
-        self, bundle: AnstInputBundle, execution: AnalystExecutionSpec
+        self,
+        bundle: AnstInputBundle,
+        execution: AnalystExecutionSpec,
+        *,
+        model_input: AnalystModelInput,
     ) -> ModelMetadata: ...
 
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+from stock_research_ai.application.analyst_model_input import serialize_model_input
 from stock_research_ai.application.hashing import digest
 from stock_research_ai.domain.analysis import (
     AnalystExecutionSpec,
@@ -13,6 +14,7 @@ from stock_research_ai.domain.analysis import (
     RawAnalystResponse,
     RenderedModelRequest,
 )
+from stock_research_ai.domain.analyst_model_input import AnalystModelInput
 
 
 def hash_json(value: dict[str, object]) -> str:
@@ -40,7 +42,11 @@ class FakeAnalystModel:
         self._model_version = model_version
 
     async def generate(
-        self, bundle: AnstInputBundle, execution: AnalystExecutionSpec
+        self,
+        bundle: AnstInputBundle,
+        execution: AnalystExecutionSpec,
+        *,
+        model_input: AnalystModelInput | None = None,
     ) -> ModelMetadata:
         if self._fail:
             raise RuntimeError("Simulated provider failure")
@@ -54,7 +60,11 @@ class FakeAnalystModel:
             content=template_content,
             content_sha256=hashlib.sha256(template_content.encode()).hexdigest(),
         )
-        rendered_text = f"{template_content}\nbundle:{bundle.bundle_id}"
+        rendered_text = (
+            f"{template_content}\n" + serialize_model_input(bundle, model_input)
+            if model_input is not None
+            else f"{template_content}\nbundle:{bundle.bundle_id}"
+        )
         request = RenderedModelRequest(
             bundle_sha256=digest(bundle),
             template=template,

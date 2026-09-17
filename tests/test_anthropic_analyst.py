@@ -12,6 +12,7 @@ import pytest
 
 from stock_research_ai.adapters.anthropic import analyst as analyst_module
 from stock_research_ai.adapters.anthropic.analyst import AnalystProviderError, AnthropicAnalystModel
+from stock_research_ai.application.hashing import digest
 from stock_research_ai.config import Settings
 from stock_research_ai.domain.analysis import (
     AnalysisRequest,
@@ -20,6 +21,7 @@ from stock_research_ai.domain.analysis import (
     EvidenceReference,
     SectionCoverage,
 )
+from stock_research_ai.domain.analyst_model_input import AnalystModelEvidence, AnalystModelInput
 
 FAKE_HASH = "a" * 64
 
@@ -55,6 +57,16 @@ def _bundle_and_ref():
         section_coverage=coverage,
     )
     return bundle, ref
+
+
+def _projection(bundle):
+    # Transport-only fixture, not a claim-grounding proof. R1 tests resolve real owners.
+    return AnalystModelInput(
+        bundle_id=bundle.bundle_id, bundle_sha256=digest(bundle),
+        items=tuple(AnalystModelEvidence(reference=ref, status="INSUFFICIENT_INPUT",
+                    source_epistemic_class="CALCULATION", content_json='{"values":[]}')
+                    for ref in bundle.sources),
+    )
 
 
 def _execution() -> AnalystExecutionSpec:
@@ -99,7 +111,7 @@ async def test_valid_structured_response_round_trips_into_raw_response():
     )
     model = AnthropicAnalystModel(api_key="sk-test", model="claude-sonnet-5", transport=transport)
 
-    metadata = await model.generate(bundle, _execution())
+    metadata = await model.generate(bundle, _execution(), model_input=_projection(bundle))
 
     assert metadata.provider == "anthropic"
     assert metadata.model_id == "claude-sonnet-5"
@@ -115,7 +127,7 @@ async def test_api_key_never_appears_in_any_persisted_representation():
     secret = "sk-ant-super-secret-value"
     model = AnthropicAnalystModel(api_key=secret, model="claude-sonnet-5", transport=transport)
 
-    metadata = await model.generate(bundle, _execution())
+    metadata = await model.generate(bundle, _execution(), model_input=_projection(bundle))
 
     assert secret not in metadata.model_dump_json()
     assert secret not in repr(metadata)
@@ -130,7 +142,7 @@ async def test_malformed_json_body_raises_malformed_response():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "MALFORMED_RESPONSE"
 
 
@@ -141,7 +153,7 @@ async def test_missing_content_field_raises_malformed_response():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "MALFORMED_RESPONSE"
 
 
@@ -154,7 +166,7 @@ async def test_no_matching_tool_use_block_raises_unsupported_schema():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "UNSUPPORTED_RESPONSE_SCHEMA"
 
 
@@ -171,7 +183,7 @@ async def test_tool_input_not_an_object_raises_unsupported_schema():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "UNSUPPORTED_RESPONSE_SCHEMA"
 
 
@@ -196,7 +208,7 @@ async def test_extra_and_missing_fields_pass_through_untouched():
 
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
-    metadata = await model.generate(bundle, _execution())
+    metadata = await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert metadata.raw_response.structured_payload == {"claims": [{"unexpected_field": "x"}]}
 
 
@@ -211,7 +223,7 @@ async def test_timeout_retries_then_succeeds():
 
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
-    metadata = await model.generate(bundle, _execution())
+    metadata = await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert len(attempts) == 2
     assert metadata.raw_response.structured_payload == {"claims": []}
 
@@ -223,7 +235,7 @@ async def test_timeout_exhausted_raises_timeout():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "TIMEOUT"
 
 
@@ -240,7 +252,7 @@ async def test_auth_and_permission_failures_never_retry(status, code):
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == code
     assert len(attempts) == 1  # no retry for a non-transient failure
 
@@ -253,7 +265,7 @@ async def test_unsupported_model_or_bad_request_raises_model_unavailable(status)
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "MODEL_UNAVAILABLE"
 
 
@@ -267,7 +279,7 @@ async def test_rate_limit_retries_then_raises_after_bounded_attempts():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "RATE_LIMITED"
     assert len(attempts) == 3  # bounded: no unbounded retry loop
 
@@ -282,7 +294,7 @@ async def test_provider_5xx_retries_then_raises_after_bounded_attempts():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "PROVIDER_UNAVAILABLE"
     assert len(attempts) == 3
 
@@ -301,7 +313,7 @@ async def test_response_too_large_is_rejected():
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
     with pytest.raises(AnalystProviderError) as exc:
-        await model.generate(bundle, _execution())
+        await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert exc.value.code == "RESPONSE_TOO_LARGE"
 
 
@@ -314,7 +326,7 @@ async def test_only_one_model_call_per_generate_invocation_on_success():
 
     bundle, _ = _bundle_and_ref()
     model = AnthropicAnalystModel(api_key="k", model="m", transport=httpx.MockTransport(handler))
-    await model.generate(bundle, _execution())
+    await model.generate(bundle, _execution(), model_input=_projection(bundle))
     assert len(attempts) == 1  # no agent loop, no follow-up calls
 
 

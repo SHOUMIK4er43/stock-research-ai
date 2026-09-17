@@ -70,7 +70,9 @@ class _DynamicFakeAnalystModel:
     def __init__(self) -> None:
         self.last_bundle = None
 
-    async def generate(self, bundle, execution: AnalystExecutionSpec) -> ModelMetadata:
+    async def generate(
+        self, bundle, execution: AnalystExecutionSpec, *, model_input
+    ) -> ModelMetadata:
         self.last_bundle = bundle
         financial_ref = next(s for s in bundle.sources if s.kind == "FINANCIAL")
         claims = [
@@ -360,7 +362,7 @@ class _FailingAnalystModel:
     """Forces the Part 5B analysis stage to raise, deterministically. provider_kind
     stays "FAKE" - never "LIVE" - exactly like every other test double in this file."""
 
-    async def generate(self, bundle, execution):
+    async def generate(self, bundle, execution, *, model_input):
         raise RuntimeError("forced test failure: analysis stage")
 
 

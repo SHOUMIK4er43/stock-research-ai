@@ -12,6 +12,7 @@ from stock_research_ai.application import patterns as pattern_engine
 from stock_research_ai.application import report as report_engine
 from stock_research_ai.application import technicals, valuation
 from stock_research_ai.application.analysis_validation import validate_response
+from stock_research_ai.application.analyst_model_input import build_model_input
 from stock_research_ai.application.calculations import calculate
 from stock_research_ai.application.challenge_validation import validate_challenger_response
 from stock_research_ai.application.hashing import digest
@@ -296,7 +297,8 @@ class ResearchEngine:
         for artifact in artifacts.values():
             await services.artifacts.read(artifact)
         bundle = analyst_engine.assemble_bundle(request, evidence)
-        model_metadata = await services.model.generate(bundle, execution)
+        model_input = build_model_input(bundle, evidence)
+        model_metadata = await services.model.generate(bundle, execution, model_input=model_input)
         claims, rejected = validate_response(
             model_metadata.raw_response, bundle, evidence, request.profile_id
         )

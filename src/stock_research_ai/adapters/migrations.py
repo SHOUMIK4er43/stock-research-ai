@@ -69,6 +69,16 @@ async def read_schema_version(connection: AsyncConnection) -> int:
     return int(result.scalar_one())
 
 
+def require_supported_schema_version(version: int) -> None:
+    """Reject future ownership without executing migrations or writing metadata."""
+    if version > CURRENT_SCHEMA_VERSION:
+        raise UnsupportedSchemaVersionError(
+            f"Database schema version {version} is newer than this application "
+            f"build supports (supports up to {CURRENT_SCHEMA_VERSION}). "
+            "Upgrade the application before using this database."
+        )
+
+
 async def ensure_schema_version(connection: AsyncConnection) -> int:
     """Reads PRAGMA user_version and applies any pending forward migrations, in order,
     on the given connection - the caller controls the transaction boundary (typically
@@ -81,12 +91,7 @@ async def ensure_schema_version(connection: AsyncConnection) -> int:
     (unchanged if already current: the common case, and does not write in that case).
     """
     version = await read_schema_version(connection)
-    if version > CURRENT_SCHEMA_VERSION:
-        raise UnsupportedSchemaVersionError(
-            f"Database schema version {version} is newer than this application "
-            f"build supports (supports up to {CURRENT_SCHEMA_VERSION}). "
-            "Upgrade the application before using this database."
-        )
+    require_supported_schema_version(version)
     pending = [m for m in MIGRATIONS if m.from_version >= version]
     pending.sort(key=lambda m: m.from_version)
     for migration in pending:

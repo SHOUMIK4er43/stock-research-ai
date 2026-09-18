@@ -14,10 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from stock_research_ai.adapters.migrations import (
-    CURRENT_SCHEMA_VERSION,
     MigrationFailedError,
     UnsupportedSchemaVersionError,
     ensure_schema_version,
+    read_schema_version,
+    require_supported_schema_version,
 )
 from stock_research_ai.domain.analysis import AnalysisSnapshot
 from stock_research_ai.domain.calculations import CalculationSnapshot
@@ -149,14 +150,15 @@ def _check_schema(connection: Connection) -> None:
 class SQLiteDatabase:
     """Own the engine and repository without opening a database on construction."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, read_only: bool = False) -> None:
         self.path = path.expanduser().resolve()
+        self._read_only = read_only
         # Existing-file mode prevents ordinary application connections from creating
         # a database. initialize() is the sole operation that creates the file.
         url = URL.create(
             "sqlite+aiosqlite",
             database=self.path.as_uri(),
-            query={"mode": "rw", "uri": "true"},
+            query={"mode": "ro" if read_only else "rw", "uri": "true"},
         )
         self._engine = create_async_engine(url)
 
@@ -164,6 +166,12 @@ class SQLiteDatabase:
         def configure_connection(connection: Any, record: object) -> None:
             cursor = connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            if read_only:
+                # Connection-local settings only. WAL changes persistent journal
+                # mode; diagnostics must observe the existing mode, not set it.
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.close()
+                return
             # Part 6C-A production hardening. Applied to every connection this engine
             # ever opens - including both of the two independent SQLiteDatabase
             # instances the running HTTP process constructs (research_engine's and
@@ -221,6 +229,8 @@ class SQLiteDatabase:
 
     async def initialize(self) -> None:
         """Create the data directory and initial schema only on explicit request."""
+        if self._read_only:
+            raise DatabaseNotReadyError("Cannot initialize through a read-only connection.")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.path.touch(exist_ok=False)
@@ -231,16 +241,34 @@ class SQLiteDatabase:
         except OSError:
             pass  # best-effort: not every filesystem/OS supports POSIX permission bits
         async with self._engine.begin() as connection:
+            # Guard before create_all: an unknown future schema must never be
+            # normalized to this build's tables or version.
+            require_supported_schema_version(await read_schema_version(connection))
             await connection.run_sync(_Base.metadata.create_all)
             await connection.run_sync(_check_schema)
-            # A freshly created database already has the complete, current structural
-            # shape (create_all just built it) - there is nothing for the forward
-            # migration registry to apply, so its version is set directly rather than
-            # replayed through history.
-            await connection.execute(text(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))
+            # Establish legacy ownership through the same forward-only registry
+            # as readiness, and only after the required structure is present.
+            await ensure_schema_version(connection)
         async with self._sessions() as session, session.begin():
             for row in (await session.scalars(select(_CompanyRow))).all():
                 await _backfill_company(session, row)
+
+    async def inspect_schema_version(self) -> int:
+        """Observe version only, without checking table shape or running migrations.
+
+        Use a read_only=True instance for diagnostics so connection setup also
+        leaves persistent journal mode untouched. Version support is distinct from
+        structural readiness; check_ready remains the startup gate.
+        """
+        if not self.path.is_file():
+            raise DatabaseNotReadyError(f"SQLite database does not exist at {self.path}.")
+        try:
+            async with self._engine.connect() as connection:
+                return await read_schema_version(connection)
+        except SQLAlchemyError as exc:
+            raise DatabaseNotReadyError(
+                f"Unable to read the SQLite database at {self.path}."
+            ) from exc
 
     async def check_ready(self) -> None:
         """Validate an existing database without creating a file or any tables, and -

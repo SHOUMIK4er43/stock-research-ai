@@ -38,7 +38,7 @@ def settings_at(tmp_path):
         _env_file=None,
         database_path=tmp_path / "proof.sqlite3",
         browser_auth_path=tmp_path / "auth.json",
-        analyst_provider="none",
+        analyst_provider=None,
     )
 
 

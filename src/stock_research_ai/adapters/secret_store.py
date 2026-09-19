@@ -1,22 +1,9 @@
-"""Part 6C-A: a clean SecretStore boundary for the Anthropic provider credential only.
+"""Separate analyst credentials, outside research storage and browser pairing.
 
-This is a security domain of its own, distinct from both:
-  - the research/report SQLite database (a provider key must never be written there -
-    see ReportRepository/AnalysisRepository/etc., none of which ever accept one), and
-  - the browser pairing/auth state (adapters/http/browser_auth.py) - a pairing token
-    authenticates the *extension* to the local service; this module stores the
-    Anthropic API key the service itself uses to reach the analyst provider.
-
-Precedence (deterministic, no hidden third source):
-    explicit environment variable (Settings.analyst_api_key, i.e.
-    STOCK_RESEARCH_AI_ANALYST_API_KEY / a resolved `.env`)
-    -> macOS Keychain (via the built-in `/usr/bin/security` CLI - no new dependency)
-    -> unavailable
-
-No plaintext-file fallback is ever created by this module. If neither the
-environment nor Keychain has a value, the caller is told "none" and must not invent
-one, exactly as `bootstrap.live_analyst_model` already treats an absent credential
-today (silently returns no live model rather than substituting a fake).
+The explicitly selected provider uses its own environment setting first, then its
+own account under the stock-research-ai Keychain service. An unset selector keeps
+the legacy Anthropic account; an AI Credits key never implicitly selects AI Credits.
+No plaintext-file fallback or cross-provider credential lookup is performed.
 """
 
 import shutil
@@ -31,6 +18,16 @@ from stock_research_ai.config import Settings
 #: an unrelated Keychain item another tool created.
 _KEYCHAIN_SERVICE = "stock-research-ai"
 _ANALYST_API_KEY_ACCOUNT = "analyst-api-key"
+_AICREDITS_API_KEY_ACCOUNT = "aicredits-api-key"
+
+
+def _account(provider: str) -> str:
+    if provider == "anthropic":
+        return _ANALYST_API_KEY_ACCOUNT
+    if provider == "aicredits":
+        return _AICREDITS_API_KEY_ACCOUNT
+    raise ValueError("Unsupported analyst provider")
+
 
 CredentialSource = Literal["environment", "keychain", "none"]
 
@@ -63,6 +60,8 @@ class EnvironmentSecretStore:
     def get(self, name: str) -> str | None:
         if name == _ANALYST_API_KEY_ACCOUNT and self._settings.analyst_api_key is not None:
             return self._settings.analyst_api_key.get_secret_value()
+        if name == _AICREDITS_API_KEY_ACCOUNT and self._settings.aicredits_api_key is not None:
+            return self._settings.aicredits_api_key.get_secret_value()
         return None
 
     def set(self, name: str, value: str) -> None:
@@ -134,13 +133,13 @@ class MacOSKeychainSecretStore:
         ]
         try:
             result = self._run(argv)
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError):
             raise SecretStoreUnavailableError(
                 "macOS Keychain is unavailable (`/usr/bin/security` could not be run)."
-            ) from exc
+            ) from None
         if result.returncode != 0:
             raise SecretStoreUnavailableError(
-                f"Failed to store the credential in Keychain: {result.stderr.strip()}"
+                "Failed to store the credential in Keychain."
             )
 
     def delete(self, name: str) -> None:
@@ -170,13 +169,17 @@ def resolve_analyst_api_key(
     """The one place secret precedence is decided. Never returns a value alongside
     "none", and never consults more than one source per call - the environment is
     checked first and, if present, the Keychain is never even touched."""
+    provider = settings.analyst_provider or "anthropic"
+    if provider not in ("anthropic", "aicredits"):
+        return None, "none"
+    account = _account(provider)
     environment = EnvironmentSecretStore(settings)
-    value = environment.get(_ANALYST_API_KEY_ACCOUNT)
+    value = environment.get(account)
     if value:
         return value, "environment"
     store = keychain if keychain is not None else MacOSKeychainSecretStore()
     try:
-        value = store.get(_ANALYST_API_KEY_ACCOUNT)
+        value = store.get(account)
     except SecretStoreUnavailableError:
         return None, "none"
     if value:
@@ -184,12 +187,14 @@ def resolve_analyst_api_key(
     return None, "none"
 
 
-def store_analyst_api_key_in_keychain(value: str, keychain: SecretStore | None = None) -> None:
+def store_analyst_api_key_in_keychain(
+    value: str, keychain: SecretStore | None = None, *, provider: str = "anthropic"
+) -> None:
     """The one place `configure-analyst` (and its tests) writes the key - keeps the
     exact account/service naming an internal detail of this module rather than a
     constant other modules need to import directly."""
     store = keychain if keychain is not None else MacOSKeychainSecretStore()
-    store.set(_ANALYST_API_KEY_ACCOUNT, value)
+    store.set(_account(provider), value)
 
 
 __all__ = [

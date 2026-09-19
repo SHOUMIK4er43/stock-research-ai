@@ -27,10 +27,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Issue a one-time browser-extension pairing code (Part 6B-A); printed once, "
         "used with POST /v1/pair",
     )
-    commands.add_parser(
+    configure_analyst_cmd = commands.add_parser(
         "configure-analyst",
-        help="Store the Anthropic API key in the macOS Keychain (Part 6C-A); prompted "
+        help="Store an analyst API key in the macOS Keychain (Part 6C-A); prompted "
         "securely, never echoed, never written to a plaintext config file",
+    )
+    configure_analyst_cmd.add_argument(
+        "--provider", choices=("anthropic", "aicredits"), default="anthropic"
     )
     commands.add_parser(
         "diagnostics",
@@ -521,17 +524,22 @@ def main(argv: Sequence[str] | None = None) -> None:
             store_analyst_api_key_in_keychain,
         )
 
-        api_key = getpass.getpass("Anthropic API key (input hidden): ").strip()
+        label = "AI Credits" if args.provider == "aicredits" else "Anthropic"
+        api_key = getpass.getpass(f"{label} API key (input hidden): ").strip()
         if not api_key:
             parser.error("No API key entered.")
         try:
-            store_analyst_api_key_in_keychain(api_key)
+            store_analyst_api_key_in_keychain(api_key, provider=args.provider)
         except SecretStoreUnavailableError as exc:
             parser.error(f"Could not store the key in Keychain: {exc}")
-        print(
-            "Stored in the macOS Keychain. STOCK_RESEARCH_AI_ANALYST_API_KEY, if set, "
-            "still takes precedence over this."
+        variable = (
+            "STOCK_RESEARCH_AI_AICREDITS_API_KEY" if args.provider == "aicredits"
+            else "STOCK_RESEARCH_AI_ANALYST_API_KEY"
         )
+        print(f"Stored in the macOS Keychain. {variable}, if set, still takes precedence.")
+        if args.provider == "aicredits":
+            print("Select STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits and set "
+                  "STOCK_RESEARCH_AI_AICREDITS_MODEL to your confirmed catalog model ID.")
     elif args.command == "diagnostics":
         from stock_research_ai.diagnostics import format_diagnostics, gather_diagnostics
 

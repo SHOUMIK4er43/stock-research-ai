@@ -46,6 +46,7 @@ class Diagnostics:
     log_path: Path
     artifact_path: Path
     browser_auth_path: Path
+    analyst_provider: str | None = None
 
 
 async def gather_diagnostics(
@@ -79,6 +80,15 @@ async def gather_diagnostics(
 
     _api_key, credential_source = resolve_analyst_api_key(settings, secret_store)
 
+    provider = settings.analyst_provider or ("anthropic" if credential_source != "none" else None)
+    model = (settings.aicredits_model or "") if provider == "aicredits" else settings.analyst_model
+    configured = (
+        provider in ("anthropic", "aicredits")
+        and credential_source != "none"
+        and bool(model.strip())
+        and (provider != "aicredits" or model == model.strip())
+    )
+
     from stock_research_ai.adapters.http.browser_auth import PairingStore
 
     pairing_store = PairingStore(settings.browser_auth_path)
@@ -94,9 +104,10 @@ async def gather_diagnostics(
         database_schema_supported=schema_supported,
         http_host=settings.http_host,
         http_port=settings.http_port,
-        analyst_provider_configured=credential_source != "none",
+        analyst_provider_configured=configured,
+        analyst_provider=provider,
         credential_source=credential_source,
-        analyst_model=settings.analyst_model,
+        analyst_model=model,
         pairing_configured=pairing_configured,
         log_path=settings.log_path,
         artifact_path=settings.artifact_path or settings.database_path.parent / "artifacts",
@@ -117,6 +128,7 @@ def format_diagnostics(diagnostics: Diagnostics) -> str:
         f"database_schema_version: {diagnostics.database_schema_version}",
         f"database_schema_supported: {diagnostics.database_schema_supported}",
         f"http_bind: {diagnostics.http_host}:{diagnostics.http_port}",
+        f"analyst_provider: {diagnostics.analyst_provider}",
         f"analyst_provider_configured: {diagnostics.analyst_provider_configured}",
         f"credential_source: {diagnostics.credential_source}",
         f"analyst_model: {diagnostics.analyst_model}",

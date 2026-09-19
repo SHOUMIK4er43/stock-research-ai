@@ -611,17 +611,30 @@ async def live_analyst_model(
     adapters.secret_store.resolve_analyst_api_key - see that module for the full
     precedence policy. `settings.analyst_provider` stays the explicit, required
     provider selector when set; when it is unset but a Keychain credential exists,
-    "anthropic" (the only provider this build supports) is assumed, so a customer who
+    "anthropic" (the legacy default) is assumed, so a customer who
     configured a key via `stock-research-ai configure-analyst` never also needs to set
     an environment variable just to select the provider."""
     from stock_research_ai.adapters.secret_store import resolve_analyst_api_key
 
+    if settings.analyst_provider not in (None, "anthropic", "aicredits"):
+        raise RuntimeError("Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER")
     api_key, source = resolve_analyst_api_key(settings, secret_store)
     provider = settings.analyst_provider or ("anthropic" if source != "none" else None)
-    if provider is None or api_key is None:
+    if provider is None:
         return None, None
-    if provider != "anthropic":
-        raise RuntimeError(f"Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER: {provider!r}")
+    if api_key is None:
+        raise RuntimeError(f"Selected analyst provider {provider} has no configured credential")
+    if provider == "aicredits":
+        from stock_research_ai.adapters.aicredits.analyst import AICreditsAnalystModel
+
+        if not settings.aicredits_model or not settings.aicredits_model.strip():
+            raise RuntimeError("AI Credits requires STOCK_RESEARCH_AI_AICREDITS_MODEL")
+        return AICreditsAnalystModel(
+            api_key=api_key,
+            model=settings.aicredits_model,
+            timeout_seconds=settings.analyst_timeout_seconds,
+            max_output_tokens=settings.analyst_max_output_tokens,
+        ), "LIVE"
     from stock_research_ai.adapters.anthropic.analyst import AnthropicAnalystModel
 
     model: AnalystModel = AnthropicAnalystModel(

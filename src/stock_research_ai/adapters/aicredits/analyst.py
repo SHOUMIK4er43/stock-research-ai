@@ -168,7 +168,14 @@ class AICreditsAnalystModel:
         ) as client:
             payload, request_id = await self._post_with_retries(client, rendered)
         reported_model = payload.get("model")
-        if reported_model is not None and reported_model != self._model:
+        # AI Credits may omit exactly this leading provider namespace in its echo.
+        # Compare only; retain both original strings in request/response provenance.
+        matches_model = reported_model == self._model or (
+            self._model.startswith("anthropic/")
+            and reported_model == self._model.removeprefix("anthropic/")
+            and reported_model != ""
+        )
+        if reported_model is not None and not matches_model:
             raise AnalystProviderError(
                 "MODEL_MISMATCH", "Response model differs from requested model"
             )

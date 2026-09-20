@@ -35,6 +35,8 @@ const storage = createStorage(chrome.storage.local);
 /** @type {ReturnType<typeof setTimeout> | null} */
 let pollTimer = null;
 let currentJobId = null;
+// Only the latest boot may publish readiness or pairing state.
+let bootGeneration = 0;
 
 // Report-view UI state (Part 6B-C). Kept separate from the job/page facts above: a
 // report is keyed by report_snapshot_id, not by job lifetime, and stays viewable across
@@ -188,11 +190,15 @@ async function boot() {
     // Only the explicit Back button (closeReportView) leaves this mode.
     return;
   }
+  const generation = ++bootGeneration;
+  const isCurrent = () => generation === bootGeneration;
   const baseUrl = await storage.getServiceBaseUrl();
+  if (!isCurrent()) return;
   const client = new ApiClient(baseUrl);
   els.versionLabel.textContent = "";
 
   await refreshPage();
+  if (!isCurrent()) return;
 
   const facts = {
     serviceReachable: false,
@@ -208,6 +214,7 @@ async function boot() {
   } catch {
     health = null;
   }
+  if (!isCurrent()) return;
   facts.serviceReachable = !!(health && health.status === "ok");
   if (!facts.serviceReachable) {
     setServiceStatusLine("Local service not reachable");
@@ -221,6 +228,7 @@ async function boot() {
   } catch {
     version = null;
   }
+  if (!isCurrent()) return;
   if (!version) {
     facts.serviceReachable = false;
     setServiceStatusLine("Local service not reachable");
@@ -230,12 +238,14 @@ async function boot() {
   els.versionLabel.textContent = `v${version.application_version}`;
   facts.versionCompatible = version.api_version === "v1";
   if (!facts.versionCompatible) {
+    setServiceStatusLine("Service reachable · incompatible version");
     data.incompatibleDetail = `Extension expects API v1, service reports ${version.api_version}.`;
     renderState(deriveState(facts), data);
     return;
   }
 
   const token = await storage.getToken();
+  if (!isCurrent()) return;
   facts.paired = !!token;
   if (!facts.paired) {
     setServiceStatusLine("Service reachable · not paired");
@@ -249,12 +259,14 @@ async function boot() {
   } catch {
     capabilities = null;
   }
+  if (!isCurrent()) return;
   data.analysisAvailable = !!(capabilities && capabilities.analysis_available);
   setServiceStatusLine("Service reachable · paired");
 
   const activeJob = await storage.getActiveJob();
+  if (!isCurrent()) return;
   if (activeJob && activeJob.jobId) {
-    await reconnectJob(client, token, activeJob.jobId, facts);
+    await reconnectJob(client, token, activeJob.jobId, facts, isCurrent);
     return;
   }
 
@@ -262,21 +274,25 @@ async function boot() {
   // including a server restart that lost it. Only offered here when it belongs to the
   // page currently open, so an old company's report is never mislabeled as this page's.
   const lastReport = await storage.getLastReport();
+  if (!isCurrent()) return;
   data.lastReportForThisPage = isReportForCurrentPage(lastReport, page.sourceUrl) ? lastReport : null;
 
   renderState(deriveState(facts), data);
 }
 
-async function reconnectJob(client, token, jobId, facts) {
+async function reconnectJob(client, token, jobId, facts, isCurrent) {
   try {
     const job = await client.getResearchJob(token, jobId);
+    if (!isCurrent()) return;
     currentJobId = jobId;
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
+    if (!isCurrent()) return;
     const outcome = interpretJobFetchError(error instanceof ApiError ? error : null);
     if (outcome === "LOST") {
       // Honest: never pretend a lost job is still running.
       await storage.clearActiveJob();
+      if (!isCurrent()) return;
       renderState(deriveState(facts), {});
       return;
     }

@@ -44,6 +44,12 @@ class Settings(BaseSettings):
         default_factory=lambda: Path.home() / ".stock-research-ai" / "browser_auth.json"
     )
 
+    #: Non-secret pre-pairing approval for public health/version browser probes only.
+    #: No default: an arbitrary extension cannot opt itself into this allowlist.
+    browser_extension_origin: str | None = Field(
+        default=None, pattern=r"^chrome-extension://[a-p]{32}$"
+    )
+
     #: Part 6C-A: user-local rotating log file for `serve-http` (logging_setup.py).
     #: Never under the Git repo; never contains a secret value (see that module's
     #: redaction filter).

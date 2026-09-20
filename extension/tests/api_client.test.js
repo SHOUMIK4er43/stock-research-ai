@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ApiClient, ApiError, InvalidServiceUrlError, ARTIFACT_KINDS } from "../src/api/client.js";
 
+import { createStorage, createMemoryBackend } from "../src/storage.js";
+
 const BASE_URL = "http://127.0.0.1:8000";
 
 function fakeFetch(handler) {
@@ -49,12 +51,15 @@ test("capabilities() calls exactly GET /v1/capabilities", async () => {
 test("pair() posts exactly {pairing_code} to /v1/pair with no auth header", async () => {
   const fetchImpl = fakeFetch(() => jsonResponse(200, { token: "abc" }));
   const client = new ApiClient(BASE_URL, fetchImpl);
-  await client.pair("one-time-code");
+  const result = await client.pair("one-time-code");
+  assert.deepEqual(result, { token: "abc" });
   const call = fetchImpl.calls[0];
   assert.equal(call.url, "http://127.0.0.1:8000/v1/pair");
   assert.equal(call.init.method, "POST");
   assert.equal(call.init.headers.Authorization, undefined);
   assert.deepEqual(JSON.parse(call.init.body), { pairing_code: "one-time-code" });
+  assert.equal(Object.hasOwn(JSON.parse(call.init.body), "code"), false);
+  assert.deepEqual(call.init.headers, { "Content-Type": "application/json" });
 });
 
 test("createResearchJob sends exactly {portal, source_url, research_plan} with Bearer auth", async () => {
@@ -238,3 +243,54 @@ test("the client never targets a screener.in URL", async () => {
     assert.ok(!call.url.includes("screener.in"));
   }
 });
+
+
+test("pairing response token round-trips through existing storage into research Bearer auth", async () => {
+  const backend = createMemoryBackend();
+  const storage = createStorage(backend);
+  const fetchImpl = fakeFetch((url) =>
+    url.endsWith("/v1/pair")
+      ? jsonResponse(200, { token: "test-browser-token" })
+      : jsonResponse(202, { job_id: "test-job" }),
+  );
+  const client = new ApiClient(BASE_URL, fetchImpl);
+  const result = await client.pair("test-pairing-code");
+  await storage.setToken(result.token);
+  assert.deepEqual(backend._dump(), { pairingToken: "test-browser-token" });
+  await client.createResearchJob(await storage.getToken(), {
+    portal: "SCREENER",
+    source_url: "https://www.screener.in/company/INFY/",
+    research_plan: "FULL_RESEARCH_V1",
+  });
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { pairing_code: "test-pairing-code" });
+  assert.deepEqual(fetchImpl.calls[1].init.headers, {
+    "Content-Type": "application/json",
+    Authorization: "Bearer test-browser-token",
+  });
+  for (const call of fetchImpl.calls) {
+    assert.ok(call.url.startsWith(BASE_URL + "/v1/"));
+    assert.ok(!call.url.includes("test-browser-token"));
+    assert.ok(!call.init.body.includes("test-browser-token"));
+    assert.ok(!Object.keys(JSON.parse(call.init.body)).some((key) => /api.?key/i.test(key)));
+  }
+});
+
+for (const message of ["Invalid pairing code", "Pairing code has expired"]) {
+  test(`pairing rejection remains an error with no fallback: ${message}`, async () => {
+    const fetchImpl = fakeFetch(() => jsonResponse(401, {
+      detail: { code: "PAIRING_FAILED", message },
+    }));
+    const client = new ApiClient(BASE_URL, fetchImpl);
+    await assert.rejects(client.pair("test-invalid-code"), (error) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 401);
+      assert.equal(error.code, "PAIRING_FAILED");
+      return true;
+    });
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), {
+      pairing_code: "test-invalid-code",
+    });
+  });
+}

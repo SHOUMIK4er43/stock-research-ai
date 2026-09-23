@@ -294,3 +294,49 @@ for (const message of ["Invalid pairing code", "Pairing code has expired"]) {
     });
   });
 }
+
+for (const status of [401, 403, 409, 422]) {
+  test(`HTTP ${status} remains an application error, not network unreachable`, async () => {
+    const client = new ApiClient(BASE_URL, fakeFetch(() => jsonResponse(status, {
+      detail: { code: `TEST_${status}`, message: "Request rejected" },
+    })));
+    await assert.rejects(client.pair("synthetic-invalid-code"), error => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, status);
+      assert.equal(error.code, `TEST_${status}`);
+      assert.equal(error.message, "Request rejected");
+      return true;
+    });
+  });
+}
+
+for (const operation of ["health", "version", "getArtifact"]) {
+  test(`${operation} invokes injected fetch detached from the ApiClient receiver`, async () => {
+    let calls = 0;
+    let receiver;
+    async function browserLikeFetch(url, init) {
+      calls += 1;
+      receiver = this;
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      assert.equal(init.method, "GET");
+      if (operation === "getArtifact") {
+        assert.equal(url, `${BASE_URL}/v1/reports/report-1/artifacts/INSTITUTIONAL_REPORT`);
+        assert.equal(init.headers.Authorization, "Bearer synthetic-token");
+        return { ok: true, status: 200, text: async () => "report text",
+          headers: { get: () => "text/markdown" } };
+      }
+      assert.equal(url, BASE_URL + (operation === "health" ? "/health" : "/v1/version"));
+      assert.deepEqual(init.headers, {});
+      return jsonResponse(200, operation === "health" ? { status: "ok" } : { api_version: "v1" });
+    }
+    const client = new ApiClient(BASE_URL, browserLikeFetch);
+    const result = operation === "getArtifact"
+      ? await client.getArtifact("synthetic-token", "report-1", "INSTITUTIONAL_REPORT")
+      : await client[operation]();
+    assert.equal(calls, 1);
+    assert.equal(receiver, undefined);
+    assert.deepEqual(result, operation === "getArtifact"
+      ? { text: "report text", contentType: "text/markdown" }
+      : operation === "health" ? { status: "ok" } : { api_version: "v1" });
+  });
+}

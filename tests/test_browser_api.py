@@ -42,6 +42,11 @@ EXTENSION_ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
 EVIL_ORIGIN = "https://evil.example"
 
 
+@pytest.fixture(autouse=True)
+def configured_browser_origin(monkeypatch):
+    monkeypatch.setenv("STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN", EXTENSION_ORIGIN)
+
+
 def _execution_factory() -> AnalystExecutionSpec:
     return AnalystExecutionSpec(template_id="full-research-v1", template_version=1)
 
@@ -188,7 +193,6 @@ async def test_valid_origin_and_token_succeeds(paired):
     "headers_fn",
     [
         lambda token: {"Origin": EVIL_ORIGIN, "Authorization": f"Bearer {token}"},
-        lambda token: {"Authorization": f"Bearer {token}"},  # missing Origin
         lambda token: {"Origin": EXTENSION_ORIGIN},  # missing token
         lambda token: {"Origin": EXTENSION_ORIGIN, "Authorization": "Bearer wrong-token"},
         lambda token: {"Origin": EVIL_ORIGIN, "Authorization": f"Bearer {token}"},
@@ -239,7 +243,7 @@ async def test_arbitrary_web_origin_gets_no_cors_header(paired):
     assert "access-control-allow-origin" not in response.headers
 
 
-async def test_pairing_preflight_is_narrowly_accommodated(paired):
+async def test_unconfigured_extension_pairing_preflight_is_denied(paired):
     client, _token, _jm, _model, _ps = paired
     response = await client.options(
         "/v1/pair",
@@ -249,9 +253,7 @@ async def test_pairing_preflight_is_narrowly_accommodated(paired):
         },
     )
     assert response.status_code == 204
-    assert response.headers["access-control-allow-origin"] == (
-        "chrome-extension://someunpairedidxxxxxxxxxxxxxxxxxx"
-    )
+    assert "access-control-allow-origin" not in response.headers
 
 
 async def test_preflight_for_a_normal_web_origin_is_not_accommodated(paired):

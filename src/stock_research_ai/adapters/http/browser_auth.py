@@ -175,13 +175,17 @@ class PairingStore:
         return token
 
     def verify(self, origin: str | None, token: str | None) -> bool:
-        """Both origin AND token must match the paired record - neither alone suffices."""
-        if not origin or not token:
+        """Require the paired bearer; reject an explicitly different Origin.
+
+        Chrome extension GETs can omit Origin. Its absence does not substitute for
+        the bearer secret; pairing still requires an exact configured HTTP Origin.
+        """
+        if not token:
             return False
         paired = self._read().paired
         if paired is None:
             return False
-        if origin != paired.origin:
+        if origin is not None and origin != paired.origin:
             return False
         return hmac.compare_digest(paired.token_hash, _hash(token))
 

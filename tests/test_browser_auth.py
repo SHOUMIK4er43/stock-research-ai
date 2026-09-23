@@ -67,12 +67,13 @@ def test_repairing_replaces_previous_origin_and_invalidates_old_token(tmp_path):
     assert store.paired_origin() == new_origin
 
 
-def test_verify_requires_both_origin_and_token(tmp_path):
+def test_verify_requires_token_and_rejects_explicit_wrong_origin(tmp_path):
     store = PairingStore(tmp_path / "auth.json")
     token = store.complete_pairing(EXTENSION_ORIGIN, store.issue_pairing_code())
 
     assert store.verify(EXTENSION_ORIGIN, None) is False
-    assert store.verify(None, token) is False
+    assert store.verify(None, token) is True
+    assert store.verify("", token) is False
     assert store.verify(EXTENSION_ORIGIN, "wrong-token") is False
     assert store.verify("chrome-extension://different", token) is False
     assert store.verify(EXTENSION_ORIGIN, token) is True

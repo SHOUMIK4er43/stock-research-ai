@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         default_factory=lambda: Path.home() / ".stock-research-ai" / "browser_auth.json"
     )
 
-    #: Non-secret pre-pairing approval for public health/version browser probes only.
+    #: Non-secret exact origin required for browser pairing and CORS response access.
     #: No default: an arbitrary extension cannot opt itself into this allowlist.
     browser_extension_origin: str | None = Field(
         default=None, pattern=r"^chrome-extension://[a-p]{32}$"

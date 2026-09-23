@@ -70,11 +70,11 @@ async def test_no_implicit_approved_origin(engine, tmp_path):
         assert "access-control-allow-origin" not in response.headers
 
 
-async def test_paired_origin_takes_precedence_over_bootstrap_approval(engine, tmp_path):
+async def test_stored_pairing_cannot_expand_configured_cors_origin(engine, tmp_path):
     async with client_for(engine, tmp_path, paired=OTHER) as (client, _, _):
         for path in ("/health", "/v1/version"):
             allowed = await client.get(path, headers={"Origin": OTHER})
-            assert allowed.headers["access-control-allow-origin"] == OTHER
+            assert "access-control-allow-origin" not in allowed.headers
             denied = await client.get(path, headers={"Origin": ORIGIN})
             assert "access-control-allow-origin" not in denied.headers
 
@@ -95,14 +95,13 @@ async def test_bootstrap_allowance_does_not_expose_other_routes(engine, tmp_path
         assert "access-control-allow-origin" not in response.headers
 
 
-async def test_pairing_and_exact_bearer_origin_contract_unchanged(engine, tmp_path):
+async def test_pairing_and_exact_bearer_origin_security(engine, tmp_path):
     async with client_for(engine, tmp_path) as (client, store, _):
-        # Existing /pair bootstrap rule remains available to any extension origin,
-        # but still requires the real single-use code. It is not a research permission.
+        # Pairing bootstrap is restricted to the configured exact extension origin.
         preflight = await client.options(
             "/v1/pair", headers={"Origin": OTHER, "Access-Control-Request-Method": "POST"}
         )
-        assert preflight.headers["access-control-allow-origin"] == OTHER
+        assert "access-control-allow-origin" not in preflight.headers
         code = store.issue_pairing_code()
         wrong_field = await client.post("/v1/pair", headers={"Origin": ORIGIN}, json={"code": code})
         assert wrong_field.status_code == 422

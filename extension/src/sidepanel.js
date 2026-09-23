@@ -280,6 +280,19 @@ async function boot() {
   renderState(deriveState(facts), data);
 }
 
+async function requirePairingAfterUnauthorized() {
+  stopPolling();
+  currentJobId = null;
+  const generation = ++bootGeneration;
+  // Keep active-job and report pointers: a 401 says nothing about their existence.
+  await storage.clearToken();
+  if (generation !== bootGeneration) return;
+  setServiceStatusLine("Service reachable · not paired");
+  renderState(States.UNPAIRED, {});
+  els.pairingError.textContent = "Pairing authorization was rejected. Pair again to reconnect your research.";
+  els.pairingError.hidden = false;
+}
+
 async function reconnectJob(client, token, jobId, facts, isCurrent) {
   try {
     const job = await client.getResearchJob(token, jobId);
@@ -288,6 +301,10 @@ async function reconnectJob(client, token, jobId, facts, isCurrent) {
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
     if (!isCurrent()) return;
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     const outcome = interpretJobFetchError(error instanceof ApiError ? error : null);
     if (outcome === "LOST") {
       // Honest: never pretend a lost job is still running.
@@ -323,6 +340,10 @@ async function pollJob(client, token, facts) {
     const job = await client.getResearchJob(token, currentJobId);
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     const outcome = interpretJobFetchError(error instanceof ApiError ? error : null);
     if (outcome === "LOST") {
       await storage.clearActiveJob();

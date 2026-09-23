@@ -47,14 +47,12 @@ _READINESS_PATHS = frozenset({"/health", "/v1/version"})
 
 
 class _BrowserCORSMiddleware:
-    """Dynamic CORS: reflects only the exact currently-paired chrome-extension://
-    origin. Before pairing, health/version may also reflect one explicitly configured
-    extension origin. The pairing endpoint retains its existing chrome-extension://
-    bootstrap rule - never a wildcard, never a normal https:// site. This
-    middleware ONLY controls whether a browser's JS may read the response; it never
-    blocks the request from reaching a handler - actual access control for protected
-    routes is `_require_paired_client` below, which independently requires a valid
-    Bearer token AND the exact paired Origin."""
+    """Reflect only the configured exact extension origin, never arbitrary websites.
+
+    Protected routes require a bearer independently of CORS. An explicit Origin
+    must also match the paired identity; Chrome may omit Origin on extension GETs.
+    Pairing always requires the configured Origin, even before a token exists.
+    """
 
     def __init__(
         self, app: Any, pairing_store: PairingStore, approved_origin: str | None = None
@@ -64,7 +62,7 @@ class _BrowserCORSMiddleware:
         self._approved_origin = approved_origin
 
     def _origin_allowed(self, origin: str | None, path: str) -> bool:
-        if not origin or not origin.startswith("chrome-extension://"):
+        if not origin or origin != self._approved_origin:
             return False
         if path == _PAIRING_PATH:
             return True
@@ -284,6 +282,11 @@ def create_app(
                     "code": "MISSING_ORIGIN",
                     "message": "An Origin header is required to pair",
                 },
+            )
+        if origin != runtime_settings.browser_extension_origin:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "PAIRING_FAILED", "message": "Pairing origin is not approved"},
             )
         try:
             token = active_pairing_store.complete_pairing(origin, payload.pairing_code)

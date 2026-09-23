@@ -127,3 +127,52 @@ test("401 report handling still clears invalid token and returns to pairing", as
   assert.equal((await h.storage.get("pairingToken")).pairingToken, undefined);
   assert.deepEqual(h.logs, []);
 });
+
+test("reconnect 401 selects pairing and preserves active-job/report recovery pointers", async t => {
+  const activeJob = { jobId: "existing-job", sourceUrl: "https://www.screener.in/company/INFY/" };
+  const lastReport = { reportId: "previous-report", sourceUrl: activeJob.sourceUrl };
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-expired", activeJob, lastReport },
+    fetch: async path => {
+      if (path.startsWith("/v1/research-jobs/")) {
+        return { ok: false, status: 401, json: async () => ({ detail: { code: "UNAUTHORIZED" } }) };
+      }
+      return { ok: true, status: 200, json: async () => path === "/health"
+        ? { status: "ok" } : path === "/v1/version" ? VERSION : {} };
+    },
+  });
+  unpaired(h);
+  const stored = await h.storage.get(["activeJob", "lastReport", "pairingToken"]);
+  assert.deepEqual(stored.activeJob, activeJob);
+  assert.deepEqual(stored.lastReport, lastReport);
+  assert.equal(stored.pairingToken, undefined);
+  assert.deepEqual(h.logs, []);
+});
+
+test("polling 401 stops polling and keeps recovery pointers for re-pairing", async t => {
+  let poll;
+  let scheduled = 0;
+  let jobReads = 0;
+  t.mock.method(globalThis, "setTimeout", fn => { poll = fn; scheduled += 1; return 42; });
+  t.mock.method(globalThis, "clearTimeout", () => {});
+  const activeJob = { jobId: "existing-job", sourceUrl: "https://www.screener.in/company/INFY/" };
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-expired", activeJob },
+    fetch: async path => {
+      if (path.startsWith("/v1/research-jobs/")) {
+        jobReads += 1;
+        return jobReads === 1
+          ? { ok: true, status: 200, json: async () => ({ status: "RUNNING" }) }
+          : { ok: false, status: 401, json: async () => ({ detail: { code: "UNAUTHORIZED" } }) };
+      }
+      return { ok: true, status: 200, json: async () => path === "/health"
+        ? { status: "ok" } : path === "/v1/version" ? VERSION : {} };
+    },
+  });
+  assert.equal(h.get("panel-running").hidden, false);
+  await poll();
+  unpaired(h);
+  assert.equal(scheduled, 1);
+  assert.deepEqual((await h.storage.get("activeJob")).activeJob, activeJob);
+  assert.deepEqual(h.logs, []);
+});

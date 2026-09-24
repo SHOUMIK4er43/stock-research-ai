@@ -251,7 +251,7 @@ def create_app(
 
     @app.get("/v1/capabilities", response_model=Capabilities)
     async def get_capabilities() -> Capabilities:
-        return await current_engine().get_capabilities()
+        return await current_job_manager().engine.get_capabilities()
 
     @app.post("/v1/companies", response_model=Company, status_code=status.HTTP_201_CREATED)
     async def register_company(registration: CompanyRegistration) -> Company:

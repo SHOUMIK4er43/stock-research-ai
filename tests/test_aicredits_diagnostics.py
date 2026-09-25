@@ -22,6 +22,17 @@ def diagnostic_log(tmp_path, monkeypatch):
     handler.close()
 
 
+def _events(path) -> list[dict]:
+    text = path.read_text()
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _response_metadata_event(path) -> dict:
+    events = [e for e in _events(path) if e["event"] == "aicredits_response_metadata"]
+    assert len(events) == 1
+    return events[0]
+
+
 @pytest.mark.parametrize(
     "case,code,finish,message_object",
     [
@@ -63,9 +74,7 @@ async def test_metadata_survives_validation_without_body(
     else:
         await generate(transport)
     assert len(calls) == 1
-    text = diagnostic_log.read_text()
-    diagnostic = json.loads(text)
-    assert diagnostic["event"] == "aicredits_response_metadata"
+    diagnostic = _response_metadata_event(diagnostic_log)
     assert diagnostic["http_status"] == 200
     assert diagnostic["response_id"] == "completion-123"
     assert diagnostic["request_id"] == "request-123"
@@ -88,9 +97,11 @@ async def test_metadata_survives_validation_without_body(
         assert diagnostic["arguments_length"] == len(
             choice["message"]["tool_calls"][0]["function"]["arguments"]
         )
+    text = diagnostic_log.read_text()
     for forbidden in (SECRET, "PRIVATE", '{"claims": []}', "Authorization", "Bearer"):
         assert forbidden not in text
-    assert len(text) < 2500
+    for line in text.splitlines():
+        assert len(line) < 2500
 
 
 async def test_untrusted_metadata_is_bounded_and_redacted(diagnostic_log):
@@ -106,8 +117,7 @@ async def test_untrusted_metadata_is_bounded_and_redacted(diagnostic_log):
         await generate(
             lambda _: httpx.Response(200, json=payload, headers={"x-request-id": SECRET})
         )
-    text = diagnostic_log.read_text()
-    d = json.loads(text)
+    d = _response_metadata_event(diagnostic_log)
     assert d["response_id"] is None and d["request_id"] is None
     assert d["finish_reason"] is None and d["finish_reason_gate_passed"] is False
     assert d["first_function_name"] is None and d["first_tool_call_type"] is None
@@ -120,9 +130,11 @@ async def test_untrusted_metadata_is_bounded_and_redacted(diagnostic_log):
         "first_tool_call_type",
         "first_function_name",
     }
+    text = diagnostic_log.read_text()
     for forbidden in (SECRET, "PRIVATE", "Bearer", "Authorization", "arbitrary provider prose"):
         assert forbidden not in text
-    assert len(text) < 2500
+    for line in text.splitlines():
+        assert len(line) < 2500
 
 
 @pytest.mark.parametrize("finish", [None, "tool_calls"])
@@ -130,7 +142,7 @@ async def test_accepted_finish_reasons_remain_accepted(diagnostic_log, finish):
     payload = response()
     payload["choices"][0]["finish_reason"] = finish
     await generate(lambda _: httpx.Response(200, json=payload))
-    d = json.loads(diagnostic_log.read_text())
+    d = _response_metadata_event(diagnostic_log)
     assert d["finish_reason"] == finish
     assert d["finish_reason_gate_passed"] is True
     assert d["content_present"] is False and d["content_type"] == "null"
@@ -142,11 +154,10 @@ async def test_malformed_choices_have_safe_shape_metadata(diagnostic_log, choice
     payload["choices"] = choices
     with pytest.raises(AnalystProviderError, match="Exactly one choice required"):
         await generate(lambda _: httpx.Response(200, json=payload))
-    text = diagnostic_log.read_text()
-    d = json.loads(text)
+    d = _response_metadata_event(diagnostic_log)
     assert d["choices_count"] == (len(choices) if isinstance(choices, list) else None)
     assert d["message_is_object"] is False
-    assert "private prose" not in text
+    assert "private prose" not in diagnostic_log.read_text()
 
 
 async def test_model_metadata_secret_and_unsafe_usage_are_not_logged(diagnostic_log):
@@ -154,9 +165,8 @@ async def test_model_metadata_secret_and_unsafe_usage_are_not_logged(diagnostic_
     payload["usage"] = {"prompt_tokens": 10**100, "completion_tokens": 4.5, "total_tokens": None}
     with pytest.raises(AnalystProviderError, match="Response model differs"):
         await generate(lambda _: httpx.Response(200, json=payload))
-    text = diagnostic_log.read_text()
-    d = json.loads(text)
+    d = _response_metadata_event(diagnostic_log)
     assert d["reported_model"] is None
     assert d["redacted_fields"] == ["reported_model"]
     assert d["usage"] == {"completion_tokens": 4.5}
-    assert SECRET not in text
+    assert SECRET not in diagnostic_log.read_text()

@@ -38,6 +38,8 @@ _URL = "https://api.aicredits.in/v1/chat/completions"
 _MAX_RESPONSE_BYTES = 2_000_000
 _MAX_ATTEMPTS = 3
 _BACKOFF_SECONDS = (1.0, 4.0)
+_MAX_LOGGED_KEY_NAMES = 32
+_MAX_LOGGED_KEY_NAME_LENGTH = 200
 
 
 def _json(value: object) -> str:
@@ -79,6 +81,23 @@ def _load(text: str | bytes) -> Any:
     )
 
 
+def _kind(value: object) -> str:
+    if value is None:
+        return "null"
+    return {
+        dict: "object",
+        list: "array",
+        str: "string",
+        bool: "boolean",
+        int: "number",
+        float: "number",
+    }.get(type(value), "unknown")
+
+
+def _bounded_key_names(keys: list[str]) -> list[str]:
+    return [key[:_MAX_LOGGED_KEY_NAME_LENGTH] for key in keys[:_MAX_LOGGED_KEY_NAMES]]
+
+
 def _response_diagnostics(
     payload: dict[str, Any], request_id: str | None, api_key: str
 ) -> dict[str, object]:
@@ -105,17 +124,7 @@ def _response_diagnostics(
         redacted.append(field)
         return None
 
-    def kind(value: object) -> str:
-        if value is None:
-            return "null"
-        return {
-            dict: "object",
-            list: "array",
-            str: "string",
-            bool: "boolean",
-            int: "number",
-            float: "number",
-        }.get(type(value), "unknown")
+    kind = _kind
 
     choices = payload.get("choices")
     first = choices[0] if isinstance(choices, list) and choices else None
@@ -191,6 +200,93 @@ def _transport_diagnostics(
         "root_cause_type": type(root).__name__ if root is not None else None,
         "os_errno": os_errno,
         "timeout": timeout,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+def _request_diagnostics(
+    body: dict[str, object],
+    rendered: str,
+    system_message: str,
+    user_message: str,
+    *,
+    model: str,
+    max_tokens: int,
+    evidence_item_count: int,
+) -> dict[str, object]:
+    """Sanitized size/count-only metadata about an outgoing request, emitted before
+    transport. Never logs system/user message text, evidence content, headers, tokens
+    or the credential - sizes and counts only.
+    """
+    tools = body.get("tools")
+    tool_count = len(tools) if isinstance(tools, list) else None
+    tool_schema_bytes = (
+        len(_json(tools[0]).encode("utf-8")) if isinstance(tools, list) and tools else None
+    )
+    messages = body.get("messages")
+    message_count = len(messages) if isinstance(messages, list) else None
+    return {
+        "event": "aicredits_request_metadata",
+        "schema_version": 1,
+        "serialized_request_bytes": len(rendered.encode("utf-8")),
+        "system_message_characters": len(system_message),
+        "user_message_characters": len(user_message),
+        "tool_schema_bytes": tool_schema_bytes,
+        "message_count": message_count,
+        "tool_count": tool_count,
+        "model": model,
+        "max_tokens": max_tokens,
+        "evidence_item_count": evidence_item_count,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+def _argument_structure_diagnostics(
+    parsed: object, arguments: object, *, strict_claims_shape_passed: bool
+) -> dict[str, object]:
+    """Sanitized shape-only metadata for decoded tool-call arguments, emitted after
+    JSON-decoding but before the strict shape check. Never logs argument values,
+    claim text, evidence, or any nested/arbitrary string content - key names only,
+    defensively bounded, and only ever for the one fixed, known-safe function name
+    already validated by the caller.
+    """
+    top_level_keys: list[str] | None = None
+    top_level_key_count: int | None = None
+    claims_present = False
+    claims_value_type: str | None = None
+    claims_item_count: int | None = None
+    wrapper_key_names: list[str] = []
+    wrapper_candidate_count = 0
+    if isinstance(parsed, dict):
+        keys = [key for key in parsed if isinstance(key, str)]
+        top_level_keys = _bounded_key_names(keys)
+        top_level_key_count = len(parsed)
+        claims_present = "claims" in parsed
+        if claims_present:
+            claims_value = parsed["claims"]
+            claims_value_type = _kind(claims_value)
+            if isinstance(claims_value, list):
+                claims_item_count = len(claims_value)
+        if len(parsed) == 1 and not claims_present:
+            wrapper_candidate_count = 1
+            wrapper_key_names = top_level_keys
+    parsed_is_list = isinstance(parsed, list)
+    return {
+        "event": "aicredits_argument_structure",
+        "schema_version": 1,
+        "parsed_top_level_type": _kind(parsed),
+        "top_level_key_names": top_level_keys,
+        "top_level_key_count": top_level_key_count,
+        "claims_key_present": claims_present,
+        "claims_value_type": claims_value_type,
+        "claims_item_count": claims_item_count,
+        "parsed_is_list": parsed_is_list,
+        "parsed_list_length": len(parsed) if isinstance(parsed, list) else None,
+        "wrapper_candidate_count": wrapper_candidate_count,
+        "wrapper_key_names": wrapper_key_names,
+        "function_name": _TOOL_NAME,
+        "arguments_character_length": len(arguments) if isinstance(arguments, str) else None,
+        "strict_claims_shape_passed": strict_claims_shape_passed,
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -278,6 +374,20 @@ class AICreditsAnalystModel:
             generation_parameters_sha256=_sha(_json(parameters)),
             rendered_text=rendered,
             rendered_sha256=_sha(rendered),
+        )
+        get_logger("aicredits").info(
+            "%s",
+            _json(
+                _request_diagnostics(
+                    body,
+                    rendered,
+                    _TRANSPORT_INSTRUCTIONS,
+                    bundle_text,
+                    model=self._model,
+                    max_tokens=tokens,
+                    evidence_item_count=len(model_input.items),
+                )
+            ),
         )
         timeout = httpx.Timeout(connect=10.0, read=self._timeout_seconds, write=10.0, pool=10.0)
         async with httpx.AsyncClient(
@@ -437,6 +547,22 @@ class AICreditsAnalystModel:
             raise AnalystProviderError(
                 "MALFORMED_ARGUMENTS", "Invalid function arguments"
             ) from None
+        get_logger("aicredits").info(
+            "%s",
+            _json(
+                _argument_structure_diagnostics(
+                    parsed,
+                    arguments,
+                    strict_claims_shape_passed=(
+                        isinstance(parsed, dict)
+                        and set(parsed) == {"claims"}
+                        and isinstance(parsed["claims"], list)
+                    ),
+                )
+            ),
+        )
+        # Unchanged from before diagnostics were added: exact original gate, inline so
+        # mypy's isinstance-narrowing on `parsed` still applies to the `return` below.
         if (
             not isinstance(parsed, dict)
             or set(parsed) != {"claims"}

@@ -27,6 +27,10 @@ def _read_events(path) -> list[dict]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+def _transport_events(path) -> list[dict]:
+    return [e for e in _read_events(path) if e["event"] == "aicredits_transport_error"]
+
+
 @pytest.mark.parametrize(
     "failure",
     [httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError],
@@ -46,7 +50,7 @@ async def test_non_timeout_transport_errors_emit_connection_failed_diagnostics(
     assert exc.value.code == "CONNECTION_FAILED"
     assert len(calls) == 3
 
-    events = _read_events(diagnostic_log)
+    events = _transport_events(diagnostic_log)
     assert len(events) == 3
     for i, event in enumerate(events):
         assert event["event"] == "aicredits_transport_error"
@@ -67,7 +71,7 @@ async def test_timeout_exception_remains_timeout_and_is_not_mislabeled(diagnosti
         await generate(handler)
 
     assert exc.value.code == "TIMEOUT"
-    events = _read_events(diagnostic_log)
+    events = _transport_events(diagnostic_log)
     assert len(events) == 3
     for event in events:
         assert event["event"] == "aicredits_transport_error"
@@ -82,7 +86,7 @@ async def test_diagnostic_survives_final_retry_failure(diagnostic_log):
     with pytest.raises(adapter.AnalystProviderError):
         await generate(handler)
 
-    events = _read_events(diagnostic_log)
+    events = _transport_events(diagnostic_log)
     final = events[-1]
     assert final["attempt_number"] == final["max_attempts"] == 3
     assert final["event"] == "aicredits_transport_error"
@@ -98,7 +102,7 @@ async def test_os_errno_and_cause_chain_are_captured_when_present(diagnostic_log
     with pytest.raises(adapter.AnalystProviderError):
         await generate(handler)
 
-    events = _read_events(diagnostic_log)
+    events = _transport_events(diagnostic_log)
     event = events[0]
     assert event["cause_type"] == "ConnectionRefusedError"
     assert event["root_cause_type"] == "ConnectionRefusedError"
@@ -115,7 +119,7 @@ async def test_no_secret_or_request_body_leakage(diagnostic_log):
     text = diagnostic_log.read_text()
     for forbidden in (SECRET, "Authorization", "Bearer", "claims"):
         assert forbidden not in text
-    for event in _read_events(diagnostic_log):
+    for event in _transport_events(diagnostic_log):
         assert set(event) == {
             "event",
             "schema_version",

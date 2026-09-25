@@ -163,6 +163,38 @@ def _response_diagnostics(
     return diagnostic
 
 
+def _transport_diagnostics(
+    exc: BaseException, attempt: int, max_attempts: int, *, timeout: bool
+) -> dict[str, object]:
+    """Sanitized shape-only diagnostics for a request that never received a response.
+
+    Deliberately excludes `str(exc)`: httpx transport-error messages are not a bounded,
+    audited shape the way the response-metadata diagnostic's fields are, so only class
+    names and (when present) a plain OSError.errno integer are captured.
+    """
+    cause = exc.__cause__
+    root = cause
+    while root is not None and root.__cause__ is not None:
+        root = root.__cause__
+    os_errno = None
+    for candidate in (exc, cause, root):
+        if isinstance(candidate, OSError) and isinstance(candidate.errno, int):
+            os_errno = candidate.errno
+            break
+    return {
+        "event": "aicredits_transport_error",
+        "schema_version": 1,
+        "attempt_number": attempt + 1,
+        "max_attempts": max_attempts,
+        "exception_type": type(exc).__name__,
+        "cause_type": type(cause).__name__ if cause is not None else None,
+        "root_cause_type": type(root).__name__ if root is not None else None,
+        "os_errno": os_errno,
+        "timeout": timeout,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
 class AICreditsAnalystModel:
     def __init__(
         self,
@@ -315,9 +347,17 @@ class AICreditsAnalystModel:
                             )
                     status = response.status_code
                     request_id = response.headers.get("x-request-id")
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
+                get_logger("aicredits").info(
+                    "%s",
+                    _json(_transport_diagnostics(exc, attempt, _MAX_ATTEMPTS, timeout=True)),
+                )
                 error = AnalystProviderError("TIMEOUT", "AI Credits request timed out")
-            except httpx.TransportError:
+            except httpx.TransportError as exc:
+                get_logger("aicredits").info(
+                    "%s",
+                    _json(_transport_diagnostics(exc, attempt, _MAX_ATTEMPTS, timeout=False)),
+                )
                 error = AnalystProviderError("CONNECTION_FAILED", "AI Credits connection failed")
             else:
                 if status == 200:

@@ -32,6 +32,7 @@ from stock_research_ai.domain.analysis import (
     RenderedModelRequest,
 )
 from stock_research_ai.domain.analyst_model_input import AnalystModelInput
+from stock_research_ai.logging_setup import get_logger
 
 _URL = "https://api.aicredits.in/v1/chat/completions"
 _MAX_RESPONSE_BYTES = 2_000_000
@@ -76,6 +77,90 @@ def _load(text: str | bytes) -> Any:
         parse_constant=_invalid_constant,
         parse_float=_finite_float,
     )
+
+
+def _response_diagnostics(
+    payload: dict[str, Any], request_id: str | None, api_key: str
+) -> dict[str, object]:
+    """Bounded shape metadata only, never content, arguments or arbitrary prose.
+
+    Emitted before semantic validation so exceptions cannot discard the evidence.
+    Strings must be short identifier tokens; rejected values become null and their
+    field names are recorded, distinguishing redaction from a provider null.
+    """
+    redacted: list[str] = []
+
+    def identifier(field: str, value: object) -> str | None:
+        if value is None:
+            return None
+        if (
+            isinstance(value, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", value)
+            and api_key not in value
+            and not re.search(
+                r"(?i)(authorization|bearer|api[_-]?key|pairing[_-]?token|^sk-)", value
+            )
+        ):
+            return value
+        redacted.append(field)
+        return None
+
+    def kind(value: object) -> str:
+        if value is None:
+            return "null"
+        return {
+            dict: "object",
+            list: "array",
+            str: "string",
+            bool: "boolean",
+            int: "number",
+            float: "number",
+        }.get(type(value), "unknown")
+
+    choices = payload.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    choice = first if isinstance(first, dict) else {}
+    message = choice.get("message")
+    msg = message if isinstance(message, dict) else {}
+    calls = msg.get("tool_calls")
+    first_call = calls[0] if isinstance(calls, list) and calls else None
+    call = first_call if isinstance(first_call, dict) else {}
+    function = call.get("function")
+    fn = function if isinstance(function, dict) else {}
+    arguments = fn.get("arguments")
+    usage = payload.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    diagnostic: dict[str, object] = {
+        "event": "aicredits_response_metadata",
+        "schema_version": 1,
+        "http_status": 200,
+        "response_id": identifier("response_id", payload.get("id")),
+        "request_id": identifier("request_id", request_id),
+        "reported_model": identifier("reported_model", payload.get("model")),
+        "choices_count": len(choices) if isinstance(choices, list) else None,
+        "choice_type": kind(first),
+        "message_is_object": isinstance(message, dict),
+        "message_gate_passed": isinstance(message, dict),
+        "finish_reason": identifier("finish_reason", choice.get("finish_reason")),
+        "finish_reason_gate_passed": choice.get("finish_reason") in (None, "tool_calls"),
+        "content_present": "content" in msg,
+        "content_type": kind(msg.get("content")),
+        "tool_calls_present": "tool_calls" in msg,
+        "tool_calls_type": kind(calls),
+        "tool_calls_count": len(calls) if isinstance(calls, list) else None,
+        "first_tool_call_type": identifier("first_tool_call_type", call.get("type")),
+        "first_function_name": identifier("first_function_name", fn.get("name")),
+        "arguments_present": "arguments" in fn,
+        "arguments_type": kind(arguments),
+        "arguments_length": len(arguments) if isinstance(arguments, str) else None,
+        "usage": {
+            key: usage[key]
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if type(usage.get(key)) in (int, float) and 0 <= usage[key] <= 2**53 - 1
+        },
+        "redacted_fields": redacted,
+    }
+    return diagnostic
 
 
 class AICreditsAnalystModel:
@@ -167,6 +252,9 @@ class AICreditsAnalystModel:
             transport=self._transport, timeout=timeout, trust_env=False, follow_redirects=False
         ) as client:
             payload, request_id = await self._post_with_retries(client, rendered)
+        get_logger("aicredits").info(
+            "%s", _json(_response_diagnostics(payload, request_id, self._api_key))
+        )
         reported_model = payload.get("model")
         # AI Credits may omit exactly this leading provider namespace in its echo.
         # Compare only; retain both original strings in request/response provenance.

@@ -4,9 +4,11 @@ Explicit field allowlists deliberately exclude nested input observations, siblin
 results, corpus pages and retrieval request parameters. No latest/search fallback.
 """
 
+import calendar
 import json
 from collections.abc import Iterable
 from dataclasses import replace
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -21,11 +23,45 @@ from stock_research_ai.application.hashing import digest
 from stock_research_ai.domain.analysis import AnstInputBundle, EvidenceReference
 from stock_research_ai.domain.analyst_model_input import AnalystModelEvidence, AnalystModelInput
 from stock_research_ai.domain.calculations import CalculationResult
+from stock_research_ai.domain.financial import FinancialPeriod
 
-MAX_INPUT_BYTES = 2_097_152
-MAX_ITEMS = 2000
-MAX_DOCUMENT_CHUNKS = 32
+MAX_INPUT_BYTES = 400_000
+MAX_ITEMS = 300
+MAX_DOCUMENT_CHUNKS = 16
 MAX_DOCUMENT_CHUNK_BYTES = 16_384
+
+#: Conservative input-budget selection (Part 6D): recency caps applied per financial
+#: sub-category before the byte/item ceilings are enforced. Not configurable at
+#: runtime - a fixed, deterministic, auditable policy, matching the rest of this
+#: module's "no config surface for evidence shape" convention.
+_ANNUAL_PERIOD_CAP = 5
+_QUARTERLY_PERIOD_CAP = 8
+_SHAREHOLDING_PERIOD_CAP = 4
+#: Floors (Part 6D-3): reserved *before* any family expands past them, so
+#: profit_loss/quarterly cannot exhaust the budget before balance_sheet, cashflow
+#: and ratios get any representation at all.
+_ANNUAL_FLOOR_PERIODS = 2
+_QUARTERLY_FLOOR_PERIODS = 4
+_ANNUAL_FAMILY_ORDER = ("profit_loss", "balance_sheet", "cashflow", "ratios")
+_FINANCIAL_CATEGORY_ORDER = (
+    "top_metrics",
+    "profit_loss",
+    "quarterly",
+    "balance_sheet",
+    "cashflow",
+    "ratios",
+)
+_CALCULATION_LIKE_KINDS = frozenset(
+    {"FINANCIAL_CALCULATION", "SECTOR_KPI", "MARKET_CALCULATION", "VALUATION", "PATTERN"}
+)
+#: Selection targets a margin below MAX_INPUT_BYTES because the final serialized
+#: payload also carries per-item wrapper fields (reference/status/epistemic_class/
+#: limitations) and a second copy of every reference inside `bundle.sources` -
+#: overhead this estimate approximates via _SELECTION_ITEM_OVERHEAD_BYTES rather than
+#: fully re-deriving. serialize_model_input's own exact byte check remains the
+#: authoritative final guard regardless of this estimate's accuracy.
+_SELECTION_BYTE_TARGET_RATIO = 0.85
+_SELECTION_ITEM_OVERHEAD_BYTES = 700
 
 # Fields are copied from already normalized/calculated records, never recalculated.
 _RESULT_FIELDS = {
@@ -205,6 +241,288 @@ def _content(ref: EvidenceReference, evidence: ResolvedEvidence) -> dict[str, An
             ),
         }
     raise ModelInputError("Unsupported evidence kind")
+
+
+def _stable_sorted(refs: list[EvidenceReference]) -> list[EvidenceReference]:
+    return sorted(refs, key=lambda r: (r.kind, str(r.owning_snapshot_id), r.item_key or ""))
+
+
+def _parsed_fiscal_label_date(fiscal_label: str) -> date | None:
+    """Some evidence kinds (e.g. shareholding, sourced from screener.in) never carry
+    a `FinancialPeriod.end_date` at all - only a "Mon YYYY" fiscal_label. Without
+    parsing it, every such period ties on end_date and recency ordering silently
+    falls back to insertion order, which traces back to a UUID-keyed sort - exactly
+    the arbitrary, non-domain-relevant ordering this module must not depend on."""
+    try:
+        parsed = datetime.strptime(fiscal_label.strip(), "%b %Y")
+    except ValueError:
+        return None
+    last_day = calendar.monthrange(parsed.year, parsed.month)[1]
+    return date(parsed.year, parsed.month, last_day)
+
+
+def _resolved_period_date(identity: tuple[date | None, str]) -> date | None:
+    end_date, fiscal_label = identity
+    return end_date or _parsed_fiscal_label_date(fiscal_label)
+
+
+def _period_identity_key(identity: tuple[date | None, str]) -> tuple[bool, date]:
+    """Most-recent-first ordering. A period resolving to no date at all (e.g. "TTM",
+    which has no end_date and no parseable fiscal_label) is treated as the most
+    current available and ranks above every dated period."""
+    resolved = _resolved_period_date(identity)
+    return (resolved is None, resolved or date.min)
+
+
+def _group_by_period(
+    refs: list[EvidenceReference], period_by_item: dict[str, FinancialPeriod]
+) -> list[list[EvidenceReference]]:
+    """Group refs sharing a financial period, most-recent period first. Each returned
+    group is later admitted atomically - all of a period's observations, or none -
+    so no period is ever represented by an arbitrary subset of its own metrics."""
+    groups: dict[tuple[date | None, str], list[EvidenceReference]] = {}
+    for ref in refs:
+        key = ref.item_key
+        if key is None or key not in period_by_item:
+            continue
+        period = period_by_item[key]
+        groups.setdefault((period.end_date, period.fiscal_label), []).append(ref)
+    ordered_identities = sorted(groups, key=_period_identity_key, reverse=True)
+    return [_stable_sorted(groups[identity]) for identity in ordered_identities]
+
+
+#: Document chunks admitted before FINANCIAL's full recency expansion (Part 6D-2),
+#: so document evidence cannot be crowded out purely because financial history is
+#: large. Capped at MAX_DOCUMENT_CHUNKS regardless.
+_DOCUMENT_CHUNK_FLOOR = 6
+
+
+def select_bounded_sources(
+    sources: tuple[EvidenceReference, ...], evidence: ResolvedEvidence
+) -> tuple[EvidenceReference, ...]:
+    """Deterministically bound the analyst-facing evidence universe to
+    MAX_INPUT_BYTES/MAX_ITEMS/MAX_DOCUMENT_CHUNKS, favoring decision-relevant and
+    recent evidence over exhaustive history. Every reference is kept whole or dropped
+    whole - never partially included - and every kept reference is untouched, so
+    citations against it remain exactly as resolvable as before.
+
+    Reserved category budgeting (Part 6D-2/6D-3): a pure priority-ordered greedy fill
+    lets financial history (hundreds of similarly-cheap observations) exhaust the
+    byte budget before lower-priority categories - SHAREHOLDING and DOCUMENT_CHUNK -
+    are ever reached; and *within* financial history, profit_loss/quarterly (admitted
+    first) can just as easily exhaust it before balance_sheet/cashflow/ratios ever
+    get a look in. Both are the same bug at different scopes, so both get the same
+    fix: a cheap mandatory floor for every category/family that must never be
+    entirely starved, admitted before anything expands past its own floor.
+
+    Phase 1 floors, in this exact priority order (also the documented fallback order
+    if the hard ceiling cannot fit them all): company; all calculations/valuations;
+    top_metrics; one latest period each of profit_loss, balance_sheet, cashflow,
+    quarterly, ratios (in that order); one latest shareholding period;
+    up to _DOCUMENT_CHUNK_FLOOR document chunks. Phase 1B then completes each
+    family's own declared floor round-robin - annual families (profit_loss,
+    balance_sheet, cashflow, ratios) each to _ANNUAL_FLOOR_PERIODS periods one
+    family at a time per round, then quarterly to _QUARTERLY_FLOOR_PERIODS quarters -
+    so no single family's floor completes before the others' floors even start.
+
+    Only after every floor is settled does phase 2 expand toward full targets:
+    shareholding to _SHAREHOLDING_PERIOD_CAP periods, documents to
+    MAX_DOCUMENT_CHUNKS, and finally financial history - again round-robin by period
+    depth across the four annual families before quarterly's remaining quarters -
+    toward _ANNUAL_PERIOD_CAP/_QUARTERLY_PERIOD_CAP. Financial history only ever
+    consumes what the other categories' targets did not need, and no annual family
+    is ever fully expanded while another still sits at its floor.
+
+    Within any financial or shareholding period, every observation for that period
+    is admitted atomically (all of it, or none) - a period is never represented by
+    an arbitrary subset of its own metrics. Document chunks are ordered for
+    admission by their place in the source document (page, then ordinal) - not by
+    chunk UUID, which carries no relationship to reading order or importance.
+
+    Used only when assembling the bundle that feeds the analyst model
+    (`assemble_bundle`). `build_source_references` itself stays exhaustive - the
+    challenge stage's fresh-evidence re-verification needs the full universe, not
+    this budget-constrained subset.
+    """
+    financial = evidence.financial
+    category_by_item: dict[str, str] = {}
+    period_by_item: dict[str, FinancialPeriod] = {}
+    if financial is not None:
+        for category in _FINANCIAL_CATEGORY_ORDER:
+            for observation in getattr(financial, category):
+                key = str(observation.id)
+                category_by_item[key] = category
+                period_by_item[key] = observation.period
+        for holding in financial.shareholding.holdings:
+            period_by_item[str(holding.observation.id)] = holding.observation.period
+        for count in financial.shareholding.shareholder_counts:
+            period_by_item[str(count.id)] = count.period
+
+    # (page_number, ordinal): a chunk's place in its source document - real reading
+    # order, unlike its UUID, which is used nowhere in this function for ordering.
+    chunk_order_by_item: dict[str, tuple[int, int]] = {}
+    for document in evidence.documents.values():
+        for chunk in document.chunks:
+            chunk_order_by_item[str(chunk.id)] = (chunk.page_number, chunk.ordinal)
+
+    company_refs: list[EvidenceReference] = []
+    financial_refs: dict[str, list[EvidenceReference]] = {c: [] for c in _FINANCIAL_CATEGORY_ORDER}
+    shareholding_refs: list[EvidenceReference] = []
+    calculation_refs: list[EvidenceReference] = []
+    document_refs: list[EvidenceReference] = []
+    other_refs: list[EvidenceReference] = []
+
+    for ref in sources:
+        if ref.kind == "COMPANY":
+            company_refs.append(ref)
+        elif ref.kind == "FINANCIAL":
+            matched_category = category_by_item.get(ref.item_key or "")
+            if matched_category in financial_refs:
+                financial_refs[matched_category].append(ref)
+        elif ref.kind == "SHAREHOLDING":
+            shareholding_refs.append(ref)
+        elif ref.kind in _CALCULATION_LIKE_KINDS:
+            calculation_refs.append(ref)
+        elif ref.kind == "DOCUMENT_CHUNK":
+            document_refs.append(ref)
+        else:
+            other_refs.append(ref)
+
+    def document_reading_order(refs: list[EvidenceReference]) -> list[EvidenceReference]:
+        return sorted(
+            refs,
+            key=lambda r: (
+                str(r.owning_snapshot_id),
+                chunk_order_by_item.get(r.item_key or "", (0, 0)),
+                r.item_key or "",
+            ),
+        )
+
+    profit_loss_periods = _group_by_period(financial_refs["profit_loss"], period_by_item)
+    quarterly_periods = _group_by_period(financial_refs["quarterly"], period_by_item)
+    balance_sheet_periods = _group_by_period(financial_refs["balance_sheet"], period_by_item)
+    cashflow_periods = _group_by_period(financial_refs["cashflow"], period_by_item)
+    ratios_periods = _group_by_period(financial_refs["ratios"], period_by_item)
+    shareholding_periods = _group_by_period(shareholding_refs, period_by_item)
+    document_candidates = document_reading_order(document_refs)
+    document_floor = document_candidates[:_DOCUMENT_CHUNK_FLOOR]
+    document_target_extra = document_candidates[_DOCUMENT_CHUNK_FLOOR:MAX_DOCUMENT_CHUNKS]
+
+    selected: list[EvidenceReference] = []
+    selected_ids: set[tuple[str, str, str]] = set()
+    running_bytes = 0
+    running_items = 0
+    target_bytes = int(MAX_INPUT_BYTES * _SELECTION_BYTE_TARGET_RATIO)
+
+    def ref_id(r: EvidenceReference) -> tuple[str, str, str]:
+        return (r.kind, str(r.owning_snapshot_id), r.item_key or "")
+
+    def admit_group(group: list[EvidenceReference]) -> bool:
+        """Admit an entire group (a financial/shareholding period, or a single
+        standalone reference) atomically. Returns whether it was admitted - callers
+        that need graceful degradation simply ignore a False and move on, which is
+        exactly the "skip cleanly" behavior the byte ceiling requires."""
+        nonlocal running_bytes, running_items
+        new_refs = [r for r in group if ref_id(r) not in selected_ids]
+        if not new_refs:
+            return True
+        sizes = [
+            len(_json(_content(r, evidence)).encode("utf-8")) + _SELECTION_ITEM_OVERHEAD_BYTES
+            for r in new_refs
+        ]
+        total = sum(sizes)
+        if running_items + len(new_refs) > MAX_ITEMS or running_bytes + total > target_bytes:
+            return False
+        for r in new_refs:
+            selected.append(r)
+            selected_ids.add(ref_id(r))
+        running_bytes += total
+        running_items += len(new_refs)
+        return True
+
+    def admit_each(refs: list[EvidenceReference]) -> None:
+        for r in refs:
+            admit_group([r])
+
+    def admit_periods(groups: list[list[EvidenceReference]]) -> None:
+        for group in groups:
+            admit_group(group)
+
+    annual_periods_by_family = {
+        "profit_loss": profit_loss_periods,
+        "balance_sheet": balance_sheet_periods,
+        "cashflow": cashflow_periods,
+        "ratios": ratios_periods,
+    }
+
+    def admit_annual_depth(depth: int) -> None:
+        """One round-robin pass at a given period depth (0 = latest) across all four
+        annual families, in _ANNUAL_FAMILY_ORDER - so completing one family's floor
+        or target never precedes even starting the others' at the same depth."""
+        for family in _ANNUAL_FAMILY_ORDER:
+            periods = annual_periods_by_family[family]
+            if depth < len(periods):
+                admit_group(periods[depth])
+
+    def admit_quarterly_depth(depth: int) -> None:
+        if depth < len(quarterly_periods):
+            admit_group(quarterly_periods[depth])
+
+    # --- Phase 1: mandatory single-period floors, exact documented fallback order -
+    # A. COMPANY
+    admit_group(_stable_sorted(company_refs))
+    # B. calculation/valuation/sector-KPI/market-calculation/pattern - retain all
+    # unless impossible under the hard ceiling.
+    admit_group(_stable_sorted(calculation_refs))
+    # Cheap, high-value, non-historical snapshot metrics - always attempted early.
+    admit_group(_stable_sorted(financial_refs["top_metrics"]))
+    # Latest period of each annual family, in _ANNUAL_FAMILY_ORDER, before quarterly/
+    # ratios/shareholding/documents - matches the documented fallback priority.
+    for family in ("profit_loss", "balance_sheet", "cashflow"):
+        periods = annual_periods_by_family[family]
+        if periods:
+            admit_group(periods[0])
+    if quarterly_periods:
+        admit_group(quarterly_periods[0])
+    ratios_first = annual_periods_by_family["ratios"]
+    if ratios_first:
+        admit_group(ratios_first[0])
+    # C floor: the latest shareholding period must always be represented.
+    if shareholding_periods:
+        admit_group(shareholding_periods[0])
+    # D floor: at least _DOCUMENT_CHUNK_FLOOR document chunks when that many exist.
+    admit_each(document_floor)
+
+    # --- Phase 1B: complete each family's own declared floor, round-robin ---------
+    # Annual families to _ANNUAL_FLOOR_PERIODS (depth 0 already admitted above).
+    for depth in range(1, _ANNUAL_FLOOR_PERIODS):
+        admit_annual_depth(depth)
+    # Quarterly to _QUARTERLY_FLOOR_PERIODS (depth 0 already admitted above).
+    for depth in range(1, _QUARTERLY_FLOOR_PERIODS):
+        admit_quarterly_depth(depth)
+
+    # --- Phase 2: target expansion, in this exact priority order ------------------
+    # C target: up to _SHAREHOLDING_PERIOD_CAP periods total (period 0 already
+    # admitted above, if it fit).
+    admit_periods(shareholding_periods[1:_SHAREHOLDING_PERIOD_CAP])
+    # D target: up to MAX_DOCUMENT_CHUNKS total.
+    admit_each(document_target_extra)
+    # E target: full recency windows, round-robin by depth across the four annual
+    # families before quarterly's remaining quarters - only now, after shareholding/
+    # document targets, so financial history cannot crowd them out first, and no
+    # single annual family fully expands while another still sits at its floor.
+    for depth in range(_ANNUAL_FLOOR_PERIODS, _ANNUAL_PERIOD_CAP):
+        admit_annual_depth(depth)
+    for depth in range(_QUARTERLY_FLOOR_PERIODS, _QUARTERLY_PERIOD_CAP):
+        admit_quarterly_depth(depth)
+    # F. Everything else (market/technical/publication/macro), deterministic order,
+    # subject to whatever budget remains.
+    admit_each(_stable_sorted(other_refs))
+
+    def canonical_key(r: EvidenceReference) -> tuple[str, str, str]:
+        return (r.kind, str(r.owning_snapshot_id), r.item_key or "")
+
+    return tuple(sorted(selected, key=canonical_key))
 
 
 def serialize_model_input(bundle: AnstInputBundle, model_input: AnalystModelInput) -> str:

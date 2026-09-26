@@ -21,7 +21,7 @@ from stock_research_ai.adapters.analyst_contract import (
     _TRANSPORT_INSTRUCTIONS,
     AnalystProviderError,
 )
-from stock_research_ai.application.analyst_model_input import serialize_model_input
+from stock_research_ai.application.analyst_model_input import MAX_INPUT_BYTES, serialize_model_input
 from stock_research_ai.application.hashing import digest
 from stock_research_ai.domain.analysis import (
     AnalystExecutionSpec,
@@ -204,6 +204,35 @@ def _transport_diagnostics(
     }
 
 
+_RETRYABLE_ERROR_CODES = frozenset({"RATE_LIMITED", "PROVIDER_UNAVAILABLE"})
+
+
+def _http_error_diagnostics(
+    status: int,
+    mapped_error_code: str,
+    attempt: int,
+    max_attempts: int,
+    response_headers: "httpx.Headers",
+) -> dict[str, object]:
+    """Sanitized shape-only diagnostics for a non-200 AI Credits HTTP response.
+
+    Never logs the response body, arbitrary provider error prose, or any header
+    beyond the two safe, bounded metadata values named below.
+    """
+    return {
+        "event": "aicredits_http_error",
+        "schema_version": 1,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "http_status": status,
+        "mapped_error_code": mapped_error_code,
+        "attempt_number": attempt + 1,
+        "max_attempts": max_attempts,
+        "retryable": mapped_error_code in _RETRYABLE_ERROR_CODES,
+        "response_content_type": response_headers.get("content-type"),
+        "response_content_length": response_headers.get("content-length"),
+    }
+
+
 def _request_diagnostics(
     body: dict[str, object],
     rendered: str,
@@ -237,6 +266,9 @@ def _request_diagnostics(
         "model": model,
         "max_tokens": max_tokens,
         "evidence_item_count": evidence_item_count,
+        "selected_evidence_item_count": evidence_item_count,
+        "input_budget_bytes": MAX_INPUT_BYTES,
+        "budget_bytes_used": len(user_message.encode("utf-8")),
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -457,6 +489,7 @@ class AICreditsAnalystModel:
                             )
                     status = response.status_code
                     request_id = response.headers.get("x-request-id")
+                    response_headers = response.headers
             except httpx.TimeoutException as exc:
                 get_logger("aicredits").info(
                     "%s",
@@ -483,8 +516,16 @@ class AICreditsAnalystModel:
                         )
                     return payload, request_id
                 code = self._error_code(status, bytes(content))
+                get_logger("aicredits").info(
+                    "%s",
+                    _json(
+                        _http_error_diagnostics(
+                            status, code, attempt, _MAX_ATTEMPTS, response_headers
+                        )
+                    ),
+                )
                 error = AnalystProviderError(code, f"AI Credits HTTP {status}")
-                if code not in ("RATE_LIMITED", "PROVIDER_UNAVAILABLE"):
+                if code not in _RETRYABLE_ERROR_CODES:
                     raise error
             if attempt == _MAX_ATTEMPTS - 1:
                 raise error from None

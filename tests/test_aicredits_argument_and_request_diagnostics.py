@@ -189,6 +189,9 @@ async def test_request_metadata_logs_only_sizes_and_counts_never_content(diagnos
         "model",
         "max_tokens",
         "evidence_item_count",
+        "selected_evidence_item_count",
+        "input_budget_bytes",
+        "budget_bytes_used",
         "timestamp",
     }
     assert event["serialized_request_bytes"] == len(captured[0].content)
@@ -197,6 +200,9 @@ async def test_request_metadata_logs_only_sizes_and_counts_never_content(diagnos
     assert isinstance(event["tool_schema_bytes"], int) and event["tool_schema_bytes"] > 0
     assert event["message_count"] == 2
     assert event["tool_count"] == 1
+    assert event["selected_evidence_item_count"] == event["evidence_item_count"]
+    assert event["input_budget_bytes"] == 400_000
+    assert event["budget_bytes_used"] == len(user_message.encode("utf-8"))
     assert event["model"] == MODEL
     assert event["max_tokens"] == 4096
     assert isinstance(event["evidence_item_count"], int)

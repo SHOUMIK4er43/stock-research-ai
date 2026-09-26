@@ -750,7 +750,13 @@ def _valuation_scenario_label(evidence: ResolvedEvidence, ref: EvidenceReference
 
 
 def assemble_bundle(request: AnalysisRequest, evidence: ResolvedEvidence) -> AnstInputBundle:
-    sources = build_source_references(request, evidence)
+    # Deferred import: analyst_model_input imports from this module at load time, so
+    # the reverse reference must resolve at call time, not at import time. Bounding is
+    # applied only here (the analyst-facing bundle) - build_source_references itself
+    # stays exhaustive for the challenge stage's fresh-evidence re-verification.
+    from stock_research_ai.application.analyst_model_input import select_bounded_sources
+
+    sources = select_bounded_sources(build_source_references(request, evidence), evidence)
     coverage = compute_section_coverage(request.sections, sources, evidence)
     return AnstInputBundle(
         bundle_id=uuid4(),

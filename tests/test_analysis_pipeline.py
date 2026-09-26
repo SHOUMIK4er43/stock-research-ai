@@ -716,7 +716,11 @@ async def test_r1_projection_budget_failure_precedes_model_and_persistence(
             pytest.fail("Projection failure must precede the model call")
 
     settings, _, _, _, request, execution = world
-    monkeypatch.setattr(analyst_model_input, "MAX_ITEMS", 0)
+    # MAX_ITEMS=0 no longer forces this: the conservative input budget (Part 6D)
+    # selects evidence down to fit rather than erroring when the ceiling is small -
+    # an empty/near-empty selection still can't satisfy an unreasonably tiny byte
+    # ceiling, which is what actually remains the authoritative final guard.
+    monkeypatch.setattr(analyst_model_input, "MAX_INPUT_BYTES", 1)
     with pytest.raises(ModelInputError, match="budget"):
         await analyze_company(settings, request, execution, tmp_path / "out",
                               model=MustNotRun(), provider_kind="FAKE")

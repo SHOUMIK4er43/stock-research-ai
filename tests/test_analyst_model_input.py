@@ -3,6 +3,7 @@
 import hashlib
 import json
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
@@ -29,9 +30,31 @@ def content(item):
     return json.loads(item.content_json)
 
 
+def _canonical_sort_key(r):
+    return (r.kind, str(r.owning_snapshot_id), r.item_key or "")
+
+
 async def test_actual_document_content_reaches_anthropic_request(world):
     """Initially fails against the frozen adapter: it sends references but no passage."""
+    from stock_research_ai.application.analysis import build_source_references
+    from stock_research_ai.application.analyst_model_input import build_model_input
+
     *_, document, bundle, evidence = world
+    # The conservative default budget (Part 6D) may not retain every kind this test
+    # checks (document chunk, a specific profit_loss period, the calculation result)
+    # together for this fixture's evidence volume - build an explicit bundle that
+    # keeps exactly the references this test needs, from the exhaustive enumeration.
+    observation = max(
+        (o for o in world[0].profit_loss if o.value is not None),
+        key=lambda o: (o.period.end_date is None, o.period.end_date or date.min),
+    )
+    exhaustive = build_source_references(bundle.request, evidence)
+    needed_kinds = {"DOCUMENT_CHUNK", "FINANCIAL_CALCULATION"}
+    refs = [r for r in exhaustive if r.kind in needed_kinds]
+    refs.append(next(r for r in exhaustive if r.item_key == str(observation.id)))
+    bundle = bundle.model_copy(
+        update={"sources": tuple(sorted(set(refs), key=_canonical_sort_key))}
+    )
     captured = []
 
     def handler(request):
@@ -50,7 +73,7 @@ async def test_actual_document_content_reaches_anthropic_request(world):
     metadata = await adapter.generate(
         bundle,
         AnalystExecutionSpec(template_id="r1-test", template_version=1),
-        model_input=project(world),
+        model_input=build_model_input(bundle, evidence),
     )
     wire = captured[0]["messages"][0]["content"]
     assert json.dumps(document.chunks[0].text) in wire
@@ -61,7 +84,6 @@ async def test_actual_document_content_reaches_anthropic_request(world):
         == hashlib.sha256(metadata.request.rendered_text.encode()).hexdigest()
     )
     actual_items = json.loads(wire)["model_input"]["items"]
-    observation = next(o for o in world[0].profit_loss if o.value is not None)
     actual = next(
         i["content"] for i in actual_items if i["reference"]["item_key"] == str(observation.id)
     )
@@ -78,7 +100,12 @@ async def test_actual_document_content_reaches_anthropic_request(world):
 
 async def test_financial_value_period_unit_scope_and_locator(world):
     source, *rest = world
-    observation = next(o for o in source.profit_loss if o.value is not None)
+    # Most-recent by period so this survives the conservative default budget's
+    # (Part 6D) recency windowing regardless of this fixture's period ordering.
+    observation = max(
+        (o for o in source.profit_loss if o.value is not None),
+        key=lambda o: (o.period.end_date is None, o.period.end_date or date.min),
+    )
     item = next(i for i in project(world).items if i.reference.item_key == str(observation.id))
     payload = content(item)
     assert payload["value"] == str(observation.value)
@@ -103,10 +130,16 @@ async def test_calculation_result_and_valuation_reach_projection(world):
 
 
 async def test_only_selected_document_chunk_is_visible(world):
+    from stock_research_ai.application.analysis import build_source_references
     from stock_research_ai.application.analyst_model_input import build_model_input
 
     _, _, _, document, bundle, evidence = world
-    selected = next(r for r in bundle.sources if r.kind == "DOCUMENT_CHUNK")
+    # The conservative default budget (Part 6D) may exclude DOCUMENT_CHUNK from
+    # bundle.sources for this fixture's evidence volume; the exhaustive enumeration
+    # still has it, and that's all a deliberately-narrowed bundle needs here.
+    selected = next(
+        r for r in build_source_references(bundle.request, evidence) if r.kind == "DOCUMENT_CHUNK"
+    )
     narrow = bundle.model_copy(update={"sources": (selected,)})
     result = build_model_input(narrow, evidence)
     assert len(result.items) == 1
@@ -205,6 +238,7 @@ async def test_unresolvable_or_changed_pins_fail_closed(world, fault):
 @pytest.mark.parametrize("limit", ["bytes", "items", "chunks", "chunk_bytes"])
 async def test_budget_overflow_fails_without_truncation(world, limit, monkeypatch):
     from stock_research_ai.application import analyst_model_input as projection
+    from stock_research_ai.application.analysis import build_source_references
 
     names = {
         "bytes": "MAX_INPUT_BYTES",
@@ -214,6 +248,17 @@ async def test_budget_overflow_fails_without_truncation(world, limit, monkeypatc
     }
     monkeypatch.setattr(projection, names[limit], 1 if limit != "chunks" else 0)
     *_, bundle, evidence = world
+    if limit in ("chunks", "chunk_bytes"):
+        # The conservative default budget (Part 6D) may already exclude document
+        # chunks from `bundle.sources` for this fixture's evidence volume - force one
+        # back in so this test's monkeypatched, too-small chunk limit has a chunk to
+        # reject in the first place.
+        doc_ref = next(
+            r
+            for r in build_source_references(bundle.request, evidence)
+            if r.kind == "DOCUMENT_CHUNK"
+        )
+        bundle = bundle.model_copy(update={"sources": (doc_ref,)})
     with pytest.raises(projection.ModelInputError, match="budget"):
         projection.build_model_input(bundle, evidence)
 
@@ -239,11 +284,22 @@ async def test_adapter_rejects_projection_for_different_bundle_before_transport(
 async def test_projection_does_not_authorize_unsupported_claims(world, fault):
     from test_analysis import citation_dict
 
+    from stock_research_ai.application.analysis import build_source_references
     from stock_research_ai.application.analysis_validation import validate_candidate
 
     *_, bundle, evidence = world
-    project(world)
-    ref = next(r for r in bundle.sources if r.kind == "DOCUMENT_CHUNK")
+    # The conservative default budget (Part 6D) may exclude DOCUMENT_CHUNK from
+    # bundle.sources for this fixture's evidence volume; force it back in so the
+    # citation this test builds is actually inside the frozen bundle, keeping the
+    # citation/numeric/quote fault paths (not "citation outside the bundle") the
+    # thing under test.
+    ref = next(
+        r for r in build_source_references(bundle.request, evidence) if r.kind == "DOCUMENT_CHUNK"
+    )
+    if ref not in bundle.sources:
+        bundle = bundle.model_copy(
+            update={"sources": tuple(sorted((*bundle.sources, ref), key=_canonical_sort_key))}
+        )
     candidate = dict(
         section="MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
         statement="Management commentary is available.",
@@ -308,9 +364,16 @@ async def test_all_evidence_kinds_resolve_only_selected_items(world, tmp_path):
             "macro_snapshot_lookups": ((macro_snapshot.id, "2025-01"),),
         }
     )
+    from stock_research_ai.application.analysis import build_source_references
+
     full = assemble_bundle(request, extra)
+    # Pick one reference per kind from the exhaustive (unbudgeted) enumeration: the
+    # conservative input budget (Part 6D) may not retain every kind in full.sources
+    # for this fixture's evidence volume, but this test only needs one valid
+    # reference per kind to prove each kind's content shape resolves correctly.
+    exhaustive = build_source_references(request, extra)
     refs = tuple(
-        next(r for r in full.sources if r.kind == kind) for kind in sorted(get_args(EvidenceKind))
+        next(r for r in exhaustive if r.kind == kind) for kind in sorted(get_args(EvidenceKind))
     )
     narrow = full.model_copy(update={"sources": refs})
     result = build_model_input(narrow, extra)
@@ -353,12 +416,18 @@ async def test_duplicate_pinned_item_fails_closed(world):
     from stock_research_ai.application.analyst_model_input import ModelInputError, build_model_input
 
     source, _, _, _, bundle, evidence = world
+    # top_metrics is never recency-windowed by the conservative input budget (Part
+    # 6D), unlike profit_loss/quarterly/etc. - duplicating there guarantees the
+    # pathological item still reaches selection regardless of budget/recency choices.
     changed = source.model_copy(
-        update={"profit_loss": (*source.profit_loss, source.profit_loss[0])}
+        update={"top_metrics": (*source.top_metrics, source.top_metrics[0])}
     )
     local = replace(evidence, financial=changed)
-    frozen = assemble_bundle(bundle.request, local)
+    # The ambiguity can now surface as early as bundle assembly itself (Part 6D's
+    # selection step also resolves each candidate's content), not only at
+    # build_model_input - either is an acceptable "fails closed" outcome.
     with pytest.raises(ModelInputError, match="exactly once"):
+        frozen = assemble_bundle(bundle.request, local)
         build_model_input(frozen, local)
 
 

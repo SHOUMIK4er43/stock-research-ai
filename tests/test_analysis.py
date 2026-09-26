@@ -186,8 +186,31 @@ def valuation_ref(bundle):
     return next(r for r in bundle.sources if r.kind == "VALUATION")
 
 
-def chunk_ref(bundle):
-    return next(r for r in bundle.sources if r.kind == "DOCUMENT_CHUNK")
+def chunk_ref(bundle, evidence):
+    """Returns (ref, bundle): widens bundle.sources to include a DOCUMENT_CHUNK
+    reference if the conservative default input budget (Part 6D) excluded it for
+    this fixture's evidence volume - callers need it actually present in
+    bundle.sources for citation validation, not merely resolvable in the abstract.
+    """
+    from stock_research_ai.application.analysis import build_source_references
+
+    existing = next((r for r in bundle.sources if r.kind == "DOCUMENT_CHUNK"), None)
+    if existing is not None:
+        return existing, bundle
+    ref = next(
+        r for r in build_source_references(bundle.request, evidence) if r.kind == "DOCUMENT_CHUNK"
+    )
+    widened = bundle.model_copy(
+        update={
+            "sources": tuple(
+                sorted(
+                    (*bundle.sources, ref),
+                    key=lambda r: (r.kind, str(r.owning_snapshot_id), r.item_key or ""),
+                )
+            )
+        }
+    )
+    return ref, widened
 
 
 def citation_dict(ref):
@@ -431,7 +454,7 @@ async def test_same_statement_allowed_for_it_profile(world):
 
 async def test_exact_management_quote_accepted(world):
     *_, document, bundle, evidence = world
-    ref = chunk_ref(bundle)
+    ref, bundle = chunk_ref(bundle, evidence)
     text = document.chunks[0].text
     quote = text[:20].strip()
     assert quote
@@ -450,7 +473,7 @@ async def test_exact_management_quote_accepted(world):
 
 async def test_altered_management_quote_rejected(world):
     *_, bundle, evidence = world
-    ref = chunk_ref(bundle)
+    ref, bundle = chunk_ref(bundle, evidence)
     candidate = dict(
         section="MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
         statement="Management noted strong demand.",
@@ -467,7 +490,7 @@ async def test_altered_management_quote_rejected(world):
 
 async def test_paraphrase_is_ordinary_interpretation_not_a_management_statement(world):
     *_, bundle, evidence = world
-    ref = chunk_ref(bundle)
+    ref, bundle = chunk_ref(bundle, evidence)
     candidate = dict(
         section="MANAGEMENT_AND_DOCUMENT_INTELLIGENCE",
         statement="Management commentary attributes revenue growth to client demand.",

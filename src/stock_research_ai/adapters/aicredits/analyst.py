@@ -274,13 +274,20 @@ def _request_diagnostics(
 
 
 def _argument_structure_diagnostics(
-    parsed: object, arguments: object, *, strict_claims_shape_passed: bool
+    parsed: object,
+    arguments: object,
+    *,
+    strict_claims_shape_passed: bool,
+    claims_string_normalized: bool,
 ) -> dict[str, object]:
     """Sanitized shape-only metadata for decoded tool-call arguments, emitted after
-    JSON-decoding but before the strict shape check. Never logs argument values,
-    claim text, evidence, or any nested/arbitrary string content - key names only,
-    defensively bounded, and only ever for the one fixed, known-safe function name
-    already validated by the caller.
+    JSON-decoding (and, if applicable, the one-time stringified-claims compatibility
+    normalization below) but before the strict shape check. Never logs argument
+    values, claim text, evidence, or any nested/arbitrary string content - key names
+    only, defensively bounded, and only ever for the one fixed, known-safe function
+    name already validated by the caller. `parsed` here reflects the
+    post-normalization value, so these fields describe exactly what the strict gate
+    below actually evaluates.
     """
     top_level_keys: list[str] | None = None
     top_level_key_count: int | None = None
@@ -319,6 +326,7 @@ def _argument_structure_diagnostics(
         "function_name": _TOOL_NAME,
         "arguments_character_length": len(arguments) if isinstance(arguments, str) else None,
         "strict_claims_shape_passed": strict_claims_shape_passed,
+        "claims_string_normalized": claims_string_normalized,
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -588,17 +596,42 @@ class AICreditsAnalystModel:
             raise AnalystProviderError(
                 "MALFORMED_ARGUMENTS", "Invalid function arguments"
             ) from None
+        # Narrow AI Credits/OpenAI-compatible transport compatibility case: some
+        # responses wrap the (otherwise-valid) claims array in one extra layer of
+        # JSON-string encoding - {"claims": "[...]"} instead of {"claims": [...]}.
+        # This never happens on the Anthropic-native adapter, which never decodes
+        # tool_use.input as a string at all. Exactly one extra decode attempt is
+        # made, only for this exact shape, and only accepted if the nested value is
+        # a list; any other outcome (invalid JSON, non-list result, or the shape not
+        # matching at all) leaves `parsed` untouched and falls through to the
+        # unchanged strict gate below - never a leaked lower-level exception, never
+        # a second attempt, never a coercion, regex repair, or wrapper guess.
+        claims_string_normalized = False
+        if (
+            isinstance(parsed, dict)
+            and set(parsed) == {"claims"}
+            and isinstance(parsed["claims"], str)
+        ):
+            try:
+                nested_claims = _load(parsed["claims"])
+            except (ValueError, RecursionError):
+                nested_claims = None
+            if isinstance(nested_claims, list):
+                parsed = {"claims": nested_claims}
+                claims_string_normalized = True
+        strict_claims_shape_passed = (
+            isinstance(parsed, dict)
+            and set(parsed) == {"claims"}
+            and isinstance(parsed["claims"], list)
+        )
         get_logger("aicredits").info(
             "%s",
             _json(
                 _argument_structure_diagnostics(
                     parsed,
                     arguments,
-                    strict_claims_shape_passed=(
-                        isinstance(parsed, dict)
-                        and set(parsed) == {"claims"}
-                        and isinstance(parsed["claims"], list)
-                    ),
+                    strict_claims_shape_passed=strict_claims_shape_passed,
+                    claims_string_normalized=claims_string_normalized,
                 )
             ),
         )

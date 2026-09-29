@@ -108,6 +108,12 @@ async def test_stringified_empty_claims_array_is_normalized(diagnostic_log):
     assert event["claims_nested_decoded_type"] == "array"
     assert event["claims_nested_decode_error_type"] is None
     assert event["claims_nested_list_length"] == 0
+    # Nested decode produced a list, not a dict: the object-shape fields never apply.
+    assert event["claims_nested_object_key_count"] is None
+    assert event["claims_nested_object_exact_claims_wrapper"] is None
+    assert event["claims_nested_object_claims_present"] is None
+    assert event["claims_nested_object_claims_value_type"] is None
+    assert event["claims_nested_object_claims_list_length"] is None
 
 
 async def test_stringified_valid_claims_array_is_normalized_and_validated(world, diagnostic_log):
@@ -144,13 +150,23 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
     assert event["claims_nested_decoded_type"] == "array"
     assert event["claims_nested_decode_error_type"] is None
     assert event["claims_nested_list_length"] == 1
+    assert event["claims_nested_object_key_count"] is None
+    assert event["claims_nested_object_exact_claims_wrapper"] is None
+    assert event["claims_nested_object_claims_present"] is None
+    assert event["claims_nested_object_claims_value_type"] is None
+    assert event["claims_nested_object_claims_list_length"] is None
 
 
 # --- FAIL: normalization must not trigger, or must not coerce ---------------------
 
 
+# object_key_count, object_exact_wrapper, object_claims_present, object_claims_value_type,
+# object_list_length: only the "nested_decodes_to_object" row decodes to a dict (an empty
+# one, with no "claims" key), so it is the only row where these are populated rather than
+# None - every non-dict/not-attempted/failed-decode row leaves them unpopulated (H).
 @pytest.mark.parametrize(
-    "arguments,label,attempted,succeeded,decoded_type,error_type,list_length",
+    "arguments,label,attempted,succeeded,decoded_type,error_type,list_length,"
+    "obj_key_count,obj_exact_wrapper,obj_claims_present,obj_claims_type,obj_list_length",
     [
         (
             json.dumps({"claims": "not json"}),
@@ -160,6 +176,11 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             None,
             "JSONDecodeError",
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
         (
             json.dumps({"claims": "{}"}),
@@ -167,6 +188,11 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             True,
             True,
             "object",
+            None,
+            None,
+            0,
+            False,
+            False,
             None,
             None,
         ),
@@ -178,10 +204,54 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             "string",
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
-        (json.dumps({"claims": 123}), "claims_is_number", False, False, None, None, None),
-        (json.dumps({"claims": None}), "claims_is_null", False, False, None, None, None),
-        (json.dumps({"claims": {"x": 1}}), "claims_is_object", False, False, None, None, None),
+        (
+            json.dumps({"claims": 123}),
+            "claims_is_number",
+            False,
+            False,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            json.dumps({"claims": None}),
+            "claims_is_null",
+            False,
+            False,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            json.dumps({"claims": {"x": 1}}),
+            "claims_is_object",
+            False,
+            False,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         (
             json.dumps({"claims": json.dumps([]), "extra": 1}),
             "extra_top_level_key",
@@ -190,14 +260,24 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
-        ("[]", "top_level_array", False, False, None, None, None),
+        ("[]", "top_level_array", False, False, None, None, None, None, None, None, None, None),
         (
             json.dumps({"claims": json.dumps(json.dumps([]))}),
             "double_stringified_still_a_string",
             True,
             True,
             "string",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
         ),
@@ -209,6 +289,11 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             None,
             "JSONDecodeError",
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
         (
             json.dumps({"claims": "123"}),
@@ -216,6 +301,11 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             True,
             True,
             "number",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
         ),
@@ -227,6 +317,11 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             "boolean",
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
         (
             json.dumps({"claims": "null"}),
@@ -236,11 +331,28 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
             "null",
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
     ],
 )
 async def test_shapes_that_must_not_normalize_still_fail(
-    diagnostic_log, arguments, label, attempted, succeeded, decoded_type, error_type, list_length
+    diagnostic_log,
+    arguments,
+    label,
+    attempted,
+    succeeded,
+    decoded_type,
+    error_type,
+    list_length,
+    obj_key_count,
+    obj_exact_wrapper,
+    obj_claims_present,
+    obj_claims_type,
+    obj_list_length,
 ):
     with pytest.raises(AnalystProviderError) as exc:
         await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
@@ -257,6 +369,11 @@ async def test_shapes_that_must_not_normalize_still_fail(
     assert event["claims_nested_decoded_type"] == decoded_type, label
     assert event["claims_nested_decode_error_type"] == error_type, label
     assert event["claims_nested_list_length"] == list_length, label
+    assert event["claims_nested_object_key_count"] == obj_key_count, label
+    assert event["claims_nested_object_exact_claims_wrapper"] == obj_exact_wrapper, label
+    assert event["claims_nested_object_claims_present"] == obj_claims_present, label
+    assert event["claims_nested_object_claims_value_type"] == obj_claims_type, label
+    assert event["claims_nested_object_claims_list_length"] == obj_list_length, label
 
 
 # --- VALIDATION REGRESSION: normalization must not weaken semantic validation -----
@@ -355,5 +472,183 @@ async def test_normalization_diagnostic_never_leaks_claim_or_argument_content(di
         "claims_nested_decoded_type",
         "claims_nested_decode_error_type",
         "claims_nested_list_length",
+        "claims_nested_object_key_count",
+        "claims_nested_object_exact_claims_wrapper",
+        "claims_nested_object_claims_present",
+        "claims_nested_object_claims_value_type",
+        "claims_nested_object_claims_list_length",
         "timestamp",
     }
+
+
+# --- NESTED-OBJECT SHAPE DIAGNOSTICS: when the nested decode succeeds to a dict ----
+# The object never normalizes (only a nested *list* result ever does - unchanged),
+# so every case below still raises MALFORMED_ARGUMENTS; these tests only prove the
+# new claims_nested_object_* fields describe that dict's shape safely, testing
+# nothing but the literal known key "claims" and never logging any other key name.
+
+
+def _nested_object_arguments(nested: object) -> str:
+    return json.dumps({"claims": json.dumps(nested)})
+
+
+async def test_nested_object_exact_claims_array_wrapper(diagnostic_log):
+    arguments = _nested_object_arguments({"claims": []})
+    with pytest.raises(AnalystProviderError) as exc:
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+    assert exc.value.code == "MALFORMED_ARGUMENTS"
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_decoded_type"] == "object"
+    assert event["claims_string_normalized"] is False
+    assert event["strict_claims_shape_passed"] is False
+    assert event["claims_nested_object_key_count"] == 1
+    assert event["claims_nested_object_claims_present"] is True
+    assert event["claims_nested_object_exact_claims_wrapper"] is True
+    assert event["claims_nested_object_claims_value_type"] == "array"
+    assert event["claims_nested_object_claims_list_length"] == 0
+
+
+async def test_nested_object_exact_claims_array_wrapper_with_candidate(world, diagnostic_log):
+    *_, bundle, evidence = world
+    ref = next(r for r in bundle.sources if r.kind == "VALUATION")
+    candidate = {
+        "section": "VALUATION",
+        "statement": "The valuation evidence provides context.",
+        "materiality": "PRIMARY",
+        "citations": [
+            {
+                "kind": ref.kind,
+                "owning_snapshot_id": str(ref.owning_snapshot_id),
+                "item_key": ref.item_key,
+            }
+        ],
+    }
+    arguments = _nested_object_arguments({"claims": [candidate]})
+    with pytest.raises(AnalystProviderError) as exc:
+        await generate(
+            lambda r: httpx.Response(200, json=response(arguments=arguments)),
+            bundle,
+            build_model_input(bundle, evidence),
+        )
+    assert exc.value.code == "MALFORMED_ARGUMENTS"
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_key_count"] == 1
+    assert event["claims_nested_object_claims_present"] is True
+    assert event["claims_nested_object_exact_claims_wrapper"] is True
+    assert event["claims_nested_object_claims_value_type"] == "array"
+    assert event["claims_nested_object_claims_list_length"] == 1
+
+
+async def test_nested_object_claims_value_is_string(diagnostic_log):
+    arguments = _nested_object_arguments({"claims": "something"})
+    with pytest.raises(AnalystProviderError):
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_exact_claims_wrapper"] is True
+    assert event["claims_nested_object_claims_value_type"] == "string"
+    assert event["claims_nested_object_claims_list_length"] is None
+
+
+async def test_nested_object_claims_value_is_object(diagnostic_log):
+    arguments = _nested_object_arguments({"claims": {}})
+    with pytest.raises(AnalystProviderError):
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_claims_value_type"] == "object"
+
+
+async def test_nested_object_claims_value_is_null(diagnostic_log):
+    arguments = _nested_object_arguments({"claims": None})
+    with pytest.raises(AnalystProviderError):
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_claims_present"] is True
+    assert event["claims_nested_object_claims_value_type"] == "null"
+    assert event["claims_nested_object_claims_list_length"] is None
+
+
+async def test_nested_object_with_extra_key_is_not_exact_wrapper(diagnostic_log):
+    arguments = _nested_object_arguments({"claims": [], "extra": 1})
+    with pytest.raises(AnalystProviderError):
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_key_count"] == 2
+    assert event["claims_nested_object_claims_present"] is True
+    assert event["claims_nested_object_exact_claims_wrapper"] is False
+    assert event["claims_nested_object_claims_value_type"] == "array"
+    assert "extra" not in diagnostic_log.read_text()
+
+
+async def test_nested_object_without_claims_key(diagnostic_log):
+    arguments = _nested_object_arguments({"other": []})
+    with pytest.raises(AnalystProviderError):
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_key_count"] == 1
+    assert event["claims_nested_object_claims_present"] is False
+    assert event["claims_nested_object_exact_claims_wrapper"] is False
+    assert event["claims_nested_object_claims_value_type"] is None
+    assert event["claims_nested_object_claims_list_length"] is None
+    assert "other" not in diagnostic_log.read_text()
+
+
+async def test_object_shape_diagnostic_never_leaks_nested_key_names(diagnostic_log):
+    arguments = _nested_object_arguments(
+        {
+            "claims": [],
+            "secret_internal_key_marker_9f2c": "sensitive_marker_value_7c2e9a",
+            "another_key": 1,
+        }
+    )
+    with pytest.raises(AnalystProviderError):
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+
+    text = diagnostic_log.read_text()
+    for forbidden in (
+        "secret_internal_key_marker_9f2c",
+        "another_key",
+        "sensitive_marker_value_7c2e9a",
+    ):
+        assert forbidden not in text
+
+    event = _argument_event(diagnostic_log)
+    assert set(event) == {
+        "event",
+        "schema_version",
+        "parsed_top_level_type",
+        "top_level_key_names",
+        "top_level_key_count",
+        "claims_key_present",
+        "claims_value_type",
+        "claims_item_count",
+        "parsed_is_list",
+        "parsed_list_length",
+        "wrapper_candidate_count",
+        "wrapper_key_names",
+        "function_name",
+        "arguments_character_length",
+        "strict_claims_shape_passed",
+        "claims_string_normalized",
+        "claims_nested_decode_attempted",
+        "claims_nested_decode_succeeded",
+        "claims_nested_decoded_type",
+        "claims_nested_decode_error_type",
+        "claims_nested_list_length",
+        "claims_nested_object_key_count",
+        "claims_nested_object_exact_claims_wrapper",
+        "claims_nested_object_claims_present",
+        "claims_nested_object_claims_value_type",
+        "claims_nested_object_claims_list_length",
+        "timestamp",
+    }
+    assert event["claims_nested_object_key_count"] == 3
+    assert event["claims_nested_object_exact_claims_wrapper"] is False
+    assert event["claims_nested_object_claims_present"] is True
+    assert event["claims_nested_object_claims_value_type"] == "array"

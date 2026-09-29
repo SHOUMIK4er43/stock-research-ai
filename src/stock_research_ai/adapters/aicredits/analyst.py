@@ -284,6 +284,11 @@ def _argument_structure_diagnostics(
     claims_nested_decoded_type: str | None,
     claims_nested_decode_error_type: str | None,
     claims_nested_list_length: int | None,
+    claims_nested_object_key_count: int | None,
+    claims_nested_object_exact_claims_wrapper: bool | None,
+    claims_nested_object_claims_present: bool | None,
+    claims_nested_object_claims_value_type: str | None,
+    claims_nested_object_claims_list_length: int | None,
 ) -> dict[str, object]:
     """Sanitized shape-only metadata for decoded tool-call arguments, emitted after
     JSON-decoding (and, if applicable, the one-time stringified-claims compatibility
@@ -294,6 +299,11 @@ def _argument_structure_diagnostics(
     post-normalization value, so these fields describe exactly what the strict gate
     below actually evaluates. The `claims_nested_*` fields describe only the single
     one-time nested decode attempt itself (type/status), never its decoded content.
+    The `claims_nested_object_*` fields describe the nested decode only when it
+    succeeded to a dict: only the literal known key "claims" is ever tested for
+    presence/type - the dict's actual key names are never logged, individually or
+    as a list, unlike `top_level_key_names`/`wrapper_key_names` above (which only
+    ever cover the outer, already-validated tool-call arguments object).
     """
     top_level_keys: list[str] | None = None
     top_level_key_count: int | None = None
@@ -338,6 +348,11 @@ def _argument_structure_diagnostics(
         "claims_nested_decoded_type": claims_nested_decoded_type,
         "claims_nested_decode_error_type": claims_nested_decode_error_type,
         "claims_nested_list_length": claims_nested_list_length,
+        "claims_nested_object_key_count": claims_nested_object_key_count,
+        "claims_nested_object_exact_claims_wrapper": claims_nested_object_exact_claims_wrapper,
+        "claims_nested_object_claims_present": claims_nested_object_claims_present,
+        "claims_nested_object_claims_value_type": claims_nested_object_claims_value_type,
+        "claims_nested_object_claims_list_length": claims_nested_object_claims_list_length,
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -625,6 +640,11 @@ class AICreditsAnalystModel:
         claims_nested_decoded_type: str | None = None
         claims_nested_decode_error_type: str | None = None
         claims_nested_list_length: int | None = None
+        claims_nested_object_key_count: int | None = None
+        claims_nested_object_exact_claims_wrapper: bool | None = None
+        claims_nested_object_claims_present: bool | None = None
+        claims_nested_object_claims_value_type: str | None = None
+        claims_nested_object_claims_list_length: int | None = None
         if (
             isinstance(parsed, dict)
             and set(parsed) == {"claims"}
@@ -641,6 +661,15 @@ class AICreditsAnalystModel:
                 claims_nested_decoded_type = _kind(nested_claims)
                 if isinstance(nested_claims, list):
                     claims_nested_list_length = len(nested_claims)
+                if isinstance(nested_claims, dict):
+                    claims_nested_object_key_count = len(nested_claims)
+                    claims_nested_object_claims_present = "claims" in nested_claims
+                    claims_nested_object_exact_claims_wrapper = set(nested_claims) == {"claims"}
+                    if claims_nested_object_claims_present:
+                        inner_claims = nested_claims["claims"]
+                        claims_nested_object_claims_value_type = _kind(inner_claims)
+                        if isinstance(inner_claims, list):
+                            claims_nested_object_claims_list_length = len(inner_claims)
             if isinstance(nested_claims, list):
                 parsed = {"claims": nested_claims}
                 claims_string_normalized = True
@@ -662,6 +691,17 @@ class AICreditsAnalystModel:
                     claims_nested_decoded_type=claims_nested_decoded_type,
                     claims_nested_decode_error_type=claims_nested_decode_error_type,
                     claims_nested_list_length=claims_nested_list_length,
+                    claims_nested_object_key_count=claims_nested_object_key_count,
+                    claims_nested_object_exact_claims_wrapper=(
+                        claims_nested_object_exact_claims_wrapper
+                    ),
+                    claims_nested_object_claims_present=claims_nested_object_claims_present,
+                    claims_nested_object_claims_value_type=(
+                        claims_nested_object_claims_value_type
+                    ),
+                    claims_nested_object_claims_list_length=(
+                        claims_nested_object_claims_list_length
+                    ),
                 )
             ),
         )

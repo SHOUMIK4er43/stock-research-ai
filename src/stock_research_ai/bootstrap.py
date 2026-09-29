@@ -634,6 +634,7 @@ async def live_analyst_model(
             model=settings.aicredits_model,
             timeout_seconds=settings.analyst_timeout_seconds,
             max_output_tokens=settings.analyst_max_output_tokens,
+            max_attempts=settings.analyst_max_attempts,
         ), "LIVE"
     from stock_research_ai.adapters.anthropic.analyst import AnthropicAnalystModel
 

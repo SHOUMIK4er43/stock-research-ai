@@ -349,6 +349,7 @@ class AICreditsAnalystModel:
         model: str,
         timeout_seconds: float = 90.0,
         max_output_tokens: int = 4096,
+        max_attempts: int = _MAX_ATTEMPTS,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key.strip() or not model.strip() or model != model.strip():
@@ -357,6 +358,7 @@ class AICreditsAnalystModel:
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
+        self._max_attempts = max_attempts
         self._transport = transport
 
     async def generate(
@@ -494,7 +496,7 @@ class AICreditsAnalystModel:
         self, client: httpx.AsyncClient, rendered: str
     ) -> tuple[dict[str, Any], str | None]:
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(self._max_attempts):
             try:
                 async with client.stream(
                     "POST", _URL, content=rendered.encode(), headers=headers
@@ -512,13 +514,13 @@ class AICreditsAnalystModel:
             except httpx.TimeoutException as exc:
                 get_logger("aicredits").info(
                     "%s",
-                    _json(_transport_diagnostics(exc, attempt, _MAX_ATTEMPTS, timeout=True)),
+                    _json(_transport_diagnostics(exc, attempt, self._max_attempts, timeout=True)),
                 )
                 error = AnalystProviderError("TIMEOUT", "AI Credits request timed out")
             except httpx.TransportError as exc:
                 get_logger("aicredits").info(
                     "%s",
-                    _json(_transport_diagnostics(exc, attempt, _MAX_ATTEMPTS, timeout=False)),
+                    _json(_transport_diagnostics(exc, attempt, self._max_attempts, timeout=False)),
                 )
                 error = AnalystProviderError("CONNECTION_FAILED", "AI Credits connection failed")
             else:
@@ -539,14 +541,14 @@ class AICreditsAnalystModel:
                     "%s",
                     _json(
                         _http_error_diagnostics(
-                            status, code, attempt, _MAX_ATTEMPTS, response_headers
+                            status, code, attempt, self._max_attempts, response_headers
                         )
                     ),
                 )
                 error = AnalystProviderError(code, f"AI Credits HTTP {status}")
                 if code not in _RETRYABLE_ERROR_CODES:
                     raise error
-            if attempt == _MAX_ATTEMPTS - 1:
+            if attempt == self._max_attempts - 1:
                 raise error from None
             await asyncio.sleep(_BACKOFF_SECONDS[attempt])
         raise AssertionError("Unreachable retry state")

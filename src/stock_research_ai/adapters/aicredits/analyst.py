@@ -289,6 +289,7 @@ def _argument_structure_diagnostics(
     claims_nested_object_claims_present: bool | None,
     claims_nested_object_claims_value_type: str | None,
     claims_nested_object_claims_list_length: int | None,
+    claims_nested_object_unwrapped: bool,
 ) -> dict[str, object]:
     """Sanitized shape-only metadata for decoded tool-call arguments, emitted after
     JSON-decoding (and, if applicable, the one-time stringified-claims compatibility
@@ -353,6 +354,7 @@ def _argument_structure_diagnostics(
         "claims_nested_object_claims_present": claims_nested_object_claims_present,
         "claims_nested_object_claims_value_type": claims_nested_object_claims_value_type,
         "claims_nested_object_claims_list_length": claims_nested_object_claims_list_length,
+        "claims_nested_object_unwrapped": claims_nested_object_unwrapped,
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -629,12 +631,17 @@ class AICreditsAnalystModel:
         # JSON-string encoding - {"claims": "[...]"} instead of {"claims": [...]}.
         # This never happens on the Anthropic-native adapter, which never decodes
         # tool_use.input as a string at all. Exactly one extra decode attempt is
-        # made, only for this exact shape, and only accepted if the nested value is
-        # a list; any other outcome (invalid JSON, non-list result, or the shape not
-        # matching at all) leaves `parsed` untouched and falls through to the
-        # unchanged strict gate below - never a leaked lower-level exception, never
-        # a second attempt, never a coercion, regex repair, or wrapper guess.
+        # made, only for this exact shape. Two - and only two - decoded outcomes are
+        # accepted: the nested value is itself the claims list directly, or the
+        # nested value is a dict containing exactly one key "claims" whose value is
+        # the claims list (a second, deeper observed variant of the same transport
+        # quirk). Any other outcome (invalid JSON, wrong type, extra/missing keys,
+        # or the outer shape not matching at all) leaves `parsed` untouched and
+        # falls through to the unchanged strict gate below - never a leaked
+        # lower-level exception, never a second decode attempt, never a coercion,
+        # regex repair, or arbitrary wrapper guess.
         claims_string_normalized = False
+        claims_nested_object_unwrapped = False
         claims_nested_decode_attempted = False
         claims_nested_decode_succeeded = False
         claims_nested_decoded_type: str | None = None
@@ -673,6 +680,13 @@ class AICreditsAnalystModel:
             if isinstance(nested_claims, list):
                 parsed = {"claims": nested_claims}
                 claims_string_normalized = True
+            elif (
+                isinstance(nested_claims, dict)
+                and set(nested_claims) == {"claims"}
+                and isinstance(nested_claims["claims"], list)
+            ):
+                parsed = {"claims": nested_claims["claims"]}
+                claims_nested_object_unwrapped = True
         strict_claims_shape_passed = (
             isinstance(parsed, dict)
             and set(parsed) == {"claims"}
@@ -702,6 +716,7 @@ class AICreditsAnalystModel:
                     claims_nested_object_claims_list_length=(
                         claims_nested_object_claims_list_length
                     ),
+                    claims_nested_object_unwrapped=claims_nested_object_unwrapped,
                 )
             ),
         )

@@ -1,9 +1,12 @@
 """Narrow AI Credits/OpenAI-compatible transport compatibility fix: a response whose
 tool-call arguments decode to exactly {"claims": "<json>"} (claims stringified one
-extra time) is normalized - exactly one additional decode, accepted only if the
-result is a list - before the existing, unmodified strict shape gate and all
-downstream candidate/citation/semantic validation run. Every other shape keeps its
-existing MALFORMED_ARGUMENTS behavior unchanged.
+extra time) is normalized - exactly one additional decode - before the existing,
+unmodified strict shape gate and all downstream candidate/citation/semantic
+validation run. Two, and only two, decoded outcomes are accepted: the nested value
+is itself the claims list directly, or the nested value is a dict containing
+exactly one key "claims" whose value is the claims list (a second, deeper observed
+transport variant - {"claims": "{\\"claims\\": [...]}"}). Every other shape keeps
+its existing MALFORMED_ARGUMENTS behavior unchanged.
 """
 
 import json
@@ -52,6 +55,7 @@ async def test_empty_claims_array_accepted_without_normalization(diagnostic_log)
     event = _argument_event(diagnostic_log)
     assert event["strict_claims_shape_passed"] is True
     assert event["claims_string_normalized"] is False
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 async def test_valid_claims_list_accepted_without_normalization(world, diagnostic_log):
@@ -85,6 +89,7 @@ async def test_valid_claims_list_accepted_without_normalization(world, diagnosti
     assert event["claims_nested_decoded_type"] is None
     assert event["claims_nested_decode_error_type"] is None
     assert event["claims_nested_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 # --- PASS WITH ONE-TIME NORMALIZATION ----------------------------------------------
@@ -114,6 +119,7 @@ async def test_stringified_empty_claims_array_is_normalized(diagnostic_log):
     assert event["claims_nested_object_claims_present"] is None
     assert event["claims_nested_object_claims_value_type"] is None
     assert event["claims_nested_object_claims_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 async def test_stringified_valid_claims_array_is_normalized_and_validated(world, diagnostic_log):
@@ -155,6 +161,7 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
     assert event["claims_nested_object_claims_present"] is None
     assert event["claims_nested_object_claims_value_type"] is None
     assert event["claims_nested_object_claims_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 # --- FAIL: normalization must not trigger, or must not coerce ---------------------
@@ -164,6 +171,10 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world,
 # object_list_length: only the "nested_decodes_to_object" row decodes to a dict (an empty
 # one, with no "claims" key), so it is the only row where these are populated rather than
 # None - every non-dict/not-attempted/failed-decode row leaves them unpopulated (H).
+# Every row here is a shape the fix must NOT accept - including exact_wrapper=True
+# rows whose inner "claims" value is not itself a list (still no unwrap: the elif
+# requires isinstance(nested_claims["claims"], list) too). Only the genuinely new
+# {"claims": "{\"claims\": [...]}"} shape (covered separately below) now succeeds.
 @pytest.mark.parametrize(
     "arguments,label,attempted,succeeded,decoded_type,error_type,list_length,"
     "obj_key_count,obj_exact_wrapper,obj_claims_present,obj_claims_type,obj_list_length",
@@ -364,6 +375,7 @@ async def test_shapes_that_must_not_normalize_still_fail(
     event = _argument_event(diagnostic_log)
     assert event["claims_string_normalized"] is False, label
     assert event["strict_claims_shape_passed"] is False, label
+    assert event["claims_nested_object_unwrapped"] is False, label
     assert event["claims_nested_decode_attempted"] is attempted, label
     assert event["claims_nested_decode_succeeded"] is succeeded, label
     assert event["claims_nested_decoded_type"] == decoded_type, label
@@ -477,31 +489,37 @@ async def test_normalization_diagnostic_never_leaks_claim_or_argument_content(di
         "claims_nested_object_claims_present",
         "claims_nested_object_claims_value_type",
         "claims_nested_object_claims_list_length",
+        "claims_nested_object_unwrapped",
         "timestamp",
     }
 
 
-# --- NESTED-OBJECT SHAPE DIAGNOSTICS: when the nested decode succeeds to a dict ----
-# The object never normalizes (only a nested *list* result ever does - unchanged),
-# so every case below still raises MALFORMED_ARGUMENTS; these tests only prove the
-# new claims_nested_object_* fields describe that dict's shape safely, testing
-# nothing but the literal known key "claims" and never logging any other key name.
+# --- NESTED-OBJECT SHAPE DIAGNOSTICS + EXACT-WRAPPER UNWRAP -----------------------
+# When the nested decode succeeds to a dict, the claims_nested_object_* fields
+# describe that dict's shape safely, testing nothing but the literal known key
+# "claims" and never logging any other key name. Exactly one shape is now also
+# accepted and unwrapped - a dict containing only "claims" mapped to a list - via
+# the SAME already-decoded `nested_claims` value (zero additional JSON decoding).
+# Every other dict shape still raises MALFORMED_ARGUMENTS, unchanged.
 
 
 def _nested_object_arguments(nested: object) -> str:
     return json.dumps({"claims": json.dumps(nested)})
 
 
-async def test_nested_object_exact_claims_array_wrapper(diagnostic_log):
+async def test_nested_object_exact_claims_array_wrapper_is_unwrapped(diagnostic_log):
     arguments = _nested_object_arguments({"claims": []})
-    with pytest.raises(AnalystProviderError) as exc:
-        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
-    assert exc.value.code == "MALFORMED_ARGUMENTS"
+    metadata = await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+    assert metadata.raw_response.structured_payload["claims"] == []
 
     event = _argument_event(diagnostic_log)
     assert event["claims_nested_decoded_type"] == "object"
+    assert event["strict_claims_shape_passed"] is True
+    # This is the second, deeper transport variant, not the direct-stringified-list
+    # one: claims_string_normalized stays False; claims_nested_object_unwrapped is
+    # the field that records this path was taken.
     assert event["claims_string_normalized"] is False
-    assert event["strict_claims_shape_passed"] is False
+    assert event["claims_nested_object_unwrapped"] is True
     assert event["claims_nested_object_key_count"] == 1
     assert event["claims_nested_object_claims_present"] is True
     assert event["claims_nested_object_exact_claims_wrapper"] is True
@@ -525,20 +543,63 @@ async def test_nested_object_exact_claims_array_wrapper_with_candidate(world, di
         ],
     }
     arguments = _nested_object_arguments({"claims": [candidate]})
-    with pytest.raises(AnalystProviderError) as exc:
-        await generate(
-            lambda r: httpx.Response(200, json=response(arguments=arguments)),
-            bundle,
-            build_model_input(bundle, evidence),
-        )
-    assert exc.value.code == "MALFORMED_ARGUMENTS"
+    metadata = await generate(
+        lambda r: httpx.Response(200, json=response(arguments=arguments)),
+        bundle,
+        build_model_input(bundle, evidence),
+    )
+    assert metadata.raw_response.structured_payload["claims"] == [candidate]
+    accepted, rejected = validate_response(
+        metadata.raw_response, bundle, evidence, bundle.request.profile_id
+    )
+    assert len(accepted) == 1 and len(rejected) == 0
+    assert accepted[0].statement == candidate["statement"]
 
     event = _argument_event(diagnostic_log)
+    assert event["strict_claims_shape_passed"] is True
+    assert event["claims_nested_object_unwrapped"] is True
     assert event["claims_nested_object_key_count"] == 1
     assert event["claims_nested_object_claims_present"] is True
     assert event["claims_nested_object_exact_claims_wrapper"] is True
     assert event["claims_nested_object_claims_value_type"] == "array"
     assert event["claims_nested_object_claims_list_length"] == 1
+
+
+async def test_nested_object_exact_wrapper_invalid_candidate_still_rejected_downstream(
+    world, diagnostic_log
+):
+    *_, bundle, evidence = world
+    ref = next(r for r in bundle.sources if r.kind == "VALUATION")
+    citation = {
+        "kind": ref.kind,
+        "owning_snapshot_id": str(ref.owning_snapshot_id),
+        "item_key": ref.item_key,
+    }
+    good = {
+        "section": "VALUATION",
+        "statement": "The valuation evidence provides context.",
+        "materiality": "PRIMARY",
+        "citations": [citation],
+    }
+    bad = {**good, "statement": "BUY now."}
+    arguments = _nested_object_arguments({"claims": [good, bad]})
+    metadata = await generate(
+        lambda r: httpx.Response(200, json=response(arguments=arguments)),
+        bundle,
+        build_model_input(bundle, evidence),
+    )
+    # Transport-layer unwrap succeeded - both candidates reached structured_payload.
+    assert metadata.raw_response.structured_payload["claims"] == [good, bad]
+
+    # Existing, unmodified semantic validation still rejects the bad candidate.
+    accepted, rejected = validate_response(
+        metadata.raw_response, bundle, evidence, bundle.request.profile_id
+    )
+    assert len(accepted) == 1 and len(rejected) == 1
+    assert accepted[0].statement == good["statement"]
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_unwrapped"] is True
 
 
 async def test_nested_object_claims_value_is_string(diagnostic_log):
@@ -550,6 +611,7 @@ async def test_nested_object_claims_value_is_string(diagnostic_log):
     assert event["claims_nested_object_exact_claims_wrapper"] is True
     assert event["claims_nested_object_claims_value_type"] == "string"
     assert event["claims_nested_object_claims_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 async def test_nested_object_claims_value_is_object(diagnostic_log):
@@ -559,6 +621,7 @@ async def test_nested_object_claims_value_is_object(diagnostic_log):
 
     event = _argument_event(diagnostic_log)
     assert event["claims_nested_object_claims_value_type"] == "object"
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 async def test_nested_object_claims_value_is_null(diagnostic_log):
@@ -570,6 +633,20 @@ async def test_nested_object_claims_value_is_null(diagnostic_log):
     assert event["claims_nested_object_claims_present"] is True
     assert event["claims_nested_object_claims_value_type"] == "null"
     assert event["claims_nested_object_claims_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
+
+
+async def test_nested_object_claims_value_is_number(diagnostic_log):
+    arguments = _nested_object_arguments({"claims": 123})
+    with pytest.raises(AnalystProviderError) as exc:
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+    assert exc.value.code == "MALFORMED_ARGUMENTS"
+
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_object_exact_claims_wrapper"] is True
+    assert event["claims_nested_object_claims_value_type"] == "number"
+    assert event["claims_nested_object_claims_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
 
 
 async def test_nested_object_with_extra_key_is_not_exact_wrapper(diagnostic_log):
@@ -582,6 +659,7 @@ async def test_nested_object_with_extra_key_is_not_exact_wrapper(diagnostic_log)
     assert event["claims_nested_object_claims_present"] is True
     assert event["claims_nested_object_exact_claims_wrapper"] is False
     assert event["claims_nested_object_claims_value_type"] == "array"
+    assert event["claims_nested_object_unwrapped"] is False
     assert "extra" not in diagnostic_log.read_text()
 
 
@@ -596,7 +674,41 @@ async def test_nested_object_without_claims_key(diagnostic_log):
     assert event["claims_nested_object_exact_claims_wrapper"] is False
     assert event["claims_nested_object_claims_value_type"] is None
     assert event["claims_nested_object_claims_list_length"] is None
+    assert event["claims_nested_object_unwrapped"] is False
     assert "other" not in diagnostic_log.read_text()
+
+
+async def test_double_stringified_wrapper_requires_second_decode_and_is_rejected():
+    # {"claims": "<json>"} where <json> decodes to {"claims": "<json>"} again (a
+    # second, still-stringified layer): the accepted dict shape requires
+    # nested_claims["claims"] to ALREADY be a list, not another string requiring a
+    # further decode - so this must still fail, proving no recursion was added.
+    inner = json.dumps({"claims": json.dumps([])})
+    arguments = _nested_object_arguments({"claims": inner})
+    with pytest.raises(AnalystProviderError) as exc:
+        await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+    assert exc.value.code == "MALFORMED_ARGUMENTS"
+
+
+async def test_exact_wrapper_unwrap_performs_exactly_one_nested_decode(monkeypatch):
+    load_calls: list[str] = []
+    real_load = adapter._load
+
+    def counting_load(text):
+        load_calls.append(text)
+        return real_load(text)
+
+    monkeypatch.setattr(adapter, "_load", counting_load)
+
+    arguments = _nested_object_arguments({"claims": []})
+    metadata = await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
+    assert metadata.raw_response.structured_payload["claims"] == []
+    # _load is also used once, separately, to decode the raw HTTP response body
+    # (bytes, not str) before arguments parsing even begins - isolate the string
+    # (argument-string) decodes to prove exactly one outer + one nested decode,
+    # never a second/nested-of-nested call.
+    string_calls = [c for c in load_calls if isinstance(c, str)]
+    assert string_calls == [arguments, '{"claims": []}']
 
 
 async def test_object_shape_diagnostic_never_leaks_nested_key_names(diagnostic_log):
@@ -646,6 +758,7 @@ async def test_object_shape_diagnostic_never_leaks_nested_key_names(diagnostic_l
         "claims_nested_object_claims_present",
         "claims_nested_object_claims_value_type",
         "claims_nested_object_claims_list_length",
+        "claims_nested_object_unwrapped",
         "timestamp",
     }
     assert event["claims_nested_object_key_count"] == 3

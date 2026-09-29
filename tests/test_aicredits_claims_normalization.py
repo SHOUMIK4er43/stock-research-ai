@@ -54,7 +54,7 @@ async def test_empty_claims_array_accepted_without_normalization(diagnostic_log)
     assert event["claims_string_normalized"] is False
 
 
-async def test_valid_claims_list_accepted_without_normalization(world):
+async def test_valid_claims_list_accepted_without_normalization(world, diagnostic_log):
     *_, bundle, evidence = world
     ref = next(r for r in bundle.sources if r.kind == "VALUATION")
     candidate = {
@@ -77,6 +77,15 @@ async def test_valid_claims_list_accepted_without_normalization(world):
     )
     assert metadata.raw_response.structured_payload["claims"] == [candidate]
 
+    # claims is already a native list: the one-time nested-string decode never
+    # triggers at all (its type check requires claims to be a string first).
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_decode_attempted"] is False
+    assert event["claims_nested_decode_succeeded"] is False
+    assert event["claims_nested_decoded_type"] is None
+    assert event["claims_nested_decode_error_type"] is None
+    assert event["claims_nested_list_length"] is None
+
 
 # --- PASS WITH ONE-TIME NORMALIZATION ----------------------------------------------
 
@@ -92,9 +101,16 @@ async def test_stringified_empty_claims_array_is_normalized(diagnostic_log):
     # Diagnostics reflect the post-normalization value: an array, not a string.
     assert event["claims_value_type"] == "array"
     assert event["claims_item_count"] == 0
+    # The nested-decode fields describe the one attempt itself: it ran, succeeded,
+    # produced a (empty) list, and recorded no error.
+    assert event["claims_nested_decode_attempted"] is True
+    assert event["claims_nested_decode_succeeded"] is True
+    assert event["claims_nested_decoded_type"] == "array"
+    assert event["claims_nested_decode_error_type"] is None
+    assert event["claims_nested_list_length"] == 0
 
 
-async def test_stringified_valid_claims_array_is_normalized_and_validated(world):
+async def test_stringified_valid_claims_array_is_normalized_and_validated(world, diagnostic_log):
     *_, bundle, evidence = world
     ref = next(r for r in bundle.sources if r.kind == "VALUATION")
     candidate = {
@@ -122,26 +138,110 @@ async def test_stringified_valid_claims_array_is_normalized_and_validated(world)
     assert len(accepted) == 1 and len(rejected) == 0
     assert accepted[0].statement == candidate["statement"]
 
+    event = _argument_event(diagnostic_log)
+    assert event["claims_nested_decode_attempted"] is True
+    assert event["claims_nested_decode_succeeded"] is True
+    assert event["claims_nested_decoded_type"] == "array"
+    assert event["claims_nested_decode_error_type"] is None
+    assert event["claims_nested_list_length"] == 1
+
 
 # --- FAIL: normalization must not trigger, or must not coerce ---------------------
 
 
 @pytest.mark.parametrize(
-    "arguments,label",
+    "arguments,label,attempted,succeeded,decoded_type,error_type,list_length",
     [
-        (json.dumps({"claims": "not json"}), "invalid_nested_json"),
-        (json.dumps({"claims": "{}"}), "nested_decodes_to_object"),
-        (json.dumps({"claims": json.dumps("nested string")}), "nested_decodes_to_string"),
-        (json.dumps({"claims": 123}), "claims_is_number"),
-        (json.dumps({"claims": None}), "claims_is_null"),
-        (json.dumps({"claims": {"x": 1}}), "claims_is_object"),
-        (json.dumps({"claims": json.dumps([]), "extra": 1}), "extra_top_level_key"),
-        ("[]", "top_level_array"),
-        (json.dumps({"claims": json.dumps(json.dumps([]))}), "double_stringified_still_a_string"),
-        (json.dumps({"claims": "[{bad json"}), "malformed_nested_json"),
+        (
+            json.dumps({"claims": "not json"}),
+            "invalid_nested_json",
+            True,
+            False,
+            None,
+            "JSONDecodeError",
+            None,
+        ),
+        (
+            json.dumps({"claims": "{}"}),
+            "nested_decodes_to_object",
+            True,
+            True,
+            "object",
+            None,
+            None,
+        ),
+        (
+            json.dumps({"claims": json.dumps("nested string")}),
+            "nested_decodes_to_string",
+            True,
+            True,
+            "string",
+            None,
+            None,
+        ),
+        (json.dumps({"claims": 123}), "claims_is_number", False, False, None, None, None),
+        (json.dumps({"claims": None}), "claims_is_null", False, False, None, None, None),
+        (json.dumps({"claims": {"x": 1}}), "claims_is_object", False, False, None, None, None),
+        (
+            json.dumps({"claims": json.dumps([]), "extra": 1}),
+            "extra_top_level_key",
+            False,
+            False,
+            None,
+            None,
+            None,
+        ),
+        ("[]", "top_level_array", False, False, None, None, None),
+        (
+            json.dumps({"claims": json.dumps(json.dumps([]))}),
+            "double_stringified_still_a_string",
+            True,
+            True,
+            "string",
+            None,
+            None,
+        ),
+        (
+            json.dumps({"claims": "[{bad json"}),
+            "malformed_nested_json",
+            True,
+            False,
+            None,
+            "JSONDecodeError",
+            None,
+        ),
+        (
+            json.dumps({"claims": "123"}),
+            "nested_decodes_to_number",
+            True,
+            True,
+            "number",
+            None,
+            None,
+        ),
+        (
+            json.dumps({"claims": "true"}),
+            "nested_decodes_to_boolean",
+            True,
+            True,
+            "boolean",
+            None,
+            None,
+        ),
+        (
+            json.dumps({"claims": "null"}),
+            "nested_decodes_to_null",
+            True,
+            True,
+            "null",
+            None,
+            None,
+        ),
     ],
 )
-async def test_shapes_that_must_not_normalize_still_fail(diagnostic_log, arguments, label):
+async def test_shapes_that_must_not_normalize_still_fail(
+    diagnostic_log, arguments, label, attempted, succeeded, decoded_type, error_type, list_length
+):
     with pytest.raises(AnalystProviderError) as exc:
         await generate(lambda r: httpx.Response(200, json=response(arguments=arguments)))
     assert exc.value.code == "MALFORMED_ARGUMENTS", label
@@ -152,6 +252,11 @@ async def test_shapes_that_must_not_normalize_still_fail(diagnostic_log, argumen
     event = _argument_event(diagnostic_log)
     assert event["claims_string_normalized"] is False, label
     assert event["strict_claims_shape_passed"] is False, label
+    assert event["claims_nested_decode_attempted"] is attempted, label
+    assert event["claims_nested_decode_succeeded"] is succeeded, label
+    assert event["claims_nested_decoded_type"] == decoded_type, label
+    assert event["claims_nested_decode_error_type"] == error_type, label
+    assert event["claims_nested_list_length"] == list_length, label
 
 
 # --- VALIDATION REGRESSION: normalization must not weaken semantic validation -----
@@ -245,5 +350,10 @@ async def test_normalization_diagnostic_never_leaks_claim_or_argument_content(di
         "arguments_character_length",
         "strict_claims_shape_passed",
         "claims_string_normalized",
+        "claims_nested_decode_attempted",
+        "claims_nested_decode_succeeded",
+        "claims_nested_decoded_type",
+        "claims_nested_decode_error_type",
+        "claims_nested_list_length",
         "timestamp",
     }

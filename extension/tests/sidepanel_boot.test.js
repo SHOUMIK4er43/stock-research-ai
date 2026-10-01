@@ -30,16 +30,26 @@ async function bootHarness(t, options = {}) {
     const payload = path === "/health" ? state.health : path === "/v1/version" ? state.version : {};
     return { ok: true, status: 200, json: async () => payload };
   });
+  let tabUrl = options.tabUrl || "https://www.screener.in/company/INFY/";
+  let onUpdatedListener = null;
   globalThis.document = { getElementById: get };
   globalThis.window = { addEventListener() {} };
   globalThis.chrome = { storage: { local: storage }, tabs: {
-    query: (_options, cb) => cb([{ url: "https://www.screener.in/company/INFY/" }]),
+    query: (_options, cb) => cb([{ url: tabUrl }]),
     onActivated: { addListener() {} },
+    onUpdated: { addListener(fn) { onUpdatedListener = fn; } },
   } };
   t.after(() => { delete globalThis.document; delete globalThis.window; delete globalThis.chrome; });
   await import(`../src/sidepanel.js?boot-test=${++sequence}`);
   await settle();
-  return { get, state, requests, storage, logs, retry: () => get("retry-service").events.click() };
+  return { get, state, requests, storage, logs, retry: () => get("retry-service").events.click(),
+    // Simulates the active tab's URL changing (SUMMARY_V1 Box 1 navigation), the same
+    // way a real chrome.tabs.onUpdated event with a new url would trigger a re-boot.
+    navigateTo: async url => {
+      tabUrl = url;
+      if (onUpdatedListener) await onUpdatedListener(0, { url });
+      await settle();
+    } };
 }
 
 function unpaired(h) {
@@ -174,5 +184,104 @@ test("polling 401 stops polling and keeps recovery pointers for re-pairing", asy
   unpaired(h);
   assert.equal(scheduled, 1);
   assert.deepEqual((await h.storage.get("activeJob")).activeJob, activeJob);
+  assert.deepEqual(h.logs, []);
+});
+
+// --- SUMMARY_V1 Box 1: generic Screener page identity -------------------------------
+
+function assertNoResearchOrPairSubmission(h) {
+  // The global fetch mock already asserts every single request is GET; this is an
+  // additional, explicit proof that no research-job or pairing endpoint was ever hit.
+  for (const r of h.requests) {
+    assert.ok(!r.path.startsWith("/v1/research-jobs"), "must never submit a research job");
+    assert.ok(r.path !== "/v1/pair", "must never submit a pairing code");
+  }
+}
+
+test("READY page shows identifier/mode/pending-company-name for a standalone page", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/",
+  });
+  assert.equal(h.get("panel-ready").hidden, false);
+  assert.equal(
+    h.get("current-page-label").textContent,
+    "Screener company detected\nIdentifier: INFY\nPage: Standalone\nCompany name: Pending data fetch",
+  );
+  assertNoResearchOrPairSubmission(h);
+});
+
+test("READY page shows Consolidated mode for a consolidated page", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/TCS/consolidated/",
+  });
+  assert.equal(
+    h.get("current-page-label").textContent,
+    "Screener company detected\nIdentifier: TCS\nPage: Consolidated\nCompany name: Pending data fetch",
+  );
+  assertNoResearchOrPairSubmission(h);
+});
+
+test("no company name is ever invented on the READY page label", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/",
+  });
+  const text = h.get("current-page-label").textContent;
+  assert.match(text, /Pending data fetch/);
+  assert.doesNotMatch(text, /Infosys/i);
+});
+
+test("active tab change from one supported company to another replaces the identity", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/",
+  });
+  assert.match(h.get("current-page-label").textContent, /Identifier: INFY/);
+
+  await h.navigateTo("https://www.screener.in/company/TCS/");
+  const text = h.get("current-page-label").textContent;
+  assert.match(text, /Identifier: TCS/);
+  assert.doesNotMatch(text, /INFY/, "stale previous company identity must not remain");
+  assertNoResearchOrPairSubmission(h);
+});
+
+test("navigating from a consolidated page to a standalone page updates the mode", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/consolidated/",
+  });
+  assert.match(h.get("current-page-label").textContent, /Page: Consolidated/);
+
+  await h.navigateTo("https://www.screener.in/company/INFY/");
+  assert.match(h.get("current-page-label").textContent, /Page: Standalone/);
+  assertNoResearchOrPairSubmission(h);
+});
+
+test("navigating from a supported company page to an unsupported page clears the identity", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/",
+  });
+  assert.equal(h.get("panel-ready").hidden, false);
+
+  await h.navigateTo("https://www.screener.in/screens/");
+  assert.equal(h.get("panel-unsupported").hidden, false);
+  assert.equal(h.get("panel-ready").hidden, true);
+  const text = h.get("current-page-label").textContent;
+  assert.doesNotMatch(text, /Identifier:/);
+  assert.doesNotMatch(text, /INFY/);
+  assertNoResearchOrPairSubmission(h);
+});
+
+test("no request is submitted while refreshing page context across a navigation", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/",
+  });
+  await h.navigateTo("https://www.screener.in/company/TCS/");
+  assert.ok(h.requests.length > 0, "boot must still probe health/version/capabilities");
+  assertNoResearchOrPairSubmission(h);
   assert.deepEqual(h.logs, []);
 });

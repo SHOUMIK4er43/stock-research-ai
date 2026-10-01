@@ -106,8 +106,11 @@ els.startCommand.textContent = START_COMMAND;
 els.pairingStartCommand.textContent = START_COMMAND;
 els.pairCodeCommand.textContent = PAIR_CODE_COMMAND;
 
-/** @type {{sourceUrl: string|null, adapter: import('./portals/portal_adapter.js').PortalAdapter|null}} */
-const page = { sourceUrl: null, adapter: null };
+/** @type {{sourceUrl: string|null, adapter: import('./portals/portal_adapter.js').PortalAdapter|null, pageIdentity: {page_identifier: string, page_mode: "standalone"|"consolidated"}|null}} */
+const page = { sourceUrl: null, adapter: null, pageIdentity: null };
+
+/** SUMMARY_V1 Box 1 label only - never invents a company name; it is always backend-sourced. */
+const PAGE_MODE_LABELS = Object.freeze({ standalone: "Standalone", consolidated: "Consolidated" });
 
 function renderState(state, data = {}) {
   for (const panel of Object.values(els.panels)) {
@@ -117,9 +120,20 @@ function renderState(state, data = {}) {
   if (panel) panel.hidden = false;
 
   if (state === States.UNSUPPORTED_PAGE || state === States.READY) {
-    els.currentPageLabel.textContent = page.sourceUrl
-      ? `Current page: ${page.sourceUrl}`
-      : "Open a Screener company page to research a company.";
+    // UNSUPPORTED_PAGE never has a page identity (its adapter is always null), so this
+    // branch only ever applies on READY - no extra state check needed.
+    if (page.pageIdentity) {
+      const { page_identifier, page_mode } = page.pageIdentity;
+      els.currentPageLabel.textContent =
+        `Screener company detected\n` +
+        `Identifier: ${page_identifier}\n` +
+        `Page: ${PAGE_MODE_LABELS[page_mode] || page_mode}\n` +
+        `Company name: Pending data fetch`;
+    } else {
+      els.currentPageLabel.textContent = page.sourceUrl
+        ? `Current page: ${page.sourceUrl}`
+        : "Open a Screener company page to research a company.";
+    }
   }
 
   if (state === States.READY || state === States.LAUNCHING) {
@@ -182,6 +196,12 @@ async function refreshPage() {
   const url = await getActiveTabUrl();
   page.sourceUrl = url;
   page.adapter = url ? resolvePortal(url) : null;
+  // Recomputed fresh on every call (boot(), tab activation, tab URL update) - never
+  // retains the previous page's identity across a navigation (SUMMARY_V1 Box 1).
+  page.pageIdentity =
+    page.adapter && typeof page.adapter.getPageIdentity === "function"
+      ? page.adapter.getPageIdentity(url)
+      : null;
 }
 
 async function boot() {

@@ -285,3 +285,37 @@ test("no request is submitted while refreshing page context across a navigation"
   assertNoResearchOrPairSubmission(h);
   assert.deepEqual(h.logs, []);
 });
+
+test("an older tab lookup cannot replace the company used by a newer boot", async t => {
+  const h = await bootHarness(t, {
+    stored: { pairingToken: "synthetic-token" },
+    tabUrl: "https://www.screener.in/company/INFY/",
+  });
+  const lookups = [];
+  globalThis.chrome.tabs.query = (_options, cb) => { lookups.push(cb); };
+  let releaseHealth = null;
+  h.state.fetch = async path => {
+    if (path === "/health" && !releaseHealth) await new Promise(resolve => { releaseHealth = resolve; });
+    return { ok: true, status: 200, json: async () => path === "/health"
+      ? { status: "ok" } : path === "/v1/version" ? VERSION : {} };
+  };
+
+  await h.navigateTo("https://www.screener.in/company/INFY/"); // older lookup starts
+  await h.navigateTo("https://www.screener.in/company/TCS/");  // newer lookup starts
+  assert.equal(lookups.length, 2);
+
+  lookups[1]([{ url: "https://www.screener.in/company/TCS/" }]); // newer resolves first...
+  await settle();
+  assert.ok(releaseHealth, "newer boot must be waiting on its next async step");
+  lookups[0]([{ url: "https://www.screener.in/company/INFY/" }]); // ...stale older resolves late
+  await settle();
+  releaseHealth();
+  await settle();
+  await settle();
+
+  const text = h.get("current-page-label").textContent;
+  assert.match(text, /Identifier: TCS/);
+  assert.doesNotMatch(text, /INFY/, "a stale lookup must never overwrite the newer page identity");
+  assertNoResearchOrPairSubmission(h);
+  assert.ok(h.requests.every(r => !r.path.startsWith("/v1/summaries")), "must never submit a summary");
+});

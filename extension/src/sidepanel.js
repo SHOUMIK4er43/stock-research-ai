@@ -192,8 +192,10 @@ function stopPolling() {
   }
 }
 
-async function refreshPage() {
+async function refreshPage(isCurrent) {
   const url = await getActiveTabUrl();
+  // A superseded boot's late tab lookup must never touch shared page state.
+  if (!isCurrent()) return;
   page.sourceUrl = url;
   page.adapter = url ? resolvePortal(url) : null;
   // Recomputed fresh on every call (boot(), tab activation, tab URL update) - never
@@ -217,7 +219,7 @@ async function boot() {
   const client = new ApiClient(baseUrl);
   els.versionLabel.textContent = "";
 
-  await refreshPage();
+  await refreshPage(isCurrent);
   if (!isCurrent()) return;
 
   const facts = {

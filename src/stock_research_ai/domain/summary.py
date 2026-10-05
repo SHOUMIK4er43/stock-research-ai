@@ -4,9 +4,20 @@ Every value is copied from an existing normalized observation; nothing is calcul
 Bounds are enforced by validation, never by silent truncation.
 """
 
+from enum import StrEnum
 from typing import Annotated, Literal, Self
+from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from stock_research_ai.domain.financial import (
     ExactDecimal,
@@ -117,3 +128,146 @@ class SummaryInput(BaseModel):
     balance_sheet: SummaryBlock
     cash_flow: SummaryBlock
     limitations: tuple[SummaryLimitation, ...] = Field(default=(), max_length=48)
+
+
+# --- SUMMARY_V1 Box 3: model output, result and safe errors --------------------------
+
+SUMMARY_TEXT_MAX_CHARACTERS = 8_000
+SUMMARY_REQUEST_MAX_BYTES = 24_576
+
+Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+# Line breaks and tabs are the only control characters a plain-text summary needs.
+# Bidirectional overrides/isolates can make displayed text misrepresent its content.
+_ALLOWED_CONTROLS = frozenset("\n\r\t")
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f")
+
+
+def unsafe_text_characters(text: str) -> bool:
+    """True when text holds control or bidi-override characters unsafe to display."""
+    return any(
+        (ord(ch) < 32 or 127 <= ord(ch) < 160)
+        and ch not in _ALLOWED_CONTROLS
+        or ch in _BIDI_CONTROLS
+        for ch in text
+    )
+
+
+class SummaryErrorCode(StrEnum):
+    SUMMARY_INPUT_TOO_LARGE = "SUMMARY_INPUT_TOO_LARGE"
+    SUMMARY_REQUEST_TOO_LARGE = "SUMMARY_REQUEST_TOO_LARGE"
+    INVALID_PROVIDER_RESPONSE = "INVALID_PROVIDER_RESPONSE"
+    SUMMARY_TRUNCATED = "SUMMARY_TRUNCATED"
+    SUMMARY_EMPTY = "SUMMARY_EMPTY"
+    SUMMARY_TOO_LARGE = "SUMMARY_TOO_LARGE"
+    MODEL_MISMATCH = "MODEL_MISMATCH"
+    UNSAFE_CONTENT = "UNSAFE_CONTENT"
+
+
+# code -> (fixed message, retryable_by_user, ambiguous). Messages never carry provider
+# bodies, prompts, summary text, credentials or exception text.
+_ERRORS: dict[SummaryErrorCode, tuple[str, bool, bool]] = {
+    SummaryErrorCode.SUMMARY_INPUT_TOO_LARGE: (
+        "Company data exceeds the summary input budget.",
+        False,
+        False,
+    ),
+    SummaryErrorCode.SUMMARY_REQUEST_TOO_LARGE: (
+        "Summary request exceeds the request size ceiling.",
+        False,
+        False,
+    ),
+    SummaryErrorCode.INVALID_PROVIDER_RESPONSE: (
+        "The model returned a response in an unexpected shape.",
+        True,
+        False,
+    ),
+    SummaryErrorCode.SUMMARY_TRUNCATED: ("The model did not finish the summary.", True, False),
+    SummaryErrorCode.SUMMARY_EMPTY: ("The model returned an empty summary.", True, False),
+    SummaryErrorCode.SUMMARY_TOO_LARGE: (
+        "The model returned a summary longer than allowed.",
+        True,
+        False,
+    ),
+    SummaryErrorCode.MODEL_MISMATCH: (
+        "The responding model differs from the requested model.",
+        False,
+        False,
+    ),
+    SummaryErrorCode.UNSAFE_CONTENT: (
+        "The model returned text containing disallowed characters.",
+        True,
+        False,
+    ),
+}
+
+
+class SummaryGenerationError(Exception):
+    """A typed summary failure; its message is fixed by its code alone."""
+
+    def __init__(self, code: SummaryErrorCode) -> None:
+        message, retryable, ambiguous = _ERRORS[code]
+        super().__init__(f"{code.value}: {message}")
+        self.code = code
+        self.message = message
+        self.retryable_by_user = retryable
+        self.ambiguous = ambiguous
+
+
+class SummaryUsage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    prompt_tokens: NonNegativeInt
+    completion_tokens: NonNegativeInt
+
+
+class SummaryModelOutput(BaseModel):
+    """What a SummaryModel adapter hands back. Text and finish reason stay unvalidated
+    here so the application can reject them with a typed SummaryGenerationError."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    summary_text: str
+    requested_model: BoundedText
+    reported_model: BoundedText | None
+    finish_reason: BoundedText | None
+    usage: SummaryUsage | None = None
+
+
+class SummaryCompanyRef(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: BoundedText
+    source_company_key: BoundedText
+    reporting_scope: ReportingScope
+
+
+class SummaryResult(BaseModel):
+    """One validated SUMMARY_V1 report. Exists only on success; no raw request,
+    response, prompt, credential or provider error body is retained."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    schema_version: Literal["SUMMARY_RESULT_V1"] = "SUMMARY_RESULT_V1"
+    summary_id: UUID
+    company: SummaryCompanyRef
+    source_url: BoundedUrl
+    data_retrieved_at: AwareDatetime | None
+    generated_at: AwareDatetime
+    input_sha256: Sha256Hex
+    prompt_version: Literal["SUMMARY_PROMPT_V1"] = "SUMMARY_PROMPT_V1"
+    summary_text: Annotated[
+        str,
+        StringConstraints(min_length=1, max_length=SUMMARY_TEXT_MAX_CHARACTERS),
+    ]
+    limitations: tuple[SummaryLimitation, ...] = Field(default=(), max_length=48)
+    provider: Literal["aicredits"] = "aicredits"
+    requested_model: BoundedText
+    reported_model: BoundedText | None
+    finish_reason: Literal["stop"]
+    usage: SummaryUsage | None = None
+
+    @field_validator("summary_text")
+    @classmethod
+    def displayable(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Summary text must not be blank")
+        if unsafe_text_characters(value):
+            raise ValueError("Summary text contains disallowed characters")
+        return value

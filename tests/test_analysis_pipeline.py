@@ -703,3 +703,25 @@ async def test_base_label_receives_no_probability_language(world, tmp_path):
     honest = dict(candidate, statement="This base scenario's assumptions are stated explicitly.")
     claim, rejection = validate_candidate(honest, bundle, evidence, "IT_SERVICES_PROFILE")
     assert rejection is None and claim is not None
+
+
+async def test_r1_projection_budget_failure_precedes_model_and_persistence(
+    world, tmp_path, monkeypatch
+):
+    from stock_research_ai.application import analyst_model_input
+    from stock_research_ai.application.analyst_model_input import ModelInputError
+
+    class MustNotRun:
+        async def generate(self, *args, **kwargs):
+            pytest.fail("Projection failure must precede the model call")
+
+    settings, _, _, _, request, execution = world
+    # MAX_ITEMS=0 no longer forces this: the conservative input budget (Part 6D)
+    # selects evidence down to fit rather than erroring when the ceiling is small -
+    # an empty/near-empty selection still can't satisfy an unreasonably tiny byte
+    # ceiling, which is what actually remains the authoritative final guard.
+    monkeypatch.setattr(analyst_model_input, "MAX_INPUT_BYTES", 1)
+    with pytest.raises(ModelInputError, match="budget"):
+        await analyze_company(settings, request, execution, tmp_path / "out",
+                              model=MustNotRun(), provider_kind="FAKE")
+    assert _row_count(settings.database_path, "analysis_snapshots") == 0

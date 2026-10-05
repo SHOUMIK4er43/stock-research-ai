@@ -43,27 +43,33 @@ from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.report import ResearchReportSnapshot
 
 _PAIRING_PATH = "/v1/pair"
+_READINESS_PATHS = frozenset({"/health", "/v1/version"})
 
 
 class _BrowserCORSMiddleware:
-    """Dynamic CORS: reflects only the exact currently-paired chrome-extension://
-    origin. Before pairing, only the pairing endpoint itself accepts a bare
-    chrome-extension:// origin - never a wildcard, never a normal https:// site. This
-    middleware ONLY controls whether a browser's JS may read the response; it never
-    blocks the request from reaching a handler - actual access control for protected
-    routes is `_require_paired_client` below, which independently requires a valid
-    Bearer token AND the exact paired Origin."""
+    """Reflect only the configured exact extension origin, never arbitrary websites.
 
-    def __init__(self, app: Any, pairing_store: PairingStore) -> None:
+    Protected routes require a bearer independently of CORS. An explicit Origin
+    must also match the paired identity; Chrome may omit Origin on extension GETs.
+    Pairing always requires the configured Origin, even before a token exists.
+    """
+
+    def __init__(
+        self, app: Any, pairing_store: PairingStore, approved_origin: str | None = None
+    ) -> None:
         self.app = app
         self._pairing_store = pairing_store
+        self._approved_origin = approved_origin
 
     def _origin_allowed(self, origin: str | None, path: str) -> bool:
-        if not origin or not origin.startswith("chrome-extension://"):
+        if not origin or origin != self._approved_origin:
             return False
         if path == _PAIRING_PATH:
             return True
-        return origin == self._pairing_store.paired_origin()
+        paired_origin = self._pairing_store.paired_origin()
+        if paired_origin is not None:
+            return origin == paired_origin
+        return path in _READINESS_PATHS and origin == self._approved_origin
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -198,7 +204,11 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
-    app.add_middleware(_BrowserCORSMiddleware, pairing_store=active_pairing_store)
+    app.add_middleware(
+        _BrowserCORSMiddleware,
+        pairing_store=active_pairing_store,
+        approved_origin=runtime_settings.browser_extension_origin,
+    )
 
     def current_engine() -> ResearchEngine:
         if active_engine is None:
@@ -241,7 +251,7 @@ def create_app(
 
     @app.get("/v1/capabilities", response_model=Capabilities)
     async def get_capabilities() -> Capabilities:
-        return await current_engine().get_capabilities()
+        return await current_job_manager().engine.get_capabilities()
 
     @app.post("/v1/companies", response_model=Company, status_code=status.HTTP_201_CREATED)
     async def register_company(registration: CompanyRegistration) -> Company:
@@ -272,6 +282,11 @@ def create_app(
                     "code": "MISSING_ORIGIN",
                     "message": "An Origin header is required to pair",
                 },
+            )
+        if origin != runtime_settings.browser_extension_origin:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "PAIRING_FAILED", "message": "Pairing origin is not approved"},
             )
         try:
             token = active_pairing_store.complete_pairing(origin, payload.pairing_code)

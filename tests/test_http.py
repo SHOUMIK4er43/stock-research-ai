@@ -3,6 +3,7 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from copy import copy
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,7 +13,7 @@ from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
 from stock_research_ai.adapters.sqlite import DatabaseNotReadyError, SQLiteDatabase
-from stock_research_ai.application.engine import ResearchEngine
+from stock_research_ai.application.engine import Capabilities, ResearchEngine
 from stock_research_ai.config import Settings
 from stock_research_ai.domain.company import Company
 from stock_research_ai.interfaces import http as http_interface
@@ -66,6 +67,53 @@ async def test_http_company_round_trip(engine: ResearchEngine) -> None:
             assert fetched.status_code == 200
             assert fetched.json() == created.json()
             assert await engine.get_company(company.id) == company
+
+
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize("live_optional", [False, True])
+async def test_capabilities_use_browser_execution_engine(
+    engine: ResearchEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    injected: bool,
+    live_optional: bool,
+) -> None:
+    # Default startup owns distinct company and browser engines. Only the latter
+    # executes browser jobs; injected startup must use that same supplied engine.
+    browser = copy(engine)
+    expected = Capabilities(
+        analysis_available=True,
+        deterministic_challenge_available=True,
+        live_challenger_available=live_optional,
+        deterministic_report_assembly_available=True,
+        live_report_narrator_available=live_optional,
+    )
+
+    async def browser_capabilities() -> Capabilities:
+        return expected
+
+    monkeypatch.setattr(browser, "get_capabilities", browser_capabilities)
+    assert (await engine.get_capabilities()).analysis_available is False
+
+    @asynccontextmanager
+    async def company_context(_: Settings) -> AsyncIterator[ResearchEngine]:
+        assert not injected
+        yield engine
+
+    @asynccontextmanager
+    async def browser_context(_: Settings) -> AsyncIterator[tuple[object, object, object]]:
+        assert not injected
+        yield browser, object(), object()
+
+    monkeypatch.setattr(http_interface, "research_engine", company_context)
+    monkeypatch.setattr(http_interface, "browser_engine", browser_context)
+    app = http_interface.create_app(engine=browser if injected else None)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/v1/capabilities")
+    assert response.status_code == 200
+    assert response.json() == expected.model_dump(mode="json")
 
 
 async def test_http_validation_and_missing_company(engine: ResearchEngine) -> None:

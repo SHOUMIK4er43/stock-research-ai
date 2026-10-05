@@ -35,6 +35,8 @@ const storage = createStorage(chrome.storage.local);
 /** @type {ReturnType<typeof setTimeout> | null} */
 let pollTimer = null;
 let currentJobId = null;
+// Only the latest boot may publish readiness or pairing state.
+let bootGeneration = 0;
 
 // Report-view UI state (Part 6B-C). Kept separate from the job/page facts above: a
 // report is keyed by report_snapshot_id, not by job lifetime, and stays viewable across
@@ -104,8 +106,11 @@ els.startCommand.textContent = START_COMMAND;
 els.pairingStartCommand.textContent = START_COMMAND;
 els.pairCodeCommand.textContent = PAIR_CODE_COMMAND;
 
-/** @type {{sourceUrl: string|null, adapter: import('./portals/portal_adapter.js').PortalAdapter|null}} */
-const page = { sourceUrl: null, adapter: null };
+/** @type {{sourceUrl: string|null, adapter: import('./portals/portal_adapter.js').PortalAdapter|null, pageIdentity: {page_identifier: string, page_mode: "standalone"|"consolidated"}|null}} */
+const page = { sourceUrl: null, adapter: null, pageIdentity: null };
+
+/** SUMMARY_V1 Box 1 label only - never invents a company name; it is always backend-sourced. */
+const PAGE_MODE_LABELS = Object.freeze({ standalone: "Standalone", consolidated: "Consolidated" });
 
 function renderState(state, data = {}) {
   for (const panel of Object.values(els.panels)) {
@@ -115,9 +120,20 @@ function renderState(state, data = {}) {
   if (panel) panel.hidden = false;
 
   if (state === States.UNSUPPORTED_PAGE || state === States.READY) {
-    els.currentPageLabel.textContent = page.sourceUrl
-      ? `Current page: ${page.sourceUrl}`
-      : "Open a Screener company page to research a company.";
+    // UNSUPPORTED_PAGE never has a page identity (its adapter is always null), so this
+    // branch only ever applies on READY - no extra state check needed.
+    if (page.pageIdentity) {
+      const { page_identifier, page_mode } = page.pageIdentity;
+      els.currentPageLabel.textContent =
+        `Screener company detected\n` +
+        `Identifier: ${page_identifier}\n` +
+        `Page: ${PAGE_MODE_LABELS[page_mode] || page_mode}\n` +
+        `Company name: Pending data fetch`;
+    } else {
+      els.currentPageLabel.textContent = page.sourceUrl
+        ? `Current page: ${page.sourceUrl}`
+        : "Open a Screener company page to research a company.";
+    }
   }
 
   if (state === States.READY || state === States.LAUNCHING) {
@@ -176,10 +192,18 @@ function stopPolling() {
   }
 }
 
-async function refreshPage() {
+async function refreshPage(isCurrent) {
   const url = await getActiveTabUrl();
+  // A superseded boot's late tab lookup must never touch shared page state.
+  if (!isCurrent()) return;
   page.sourceUrl = url;
   page.adapter = url ? resolvePortal(url) : null;
+  // Recomputed fresh on every call (boot(), tab activation, tab URL update) - never
+  // retains the previous page's identity across a navigation (SUMMARY_V1 Box 1).
+  page.pageIdentity =
+    page.adapter && typeof page.adapter.getPageIdentity === "function"
+      ? page.adapter.getPageIdentity(url)
+      : null;
 }
 
 async function boot() {
@@ -188,11 +212,15 @@ async function boot() {
     // Only the explicit Back button (closeReportView) leaves this mode.
     return;
   }
+  const generation = ++bootGeneration;
+  const isCurrent = () => generation === bootGeneration;
   const baseUrl = await storage.getServiceBaseUrl();
+  if (!isCurrent()) return;
   const client = new ApiClient(baseUrl);
   els.versionLabel.textContent = "";
 
-  await refreshPage();
+  await refreshPage(isCurrent);
+  if (!isCurrent()) return;
 
   const facts = {
     serviceReachable: false,
@@ -208,6 +236,7 @@ async function boot() {
   } catch {
     health = null;
   }
+  if (!isCurrent()) return;
   facts.serviceReachable = !!(health && health.status === "ok");
   if (!facts.serviceReachable) {
     setServiceStatusLine("Local service not reachable");
@@ -221,6 +250,7 @@ async function boot() {
   } catch {
     version = null;
   }
+  if (!isCurrent()) return;
   if (!version) {
     facts.serviceReachable = false;
     setServiceStatusLine("Local service not reachable");
@@ -230,12 +260,14 @@ async function boot() {
   els.versionLabel.textContent = `v${version.application_version}`;
   facts.versionCompatible = version.api_version === "v1";
   if (!facts.versionCompatible) {
+    setServiceStatusLine("Service reachable · incompatible version");
     data.incompatibleDetail = `Extension expects API v1, service reports ${version.api_version}.`;
     renderState(deriveState(facts), data);
     return;
   }
 
   const token = await storage.getToken();
+  if (!isCurrent()) return;
   facts.paired = !!token;
   if (!facts.paired) {
     setServiceStatusLine("Service reachable · not paired");
@@ -249,12 +281,14 @@ async function boot() {
   } catch {
     capabilities = null;
   }
+  if (!isCurrent()) return;
   data.analysisAvailable = !!(capabilities && capabilities.analysis_available);
   setServiceStatusLine("Service reachable · paired");
 
   const activeJob = await storage.getActiveJob();
+  if (!isCurrent()) return;
   if (activeJob && activeJob.jobId) {
-    await reconnectJob(client, token, activeJob.jobId, facts);
+    await reconnectJob(client, token, activeJob.jobId, facts, isCurrent);
     return;
   }
 
@@ -262,21 +296,42 @@ async function boot() {
   // including a server restart that lost it. Only offered here when it belongs to the
   // page currently open, so an old company's report is never mislabeled as this page's.
   const lastReport = await storage.getLastReport();
+  if (!isCurrent()) return;
   data.lastReportForThisPage = isReportForCurrentPage(lastReport, page.sourceUrl) ? lastReport : null;
 
   renderState(deriveState(facts), data);
 }
 
-async function reconnectJob(client, token, jobId, facts) {
+async function requirePairingAfterUnauthorized() {
+  stopPolling();
+  currentJobId = null;
+  const generation = ++bootGeneration;
+  // Keep active-job and report pointers: a 401 says nothing about their existence.
+  await storage.clearToken();
+  if (generation !== bootGeneration) return;
+  setServiceStatusLine("Service reachable · not paired");
+  renderState(States.UNPAIRED, {});
+  els.pairingError.textContent = "Pairing authorization was rejected. Pair again to reconnect your research.";
+  els.pairingError.hidden = false;
+}
+
+async function reconnectJob(client, token, jobId, facts, isCurrent) {
   try {
     const job = await client.getResearchJob(token, jobId);
+    if (!isCurrent()) return;
     currentJobId = jobId;
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
+    if (!isCurrent()) return;
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     const outcome = interpretJobFetchError(error instanceof ApiError ? error : null);
     if (outcome === "LOST") {
       // Honest: never pretend a lost job is still running.
       await storage.clearActiveJob();
+      if (!isCurrent()) return;
       renderState(deriveState(facts), {});
       return;
     }
@@ -307,6 +362,10 @@ async function pollJob(client, token, facts) {
     const job = await client.getResearchJob(token, currentJobId);
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     const outcome = interpretJobFetchError(error instanceof ApiError ? error : null);
     if (outcome === "LOST") {
       await storage.clearActiveJob();

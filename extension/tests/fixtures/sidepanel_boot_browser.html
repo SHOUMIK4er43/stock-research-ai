@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Offline sidepanel boot rendering regression</title>
+<script type="module">
+// Serve extension/ on an isolated loopback port. Uses the actual HTML, CSS and
+// controller, synthetic Chrome storage, and exact live readiness response shapes.
+const root = new URL("../../", location.href);
+const [html, css] = await Promise.all([
+  fetch(new URL("sidepanel.html", root), { cache: "no-store" }).then(r => r.text()),
+  fetch(new URL("css/sidepanel.css", root), { cache: "no-store" }).then(r => r.text()),
+]);
+document.documentElement.innerHTML = html
+  .replace('<link rel="stylesheet" href="css/sidepanel.css" />', `<style>${css}</style>`)
+  .replace('<script type="module" src="src/sidepanel.js"><' + '/script>', '');
+window.chrome = { storage: { local: { get: async () => ({}) } }, tabs: {
+  query: (_, cb) => cb([]), onActivated: { addListener() {} } } };
+const requests = [];
+window.fetch = async (url, init) => {
+  requests.push(url);
+  if (init.method !== "GET" || Object.keys(init.headers).length) throw new Error("Unexpected auth/request");
+  const payloads = {
+    "http://127.0.0.1:8000/health": { status: "ok" },
+    "http://127.0.0.1:8000/v1/version": {
+      api_version: "v1", application_version: "0.1.0", report_schema_version: "6A.1",
+      supported_research_plans: ["FULL_RESEARCH_V1"], supported_portals: ["SCREENER"],
+    },
+  };
+  if (!(url in payloads)) throw new Error("Unexpected boot endpoint");
+  return { ok: true, status: 200, json: async () => payloads[url] };
+};
+await import(new URL("src/sidepanel.js", root));
+await new Promise(resolve => setTimeout(resolve, 0));
+const unavailable = document.getElementById("panel-service-unavailable");
+const unpaired = document.getElementById("panel-unpaired");
+const result = {
+  status: document.getElementById("service-status-line").textContent,
+  unavailableHidden: unavailable.hidden,
+  unavailableDisplay: getComputedStyle(unavailable).display,
+  unpairedDisplay: getComputedStyle(unpaired).display,
+  requests: requests.length,
+};
+const passed = result.status === "Service reachable · not paired" && result.unavailableHidden
+  && result.unavailableDisplay === "none" && result.unpairedDisplay === "flex" && result.requests === 2;
+const output = document.createElement("pre");
+output.id = "boot-test-result";
+output.textContent = `${passed ? "PASS" : "FAIL"}: ${JSON.stringify(result)}`;
+document.body.prepend(output);
+</script>

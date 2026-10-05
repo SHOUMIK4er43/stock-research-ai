@@ -85,6 +85,11 @@ body {
   gap: 10px;
 }
 
+/* Controller visibility must override the panel layout display rule. */
+.panel[hidden] {
+  display: none;
+}
+
 .panel-title {
   margin: 0;
   font-size: 14px;

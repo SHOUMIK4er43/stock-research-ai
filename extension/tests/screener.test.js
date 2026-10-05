@@ -83,3 +83,86 @@ test("adapter carries no financial/sector/report semantics on its instance", () 
   const context = adapter.getSourceContext("https://www.screener.in/company/INFY/");
   assert.deepEqual(Object.keys(context).sort(), ["portal", "source_url"]);
 });
+
+// --- getPageIdentity (SUMMARY_V1 Box 1) ---------------------------------------------
+
+for (const [label, identifier, suffix, expectedMode] of [
+  ["INFY standalone", "INFY", "", "standalone"],
+  ["INFY consolidated", "INFY", "consolidated/", "consolidated"],
+  ["TCS standalone", "TCS", "", "standalone"],
+  ["HDFCBANK standalone", "HDFCBANK", "", "standalone"],
+  ["TATAPOWER standalone", "TATAPOWER", "", "standalone"],
+  ["GAIL standalone", "GAIL", "", "standalone"],
+  ["ZYDUSLIFE standalone", "ZYDUSLIFE", "", "standalone"],
+  ["numeric identifier standalone", "500209", "", "standalone"],
+  ["identifier containing a hyphen", "ABC-DEF", "", "standalone"],
+  ["identifier containing an underscore", "ABC_DEF", "", "standalone"],
+]) {
+  test(`getPageIdentity: ${label}`, () => {
+    const url = `https://www.screener.in/company/${identifier}/${suffix}`;
+    assert.deepEqual(adapter.getPageIdentity(url), {
+      portal: "SCREENER",
+      source_url: url,
+      page_identifier: identifier,
+      page_mode: expectedMode,
+    });
+  });
+}
+
+test("getPageIdentity returns null for an unsupported Screener path", () => {
+  assert.equal(adapter.getPageIdentity("https://www.screener.in/screens/"), null);
+});
+
+test("getPageIdentity returns null for a lookalike domain", () => {
+  assert.equal(
+    adapter.getPageIdentity("https://www.screener.in.evil.example/company/INFY/"),
+    null,
+  );
+});
+
+test("getPageIdentity returns null for a malformed company URL", () => {
+  assert.equal(adapter.getPageIdentity("https://www.screener.in/company//"), null);
+});
+
+test("getPageIdentity returns null for a completely malformed URL", () => {
+  assert.equal(adapter.getPageIdentity("not-a-url"), null);
+});
+
+test("a numeric page_identifier is never labeled as an NSE ticker or exchange symbol", () => {
+  const identity = adapter.getPageIdentity("https://www.screener.in/company/500209/");
+  const serialized = JSON.stringify(identity);
+  assert.doesNotMatch(serialized, /ticker/i);
+  assert.doesNotMatch(serialized, /exchange/i);
+  assert.doesNotMatch(serialized, /symbol/i);
+  assert.equal(identity.page_identifier, "500209");
+});
+
+test("getPageIdentity never infers or includes a company name", () => {
+  const identity = adapter.getPageIdentity("https://www.screener.in/company/INFY/");
+  assert.deepEqual(Object.keys(identity).sort(), [
+    "page_identifier",
+    "page_mode",
+    "portal",
+    "source_url",
+  ]);
+  assert.equal("company_name" in identity, false);
+  assert.equal("name" in identity, false);
+});
+
+test("getPageIdentity never performs a network fetch", () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("getPageIdentity must never fetch");
+  };
+  try {
+    adapter.getPageIdentity("https://www.screener.in/company/INFY/");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("getSourceContext behavior is unchanged by the addition of getPageIdentity", () => {
+  const url = "https://www.screener.in/company/TCS/consolidated/";
+  assert.deepEqual(adapter.getSourceContext(url), { portal: "SCREENER", source_url: url });
+  assert.equal(adapter.getSourceContext("https://www.screener.in/screens/"), null);
+});

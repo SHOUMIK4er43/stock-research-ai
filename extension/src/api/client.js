@@ -103,7 +103,9 @@ export class ApiClient {
     if (token) headers.Authorization = `Bearer ${token}`;
     let response;
     try {
-      response = await this._fetch(origin + path, {
+      // Native browser fetch must not receive the ApiClient as its receiver.
+      const fetchImpl = this._fetch;
+      response = await fetchImpl(origin + path, {
         method,
         headers,
         body: body !== null ? JSON.stringify(body) : undefined,
@@ -170,7 +172,9 @@ export class ApiClient {
     const path = `/v1/reports/${encodeURIComponent(reportId)}/artifacts/${encodeURIComponent(artifactKind)}`;
     let response;
     try {
-      response = await this._fetch(origin + path, {
+      // Native browser fetch must not receive the ApiClient as its receiver.
+      const fetchImpl = this._fetch;
+      response = await fetchImpl(origin + path, {
         method: "GET",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });

@@ -1,11 +1,10 @@
-"""Anthropic-backed production implementation of the existing, frozen AnalystModel
-Protocol (application.ports.AnalystModel).
+"""Anthropic-backed implementation of the provider-neutral AnalystModel protocol.
 
 Provider adapter responsibilities are limited to: an authenticated HTTPS request,
 forced-tool-use structured-output transport, provider response parsing, provider
 metadata extraction, and typed provider failures. It does NOT own research prompt
 semantics - it renders exactly one request per `generate()` call (no agent loop) built
-entirely from the bundle Part 5B already assembled, using the exact existing
+from the frozen Part 5B bundle and its application-owned content projection, using the existing
 PromptTemplate/RenderedModelRequest/RawAnalystResponse/ModelMetadata contract every
 other AnalystModel (including tests/fakes/analyst.py) already uses. All model output
 remains untrusted until the existing, frozen application.analysis_validation.validate_
@@ -17,94 +16,32 @@ import hashlib
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, get_args
+from typing import Any
 
 import httpx
 
+from stock_research_ai.adapters.analyst_contract import (
+    _CLAIM_SCHEMA,
+    _TOOL_NAME,
+    _TRANSPORT_INSTRUCTIONS,
+)
+from stock_research_ai.adapters.analyst_contract import AnalystProviderError as AnalystProviderError
+from stock_research_ai.application.analyst_model_input import serialize_model_input
 from stock_research_ai.application.hashing import digest
 from stock_research_ai.domain.analysis import (
-    AnalysisSection,
     AnalystExecutionSpec,
     AnstInputBundle,
-    EvidenceKind,
     ModelMetadata,
     PromptTemplate,
     RawAnalystResponse,
     RenderedModelRequest,
 )
+from stock_research_ai.domain.analyst_model_input import AnalystModelInput
 
 _API_VERSION = "2023-06-01"
-_TOOL_NAME = "emit_claims"
 _MAX_RESPONSE_BYTES = 2_000_000
 _MAX_ATTEMPTS = 3
 _BACKOFF_SECONDS = (1.0, 4.0)
-
-_CITATION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "kind": {"type": "string", "enum": list(get_args(EvidenceKind))},
-        "owning_snapshot_id": {"type": "string"},
-        "item_key": {"type": ["string", "null"]},
-    },
-    "required": ["kind", "owning_snapshot_id"],
-    "additionalProperties": False,
-}
-
-#: Hand-authored, not derived from AnalystClaimCandidate.model_json_schema() at runtime -
-#: Anthropic's tool-schema dialect is not guaranteed byte-identical to Pydantic's JSON
-#: Schema output, and this is the ONLY shape the model may emit (domain.analysis docstring).
-_CLAIM_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "claims": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "section": {"type": "string", "enum": list(get_args(AnalysisSection))},
-                    "statement": {"type": "string", "minLength": 1},
-                    "materiality": {
-                        "type": "string",
-                        "enum": ["PRIMARY", "SUPPORTING", "CONTEXTUAL"],
-                    },
-                    "citations": {"type": "array", "minItems": 1, "items": _CITATION_SCHEMA},
-                    "management_quote": {
-                        "type": ["object", "null"],
-                        "properties": {
-                            "chunk": _CITATION_SCHEMA,
-                            "text": {"type": "string", "minLength": 1},
-                        },
-                        "required": ["chunk", "text"],
-                        "additionalProperties": False,
-                    },
-                    "dependency_assumption_ids": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["section", "statement", "materiality", "citations"],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["claims"],
-    "additionalProperties": False,
-}
-
-_TRANSPORT_INSTRUCTIONS = (
-    "You are given a closed evidence bundle as JSON. Return your findings ONLY by "
-    f"calling the {_TOOL_NAME} tool. Cite only sources already present in the bundle's "
-    "`sources` list, by their exact kind/owning_snapshot_id/item_key; never cite "
-    "anything not listed there, and never introduce outside knowledge, recommendations, "
-    "price targets, or certainty language."
-)
-
-
-class AnalystProviderError(Exception):
-    """A typed live-provider failure. Never converted into an empty successful analysis;
-    always propagates out of `generate()` exactly as domain.analysis's own `RuntimeError`
-    convention for an unconfigured provider does."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code = code
 
 
 def _hash_json(value: Mapping[str, object]) -> str:
@@ -133,7 +70,11 @@ class AnthropicAnalystModel:
         self._transport = transport
 
     async def generate(
-        self, bundle: AnstInputBundle, execution: AnalystExecutionSpec
+        self,
+        bundle: AnstInputBundle,
+        execution: AnalystExecutionSpec,
+        *,
+        model_input: AnalystModelInput,
     ) -> ModelMetadata:
         template_content = _TRANSPORT_INSTRUCTIONS
         template = PromptTemplate(
@@ -142,8 +83,7 @@ class AnthropicAnalystModel:
             content=template_content,
             content_sha256=hashlib.sha256(template_content.encode()).hexdigest(),
         )
-        bundle_payload = bundle.model_dump(mode="json")
-        bundle_text = json.dumps(bundle_payload, sort_keys=True)
+        bundle_text = serialize_model_input(bundle, model_input)
         rendered_text = f"{template_content}\n\nEvidence bundle:\n{bundle_text}"
         generation_parameters = dict(execution.generation_parameters)
         request = RenderedModelRequest(

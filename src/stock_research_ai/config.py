@@ -22,23 +22,37 @@ class Settings(BaseSettings):
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=8000, ge=1, le=65535)
 
-    #: Live AnstModel provider configuration (Part 6B0). Absent provider/api_key means no
-    #: live provider is configured; bootstrap never substitutes a fake in that case.
+    #: Explicit provider selection. An unset selector preserves the legacy Anthropic
+    #: credential default; AI Credits requires an explicit selector, key and model.
     analyst_provider: str | None = None
     #: SecretStr so Settings' own repr/str/model_dump can never leak this value; the
     #: adapter unwraps it exactly once via .get_secret_value() (bootstrap.py) and never
     #: threads it through any Pydantic field, log statement, or exception message.
     analyst_api_key: SecretStr | None = None
+    aicredits_api_key: SecretStr | None = None
+    #: No guessed/default catalog model; selected AI Credits requires explicit configuration.
+    aicredits_model: str | None = None
     analyst_model: str = "claude-sonnet-5"
     analyst_base_url: str = "https://api.anthropic.com"
     analyst_timeout_seconds: float = Field(default=90.0, gt=0)
     analyst_max_output_tokens: int = Field(default=4096, ge=1)
+    #: AI Credits transport retry count only (adapters/aicredits/analyst.py); the direct
+    #: Anthropic adapter keeps its own independent, fixed attempt count. Upper bound of 3
+    #: is not arbitrary: it is the exact length of that adapter's fixed two-entry backoff
+    #: schedule plus one - a higher value would run out of configured backoff durations.
+    analyst_max_attempts: int = Field(default=3, ge=1, le=3)
 
     #: Browser extension pairing/auth state (Part 6B-A) - a security domain completely
     #: separate from analyst_* (Anthropic) credentials above. User-local, never in the
     #: research/report DB, never under the Git repo.
     browser_auth_path: Path = Field(
         default_factory=lambda: Path.home() / ".stock-research-ai" / "browser_auth.json"
+    )
+
+    #: Non-secret exact origin required for browser pairing and CORS response access.
+    #: No default: an arbitrary extension cannot opt itself into this allowlist.
+    browser_extension_origin: str | None = Field(
+        default=None, pattern=r"^chrome-extension://[a-p]{32}$"
     )
 
     #: Part 6C-A: user-local rotating log file for `serve-http` (logging_setup.py).

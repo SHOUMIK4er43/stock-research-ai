@@ -168,7 +168,6 @@ async def test_content_is_returned_untrimmed():
         payload(finish_reason="length"),
         payload(finish_reason="tool_calls"),
         payload(finish_reason=None),
-        payload(model=7),
         {"choices": "not-a-list"},
         ["not", "an", "object"],
     ],
@@ -260,14 +259,22 @@ async def test_transport_failures_are_never_retried(exc, code, ambiguous):
     assert error.__cause__ is None and error.__suppress_context__
 
 
-@pytest.mark.parametrize("reported", [MODEL, "claude-sonnet-5", None])
+@pytest.mark.parametrize("reported", [MODEL, "claude-sonnet-5"])
 async def test_accepted_model_echoes(reported):
     assert (await complete(ok(payload(model=reported)))).reported_model == reported
 
 
-@pytest.mark.parametrize("reported", ["anthropic/claude-opus-5-5", "sonnet-5", "", "x" * 500])
-async def test_different_model_is_a_mismatch(reported):
+@pytest.mark.parametrize(
+    "reported", ["anthropic/claude-opus-5-5", "sonnet-5", "", "x" * 500, None, 7, ["m"]]
+)
+async def test_different_or_missing_model_is_a_mismatch(reported):
     await expect_error(ok(payload(model=reported)), SummaryErrorCode.MODEL_MISMATCH)
+
+
+async def test_absent_model_field_is_a_mismatch():
+    body = payload()
+    del body["model"]
+    await expect_error(ok(body), SummaryErrorCode.MODEL_MISMATCH)
 
 
 async def test_requested_model_without_prefix_does_not_accept_a_prefixed_echo():

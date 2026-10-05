@@ -228,9 +228,8 @@ class AICreditsSummaryModel:
             or not text.strip()
         ):
             raise _fail(invalid)
-        if reported is not None and not isinstance(reported, str):
-            raise _fail(invalid)
-        if not model_matches(self._model, reported):
+        # The provider must identify the responding model; a missing echo is not trusted.
+        if not isinstance(reported, str) or not model_matches(self._model, reported):
             raise _fail(SummaryErrorCode.MODEL_MISMATCH)
         if self._api_key in text:
             raise _fail(SummaryErrorCode.UNSAFE_CONTENT)

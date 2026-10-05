@@ -265,7 +265,11 @@ async def test_error_messages_never_carry_provider_prompt_or_secret_text(tmp_pat
     for code in SummaryErrorCode:
         error = SummaryGenerationError(code)
         assert str(error).startswith(code.value + ": ")
-        assert isinstance(error.retryable_by_user, bool) and error.ambiguous is False
+        assert isinstance(error.retryable_by_user, bool)
+        # Only transport outcomes where the request may already have run are ambiguous.
+        assert error.ambiguous is (
+            code in {SummaryErrorCode.PROVIDER_TIMEOUT, SummaryErrorCode.PROVIDER_CONNECTION_LOST}
+        )
 
 
 def test_result_contract_is_strict():

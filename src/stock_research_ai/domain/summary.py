@@ -162,6 +162,14 @@ class SummaryErrorCode(StrEnum):
     SUMMARY_TOO_LARGE = "SUMMARY_TOO_LARGE"
     MODEL_MISMATCH = "MODEL_MISMATCH"
     UNSAFE_CONTENT = "UNSAFE_CONTENT"
+    # Provider/transport failures raised by the SummaryModel adapter.
+    PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED"
+    CREDENTIAL_UNAVAILABLE = "CREDENTIAL_UNAVAILABLE"
+    UNSAFE_REQUEST = "UNSAFE_REQUEST"
+    PROVIDER_HTTP_ERROR = "PROVIDER_HTTP_ERROR"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+    PROVIDER_CONNECTION_LOST = "PROVIDER_CONNECTION_LOST"
 
 
 # code -> (fixed message, retryable_by_user, ambiguous). Messages never carry provider
@@ -198,6 +206,38 @@ _ERRORS: dict[SummaryErrorCode, tuple[str, bool, bool]] = {
         "The model returned text containing disallowed characters.",
         True,
         False,
+    ),
+    SummaryErrorCode.PROVIDER_NOT_CONFIGURED: (
+        "The summary provider is not configured.",
+        False,
+        False,
+    ),
+    SummaryErrorCode.CREDENTIAL_UNAVAILABLE: (
+        "No usable summary provider credential is available.",
+        False,
+        False,
+    ),
+    SummaryErrorCode.UNSAFE_REQUEST: ("The summary request failed a safety check.", False, False),
+    SummaryErrorCode.PROVIDER_HTTP_ERROR: (
+        "The summary provider rejected the request.",
+        True,
+        False,
+    ),
+    SummaryErrorCode.PROVIDER_UNAVAILABLE: (
+        "The summary provider could not be reached; no request was sent.",
+        True,
+        False,
+    ),
+    # Ambiguous: the request may have reached the provider (and been billed).
+    SummaryErrorCode.PROVIDER_TIMEOUT: (
+        "The summary provider did not respond in time; the request may have run.",
+        True,
+        True,
+    ),
+    SummaryErrorCode.PROVIDER_CONNECTION_LOST: (
+        "The connection to the summary provider was lost; the request may have run.",
+        True,
+        True,
     ),
 }
 

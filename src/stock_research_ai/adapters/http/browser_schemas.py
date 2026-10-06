@@ -31,6 +31,16 @@ class BrowserResearchRequest(BaseModel):
     research_plan: ResearchPlan = "FULL_RESEARCH_V1"
 
 
+class BrowserSummaryRequest(BaseModel):
+    """SUMMARY_V1: the ONLY shape a summary request may take - the detected page's portal
+    and URL. The server owns extraction, credentials, the prompt and the model call."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    portal: Portal
+    source_url: str
+
+
 class PairingCompleteRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

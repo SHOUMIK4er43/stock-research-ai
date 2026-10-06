@@ -5,14 +5,17 @@ sole execution authority - this module owns no research/financial/valuation/sect
 semantics; it only translates HTTP <-> the existing application layer.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from pydantic import ValidationError
 
 from stock_research_ai import __version__
+from stock_research_ai.adapters.aicredits.summary import AICreditsSummaryModel
 from stock_research_ai.adapters.http.browser_artifacts import media_type_for, render_artifact
 from stock_research_ai.adapters.http.browser_auth import (
     PairingError,
@@ -22,6 +25,7 @@ from stock_research_ai.adapters.http.browser_auth import (
 from stock_research_ai.adapters.http.browser_schemas import (
     ArtifactKind,
     BrowserResearchRequest,
+    BrowserSummaryRequest,
     PairingCompleteRequest,
     PairingCompleteResponse,
     VersionResponse,
@@ -37,12 +41,45 @@ from stock_research_ai.application.browser_jobs import (
 )
 from stock_research_ai.application.engine import Capabilities, ResearchEngine
 from stock_research_ai.application.ports import ReportRepository
+from stock_research_ai.application.summary import project_summary_input
+from stock_research_ai.application.summary_generation import SummaryModel, generate_summary
 from stock_research_ai.bootstrap import browser_engine, browser_execution_spec, research_engine
 from stock_research_ai.config import Settings
 from stock_research_ai.domain.company import Company, CompanyRegistration
+from stock_research_ai.domain.extraction import ExtractionRequest
 from stock_research_ai.domain.report import ResearchReportSnapshot
+from stock_research_ai.domain.summary import (
+    SummaryErrorCode,
+    SummaryGenerationError,
+    SummaryInputBudgetExceeded,
+    SummaryInputUnavailable,
+    SummaryResult,
+)
 
 _PAIRING_PATH = "/v1/pair"
+
+# SUMMARY_V1 error code -> HTTP status. Bodies carry only the fixed code/message.
+_SUMMARY_ERROR_STATUS: dict[SummaryErrorCode, int] = {
+    SummaryErrorCode.PROVIDER_NOT_CONFIGURED: status.HTTP_503_SERVICE_UNAVAILABLE,
+    SummaryErrorCode.CREDENTIAL_UNAVAILABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
+    SummaryErrorCode.PROVIDER_TIMEOUT: status.HTTP_504_GATEWAY_TIMEOUT,
+    SummaryErrorCode.SUMMARY_INPUT_TOO_LARGE: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    SummaryErrorCode.SUMMARY_REQUEST_TOO_LARGE: status.HTTP_422_UNPROCESSABLE_CONTENT,
+}
+
+
+def _summary_http_error(error: SummaryGenerationError) -> HTTPException:
+    return HTTPException(
+        status_code=_SUMMARY_ERROR_STATUS.get(error.code, status.HTTP_502_BAD_GATEWAY),
+        detail={
+            "code": error.code.value,
+            "message": error.message,
+            "retryable": error.retryable_by_user,
+            "ambiguous": error.ambiguous,
+        },
+    )
+
+
 _READINESS_PATHS = frozenset({"/health", "/v1/version"})
 
 
@@ -112,6 +149,7 @@ def create_app(
     job_manager: BrowserJobManager | None = None,
     pairing_store: PairingStore | None = None,
     report_repository: ReportRepository | None = None,
+    summary_model_factory: Callable[[], SummaryModel] | None = None,
 ) -> FastAPI:
     """Create an HTTP adapter, owning resources only when none are supplied.
 
@@ -368,6 +406,58 @@ def create_app(
     )
     async def get_report(report_id: UUID) -> ResearchReportSnapshot:
         return await _resolve_report(report_id)
+
+    # --- SUMMARY_V1: one bounded summary for the detected page (protected) ----------
+
+    def new_summary_model() -> SummaryModel:
+        if summary_model_factory is not None:
+            return summary_model_factory()
+        return AICreditsSummaryModel.from_settings(runtime_settings)
+
+    @app.post("/v1/summaries", response_model=SummaryResult, dependencies=protected)
+    async def create_summary(payload: BrowserSummaryRequest) -> SummaryResult:
+        """Synchronous: Screener page -> extraction -> SummaryInput -> one model call.
+        Separate from FULL_RESEARCH_V1 jobs; never retried or resubmitted here."""
+        try:
+            validate_url(payload.source_url)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "code": "UNSUPPORTED_SOURCE_URL",
+                    "message": "Not a supported Screener company page",
+                },
+            ) from None
+        try:
+            # Resolve provider configuration before fetching anything from Screener.
+            model = new_summary_model()
+        except SummaryGenerationError as exc:
+            raise _summary_http_error(exc) from None
+        extraction = await current_job_manager().engine.extract_company(
+            ExtractionRequest(provider="screener", url=payload.source_url)
+        )
+        try:
+            summary_input = project_summary_input(extraction)
+        except SummaryInputBudgetExceeded:
+            raise _summary_http_error(
+                SummaryGenerationError(SummaryErrorCode.SUMMARY_INPUT_TOO_LARGE)
+            ) from None
+        except (SummaryInputUnavailable, ValidationError):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "code": "COMPANY_DATA_UNAVAILABLE",
+                    "message": "Company data could not be read from this page",
+                    "retryable": True,
+                    "ambiguous": False,
+                },
+            ) from None
+        try:
+            return await generate_summary(
+                summary_input, model, now=datetime.now(UTC), summary_id=uuid4()
+            )
+        except SummaryGenerationError as exc:
+            raise _summary_http_error(exc) from None
 
     @app.get("/v1/reports/{report_id}/artifacts/{artifact_kind}", dependencies=protected)
     async def get_report_artifact(report_id: UUID, artifact_kind: ArtifactKind) -> Response:

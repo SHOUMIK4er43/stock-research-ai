@@ -16,6 +16,7 @@
  *   GET  /v1/research-jobs/{job_id}
  *   GET  /v1/reports/{report_id}
  *   GET  /v1/reports/{report_id}/artifacts/{artifact_kind}
+ *   POST /v1/summaries
  */
 
 /** Closed ArtifactKind enum (Part 6B-A) - the client only ever sends one of these three
@@ -148,6 +149,11 @@ export class ApiClient {
 
   getResearchJob(token, jobId) {
     return this._request(`/v1/research-jobs/${encodeURIComponent(jobId)}`, { token });
+  }
+
+  /** SUMMARY_V1: one synchronous summary for the detected page ({portal, source_url}). */
+  createSummary(token, request) {
+    return this._request("/v1/summaries", { method: "POST", token, body: request });
   }
 
   getReport(token, reportId) {

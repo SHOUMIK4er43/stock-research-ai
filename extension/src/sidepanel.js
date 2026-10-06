@@ -10,6 +10,7 @@ import { createStorage } from "./storage.js";
 import { States, deriveState, stageLabel, failureLabel } from "./state.js";
 import { storageActionsForJobUpdate, interpretJobFetchError, isReportForCurrentPage } from "./job_flow.js";
 import { clear } from "./report/dom.js";
+import { SummaryStatus, parseSummaryResult, renderSummaryResult, summaryErrorLabel } from "./summary.js";
 import { findSection } from "./report/view_model.js";
 import {
   groupSections,
@@ -45,6 +46,13 @@ let bootGeneration = 0;
 let viewingReportId = null;
 let activeReport = null;
 let activeSectionId = null;
+
+// SUMMARY_V1 (Box 4): one summary, bound to the page URL it was requested for. Any
+// navigation to another page resets it and invalidates an in-flight response, so an
+// older company's summary can never render on a newer page.
+const IDLE_SUMMARY = Object.freeze({ status: SummaryStatus.IDLE, sourceUrl: null, view: null, errorCode: null });
+let summary = IDLE_SUMMARY;
+let summaryRequestSeq = 0;
 
 const els = {
   serviceStatusLine: document.getElementById("service-status-line"),
@@ -100,6 +108,10 @@ const els = {
   artifactInstitutionalReport: document.getElementById("artifact-institutional-report"),
   artifactInvestorBrief: document.getElementById("artifact-investor-brief"),
   artifactResearchJson: document.getElementById("artifact-research-json"),
+  generateSummaryButton: document.getElementById("generate-summary-button"),
+  summaryLoading: document.getElementById("summary-loading"),
+  summaryError: document.getElementById("summary-error"),
+  summaryResult: document.getElementById("summary-result"),
 };
 
 els.startCommand.textContent = START_COMMAND;
@@ -146,6 +158,7 @@ function renderState(state, data = {}) {
         "The live analyst is not configured on your local service. Research cannot complete yet.";
     }
     els.viewLastResearchButton.hidden = !data.lastReportForThisPage;
+    renderSummaryView();
   }
 
   if (state === States.RUNNING) {
@@ -221,6 +234,7 @@ async function boot() {
 
   await refreshPage(isCurrent);
   if (!isCurrent()) return;
+  resetSummaryIfPageChanged();
 
   const facts = {
     serviceReachable: false,
@@ -418,6 +432,74 @@ async function onResearchClick() {
   }
 }
 
+function resetSummaryIfPageChanged() {
+  if (summary.status !== SummaryStatus.IDLE && summary.sourceUrl !== page.sourceUrl) {
+    summary = IDLE_SUMMARY;
+    summaryRequestSeq += 1; // invalidates any in-flight request for the previous page
+  }
+}
+
+function renderSummaryView() {
+  const loading = summary.status === SummaryStatus.LOADING;
+  els.generateSummaryButton.disabled = loading || !page.pageIdentity;
+  els.generateSummaryButton.textContent = loading
+    ? "Generating…"
+    : summary.status === SummaryStatus.SUCCESS
+      ? "Regenerate Summary"
+      : "Generate Summary";
+  els.summaryLoading.hidden = !loading;
+  els.summaryError.hidden = summary.status !== SummaryStatus.ERROR;
+  els.summaryError.textContent =
+    summary.status === SummaryStatus.ERROR ? summaryErrorLabel(summary.errorCode) : "";
+  clear(els.summaryResult);
+  els.summaryResult.hidden = summary.status !== SummaryStatus.SUCCESS;
+  if (summary.status === SummaryStatus.SUCCESS) {
+    els.summaryResult.appendChild(renderSummaryResult(document, summary.view));
+  }
+}
+
+async function onGenerateSummaryClick() {
+  if (summary.status === SummaryStatus.LOADING) return;
+  if (!page.adapter || !page.sourceUrl || !page.pageIdentity) return;
+  const context = page.adapter.getSourceContext(page.sourceUrl);
+  if (!context) return;
+  const requestId = ++summaryRequestSeq;
+  const requestedUrl = page.sourceUrl;
+  const isCurrentSummary = () => requestId === summaryRequestSeq && page.sourceUrl === requestedUrl;
+  summary = { status: SummaryStatus.LOADING, sourceUrl: requestedUrl, view: null, errorCode: null };
+  renderSummaryView();
+
+  let next;
+  try {
+    const baseUrl = await storage.getServiceBaseUrl();
+    const token = await storage.getToken();
+    const payload = await new ApiClient(baseUrl).createSummary(token, {
+      portal: context.portal,
+      source_url: context.source_url,
+    });
+    const view = parseSummaryResult(payload);
+    next = view
+      ? { status: SummaryStatus.SUCCESS, sourceUrl: requestedUrl, view, errorCode: null }
+      : { status: SummaryStatus.ERROR, sourceUrl: requestedUrl, view: null, errorCode: "MALFORMED_RESPONSE" };
+  } catch (error) {
+    if (!isCurrentSummary()) return;
+    if (error instanceof ApiError && error.status === 401) {
+      summary = IDLE_SUMMARY;
+      await requirePairingAfterUnauthorized();
+      return;
+    }
+    next = {
+      status: SummaryStatus.ERROR,
+      sourceUrl: requestedUrl,
+      view: null,
+      errorCode: error instanceof ApiError ? error.code : "INTERNAL_ERROR",
+    };
+  }
+  if (!isCurrentSummary()) return; // stale: the user navigated away meanwhile
+  summary = next;
+  renderSummaryView();
+}
+
 async function onPairClick() {
   const code = els.pairingCodeInput.value.trim();
   els.pairingError.hidden = true;
@@ -595,6 +677,7 @@ async function downloadArtifact(artifactKind) {
 }
 
 els.researchButton.addEventListener("click", onResearchClick);
+els.generateSummaryButton.addEventListener("click", onGenerateSummaryClick);
 els.viewLastResearchButton.addEventListener("click", async () => {
   const report = await storage.getLastReport();
   if (report && report.reportId) {

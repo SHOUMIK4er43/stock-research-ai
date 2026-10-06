@@ -37,8 +37,9 @@ async def test_http_company_round_trip(engine: ResearchEngine) -> None:
         ("/v1/research-jobs/{job_id}", "GET"),
         ("/v1/reports/{report_id}", "GET"),
         ("/v1/reports/{report_id}/artifacts/{artifact_kind}", "GET"),
+        ("/v1/summaries", "POST"),
     }
-    assert len(app.routes) == 10
+    assert len(app.routes) == 11
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

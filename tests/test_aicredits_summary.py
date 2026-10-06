@@ -137,7 +137,7 @@ async def test_exact_request_body_and_headers():
     body = json.loads(request.content)
     assert body == {
         "model": MODEL,
-        "max_tokens": 1500,
+        "max_tokens": 4000,
         "messages": [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": USER},
@@ -340,7 +340,7 @@ def test_construction_rejects_unusable_configuration():
         ({"api_key": SECRET, "model": " "}, SummaryErrorCode.PROVIDER_NOT_CONFIGURED),
         ({"api_key": SECRET, "model": MODEL + " "}, SummaryErrorCode.PROVIDER_NOT_CONFIGURED),
         (
-            {"api_key": SECRET, "model": MODEL, "max_output_tokens": 1501},
+            {"api_key": SECRET, "model": MODEL, "max_output_tokens": 4001},
             SummaryErrorCode.PROVIDER_NOT_CONFIGURED,
         ),
     ):

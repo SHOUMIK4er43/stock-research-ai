@@ -14,7 +14,8 @@ from datetime import date, datetime
 from urllib.parse import urlsplit
 
 from stock_research_ai.adapters.documents.source import validate_url
-from stock_research_ai.adapters.screener.html import Node, Page
+from stock_research_ai.adapters.screener.html import Node, Page, data_tables, rows
+from stock_research_ai.adapters.screener.metrics import clean_label
 from stock_research_ai.domain.evidence import (
     CatalogueIssue,
     ClassificationConfidence,
@@ -190,9 +191,75 @@ class ScreenerEvidenceSource:
                         row_periods.update({id(a): period for a in node.all("a")})
                 elif node.tag == "a" and "href" in node.attrs:
                     self._read_anchor(node, heading, row_periods.get(id(node)), candidates, issues)
+        self._read_quarterly_sources(candidates, issues)
         return SourceDiscovery(
             source_name=self.name, candidates=tuple(candidates), issues=tuple(issues)
         )
+
+    def _read_quarterly_sources(
+        self, candidates: list[DocumentCandidate], issues: list[CatalogueIssue]
+    ) -> None:
+        """The quarterly table's 'Raw PDF' row: one source link per quarter column.
+
+        The period label is the column header as displayed; Screener's quarter-end date key
+        is kept as metadata only (it is not a publication date). The link resolves through
+        Screener, and which statement it leads to is not stated, so the reporting basis
+        stays unknown - the table's own basis is recorded as metadata.
+        """
+        quarters = self._root.by_id("quarters")
+        tables = data_tables(quarters) if quarters is not None else []
+        if not tables:
+            return
+        table_rows = rows(tables[0])
+        if not table_rows:
+            return
+        headers = table_rows[0][1:]
+        caption = quarters.text if quarters is not None else ""
+        basis = (
+            "consolidated"
+            if "Consolidated Figures" in caption
+            else "standalone"
+            if "Standalone Figures" in caption
+            else "unknown"
+        )
+        for row in table_rows[1:]:
+            if not row or clean_label(row[0].text) != "Raw PDF":
+                continue
+            if len(row) != len(headers) + 1:
+                issues.append(
+                    CatalogueIssue(source_name=self.name, code="MALFORMED_QUARTERLY_SOURCE_ROW")
+                )
+                continue
+            for header, cell in zip(headers, row[1:], strict=True):
+                for anchor in (a for a in cell.all("a") if "href" in a.attrs):
+                    url = anchor.link(self._retrieval.final_url, "QUARTERS").resolved_url
+                    locator = anchor.location("QUARTERS").locator
+                    retrieval = self._retrieval_state(url)
+                    if retrieval is None or not header.text:
+                        issues.append(
+                            CatalogueIssue(
+                                source_name=self.name, code="UNSAFE_URL", locator=locator
+                            )
+                        )
+                        continue
+                    metadata = {"screener_table_basis": basis, "link_kind": "Raw PDF"}
+                    if header.attrs.get("data-date-key"):
+                        metadata["period_end_key"] = header.attrs["data-date-key"]
+                    candidates.append(
+                        DocumentCandidate(
+                            document_type=T.QUARTERLY_RESULT,
+                            confidence=HIGH,
+                            title=f"Quarterly results - {header.text}",
+                            url=url,
+                            is_direct_document=False,
+                            period_label=header.text,
+                            retrieval=retrieval,
+                            discovery=self._discovery(
+                                locator, T.QUARTERLY_RESULT, "Quarterly Results", "Raw PDF"
+                            ),
+                            metadata=metadata,
+                        )
+                    )
 
     def _discovery(
         self, locator: str, kind: EvidenceDocumentType, section: str | None, label: str | None

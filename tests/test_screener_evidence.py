@@ -241,7 +241,11 @@ async def test_page_without_documents_section_is_reported(tmp_path, fixture_dir)
     start = html.index('<section id="documents"')
     end = html.index("</section>", start) + len("</section>")
     result = await catalogue_for(tmp_path, fixture_dir, INFY, html[:start] + html[end:])
-    assert [d.document_type for d in result.documents] == [T.SCREENER_PAGE]
+    # The quarterly table's source links are still catalogued; nothing else is.
+    assert Counter(d.document_type for d in result.documents) == {
+        T.SCREENER_PAGE: 1,
+        T.QUARTERLY_RESULT: 13,
+    }
     assert [i.code for i in result.issues] == ["DOCUMENTS_SECTION_MISSING"]
 
 
@@ -256,6 +260,7 @@ async def test_page_without_documents_section_is_reported(tmp_path, fixture_dir)
             "Infosys Ltd",
             {
                 T.SCREENER_PAGE: 1,
+                T.QUARTERLY_RESULT: 13,
                 T.ANNUAL_REPORT: 15,
                 T.CONCALL_TRANSCRIPT: 37,
                 T.INVESTOR_PRESENTATION: 8,
@@ -270,6 +275,7 @@ async def test_page_without_documents_section_is_reported(tmp_path, fixture_dir)
             "Yes Bank Ltd",
             {
                 T.SCREENER_PAGE: 1,
+                T.QUARTERLY_RESULT: 13,
                 T.ANNUAL_REPORT: 15,
                 T.CONCALL_TRANSCRIPT: 17,
                 T.INVESTOR_PRESENTATION: 35,
@@ -320,3 +326,42 @@ async def test_fixture_catalogue_is_deterministic(tmp_path, fixture_dir):
     encoded = canonical_catalogue_json(first)
     assert EvidenceCatalogue.model_validate_json(encoded) == first
     assert canonical_catalogue_json(EvidenceCatalogue.model_validate_json(encoded)) == encoded
+
+
+@pytest.mark.parametrize(
+    "case,company_id,basis",
+    [(INFY, "1489", "standalone"), (YESBANK, "3783", "consolidated")],
+)
+async def test_quarterly_raw_pdf_links_are_catalogued(
+    tmp_path, fixture_dir, case, company_id, basis
+):
+    result = await catalogue_for(tmp_path, fixture_dir, case)
+    quarterly = [d for d in result.documents if d.document_type is T.QUARTERLY_RESULT]
+    assert len(quarterly) == 13
+    by_period = {d.period_label: d for d in quarterly}
+    assert len(by_period) == 13  # one per quarter column, no merging across quarters
+    june = by_period["Jun 2026"]
+    assert june.source_url == (
+        f"https://www.screener.in/company/source/quarter/{company_id}/6/2026/"
+    )
+    assert june.title == "Quarterly results - Jun 2026"
+    assert june.confidence is ClassificationConfidence.HIGH
+    assert june.download_url is None  # resolves through Screener; the final file is unknown
+    assert june.source_authority is SourceAuthority.SECONDARY_AGGREGATOR
+    assert june.retrieval.status is DocumentRetrievalStatus.NOT_ATTEMPTED
+    # Nothing inferred: no publication date, no fiscal year/quarter, no basis claim.
+    assert june.published_date is None
+    assert (june.fiscal_year, june.fiscal_quarter, june.reporting_basis) == (None, None, None)
+    assert june.metadata == {
+        "link_kind": "Raw PDF",
+        "period_end_key": "2026-06-30",
+        "screener_table_basis": basis,
+    }
+    (sighting,) = june.discovered_from
+    assert (sighting.source_section, sighting.source_label) == ("Quarterly Results", "Raw PDF")
+    assert sighting.raw_artifact_id is not None
+    # Identity is deterministic across runs.
+    again = await catalogue_for(tmp_path / "again", fixture_dir, case)
+    assert {d.document_id for d in again.documents if d.document_type is T.QUARTERLY_RESULT} == {
+        d.document_id for d in quarterly
+    }

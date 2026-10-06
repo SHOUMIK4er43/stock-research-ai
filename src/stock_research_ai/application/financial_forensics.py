@@ -1,14 +1,13 @@
-"""DETAILED_RESEARCH_V1 Box 5: earnings-quality screens and forensic models.
+"""DETAILED_RESEARCH_V1 Box 5: earnings-quality checks and forensic models.
 
-Every output here is a SCREENING SIGNAL built from explicit calculations: it can say a
-number deserves a closer look (WATCH / ELEVATED), never that anything improper happened.
-Thresholds are constants of FORENSIC_RULES_VERSION; they are conventions, not universal
-truths. Models are scored only when every component is available; an unavailable
-component is reported as such and never counted as a pass, a fail or a zero.
+Every output here is a SCREENING SIGNAL built from explicit calculations. A check grades one
+calculated metric with a versioned rule (financial_rules) into INFO / LOW / MEDIUM / HIGH;
+a model is scored only when every component is available, and an unavailable component is
+reported as such, never counted as a pass, a fail or a zero. Nothing here says that
+anything improper happened; strong readings "require review".
 """
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -25,366 +24,190 @@ from stock_research_ai.application.financial_metrics import (
     quantize,
     shift,
 )
+from stock_research_ai.application.financial_rules import (
+    EARNINGS_QUALITY_RULES,
+    REPEATED_NEGATIVE_FCF,
+    GradedRule,
+)
 from stock_research_ai.domain.financial_analytics import (
     AnalyticsUnit,
     CalculationStatus,
     ComponentStatus,
+    EarningsQualityCheck,
     ForensicComponent,
     ForensicModel,
     ForensicModelResult,
-    ForensicSignal,
-    SignalStatus,
+    Severity,
 )
 from stock_research_ai.domain.financial_canonical import CanonicalMetric, FinancialPeriod
 
 M = CanonicalMetric
-U = AnalyticsUnit
 S = CalculationStatus
-FORENSIC_RULES_VERSION = "forensic-rules/1"
 D = Decimal
 
 
-@dataclass(frozen=True)
-class Rule:
-    code: str
-    metric: str  # a DerivedMetric code at the latest fiscal year
-    watch: Decimal
-    elevated: Decimal
-    higher_is_worse: bool
-    unit: AnalyticsUnit
-    meaning: str
-    banks: bool = False
-    gate: str | None = None  # another metric that must be > 0 for the rule to apply
-    gate_meaning: str = ""
+def canonical_ids(*gots: Got) -> tuple[UUID, ...]:
+    return tuple(sorted({i.canonical_value_id for g in gots for i in g.inputs}, key=str))
 
 
-RULES: tuple[Rule, ...] = (
-    Rule(
-        "PAT_GROWTH_VS_CFO_GROWTH",
-        "PAT_VS_CFO_GROWTH_GAP",
-        D(20),
-        D(50),
-        True,
-        U.PERCENTAGE_POINTS,
-        "reported profit grew faster than operating cash flow",
-    ),
-    Rule(
-        "CUMULATIVE_PAT_VS_CFO",
-        "CUMULATIVE_CFO_TO_PAT_3Y",
-        D("0.8"),
-        D("0.5"),
-        False,
-        U.TIMES,
-        "three-year operating cash flow covers less of three-year reported profit",
-    ),
-    Rule(
-        "RECEIVABLES_VS_REVENUE",
-        "RECEIVABLES_VS_REVENUE_GROWTH",
-        D(10),
-        D(25),
-        True,
-        U.PERCENTAGE_POINTS,
-        "trade receivables grew faster than revenue",
-    ),
-    Rule(
-        "INVENTORY_VS_REVENUE",
-        "INVENTORY_VS_REVENUE_GROWTH",
-        D(10),
-        D(25),
-        True,
-        U.PERCENTAGE_POINTS,
-        "inventory grew faster than revenue",
-    ),
-    Rule(
-        "OTHER_INCOME_DEPENDENCE",
-        "OTHER_INCOME_TO_PBT",
-        D(20),
-        D(35),
-        True,
-        U.PERCENT,
-        "a larger share of pre-tax profit comes from other income",
-    ),
-    Rule(
-        "EXCEPTIONAL_ITEM_DEPENDENCE",
-        "EXCEPTIONAL_TO_PBT",
-        D(10),
-        D(25),
-        True,
-        U.PERCENT,
-        "exceptional items are large relative to pre-tax profit",
-        banks=True,
-    ),
-    Rule(
-        "TAX_RATE_VOLATILITY",
-        "TAX_RATE_RANGE_5Y",
-        D(10),
-        D(20),
-        True,
-        U.PERCENTAGE_POINTS,
-        "the effective tax rate moved widely over five years",
-        banks=True,
-    ),
-    Rule(
-        "DEPRECIATION_RATE_SHIFT",
-        "DEPRECIATION_RATE_CHANGE_YOY",
-        D(-2),
-        D(-5),
-        False,
-        U.PERCENTAGE_POINTS,
-        "depreciation fell relative to fixed assets (could flatter profit)",
-    ),
-    Rule(
-        "CAPITALISATION_PROXY",
-        "CWIP_TO_FIXED_ASSETS",
-        D(25),
-        D(50),
-        True,
-        U.PERCENT,
-        "capital work-in-progress is large relative to fixed assets",
-    ),
-    Rule(
-        "CFO_PAT_DETERIORATION",
-        "CFO_TO_PAT_CHANGE_YOY",
-        D("-0.3"),
-        D("-0.6"),
-        False,
-        U.TIMES,
-        "cash conversion of profit weakened from the prior year",
-    ),
-    Rule(
-        "MARGIN_EXPANSION_WITHOUT_CASH",
-        "CFO_TO_PAT_CHANGE_YOY",
-        D("-0.2"),
-        D("-0.4"),
-        False,
-        U.TIMES,
-        "profit margin expanded while cash conversion weakened",
-        gate="PAT_MARGIN_CHANGE_YOY",
-        gate_meaning="PAT margin expanded",
-    ),
-    Rule(
-        "PROFIT_GROWTH_WITH_WC_DETERIORATION",
-        "RECEIVABLE_DAYS_CHANGE_YOY",
-        D(10),
-        D(20),
-        True,
-        U.DAYS,
-        "profit grew while receivable days lengthened",
-        gate="PAT_GROWTH_YOY",
-        gate_meaning="PAT grew",
-    ),
-    Rule(
-        "DEBT_GROWTH_DESPITE_PROFITS",
-        "GROSS_DEBT_GROWTH_YOY",
-        D(25),
-        D(50),
-        True,
-        U.PERCENT,
-        "gross debt rose although the company reported a profit",
-        gate="PAT_MARGIN",
-        gate_meaning="PAT was positive",
-    ),
-    Rule(
-        "EBITDA_PAT_CFO_DIVERGENCE",
-        "CFO_TO_EBITDA",
-        D("0.5"),
-        D("0.3"),
-        False,
-        U.TIMES,
-        "operating cash flow is low relative to EBITDA",
-    ),
-    Rule(
-        "EQUITY_DILUTION",
-        "SHARE_CAPITAL_GROWTH_YOY",
-        D(5),
-        D(15),
-        True,
-        U.PERCENT,
-        "equity share capital increased (bonus issues and splits change capital without "
-        "dilution; the canonical data does not distinguish them)",
-        banks=True,
-    ),
-    Rule(
-        "BALANCE_SHEET_COMPOSITION_SHIFT",
-        "ASSET_MIX_SHIFT",
-        D(10),
-        D(20),
-        True,
-        U.PERCENTAGE_POINTS,
-        "the mix of assets changed sharply in one year",
-    ),
-    Rule(
-        "ACCRUAL_INTENSITY",
-        "ACCRUAL_RATIO",
-        D(5),
-        D(10),
-        True,
-        U.PERCENT,
-        "profit exceeds operating cash flow by a large share of assets",
-    ),
-)
-NEGATIVE_FCF_WATCH, NEGATIVE_FCF_ELEVATED = 2, 3  # negative FCF years out of the last 3
-
-
-def _signal_id(e: Engine, code: str) -> UUID:
-    return uuid5(NS, f"{e.analytics_key}|{e.frame.basis.value}|forensic|{code}")
-
-
-def _canonical_ids(*gots: Got) -> tuple[UUID, ...]:
-    ids = {i.canonical_value_id for g in gots for i in g.inputs}
-    return tuple(sorted(ids, key=str))
-
-
-def _metric_ids(*gots: Got) -> tuple[UUID, ...]:
+def metric_ids(*gots: Got) -> tuple[UUID, ...]:
     return tuple(sorted({d for g in gots for d in g.derived_from}, key=str))
 
 
-def _grade(value: Decimal, rule: Rule) -> SignalStatus:
-    if rule.higher_is_worse:
-        if value >= rule.elevated:
-            return SignalStatus.ELEVATED
-        return SignalStatus.WATCH if value >= rule.watch else SignalStatus.CLEAR
-    if value <= rule.elevated:
-        return SignalStatus.ELEVATED
-    return SignalStatus.WATCH if value <= rule.watch else SignalStatus.CLEAR
+def grade(rule: GradedRule, observed: Decimal) -> Severity:
+    return rule.grade(observed)
 
 
-def forensic_signals(e: Engine, latest: date | None) -> list[ForensicSignal]:
-    rules = [r for r in RULES if r.banks or not e.financial]
-    signals: list[ForensicSignal] = []
+# --- earnings-quality checks -----------------------------------------------------------------
+
+
+def earnings_quality(e: Engine, latest: date | None) -> list[EarningsQualityCheck]:
     p = e.periods.fy(latest) if latest else None
-    for rule in rules:
-        signals.append(_evaluate(e, rule, p))
+    checks = [_check(e, rule, p) for rule in EARNINGS_QUALITY_RULES if e.sector in rule.sectors]
     if not e.financial:
-        signals.append(_negative_fcf(e, latest))
-    return signals
+        checks.append(_negative_fcf(e, latest))
+    return checks
 
 
-def _evaluate(e: Engine, rule: Rule, p: FinancialPeriod | None) -> ForensicSignal:
+def _check(e: Engine, rule: GradedRule, p: FinancialPeriod | None) -> EarningsQualityCheck:
     common: dict[str, Any] = {
-        "signal_id": _signal_id(e, rule.code),
+        "check_id": uuid5(NS, f"{e.analytics_key}|{e.frame.basis.value}|check|{rule.code}"),
+        "rule_id": rule.rule_id,
         "code": rule.code,
         "reporting_basis": e.frame.basis,
         "period": p,
-        "watch_threshold": rule.watch,
-        "elevated_threshold": rule.elevated,
         "unit": rule.unit,
-        "rule_id": f"{FORENSIC_RULES_VERSION}/{rule.code}",
     }
     if p is None:
-        return ForensicSignal(
+        return EarningsQualityCheck(
             **common,
-            status=SignalStatus.INSUFFICIENT_DATA,
+            status=S.INSUFFICIENT_HISTORY,
+            severity=None,
             observed=None,
-            explanation="no fiscal year available",
+            observation="no fiscal year available",
             metric_ids=(),
             canonical_value_ids=(),
         )
     got = e.got(rule.metric, p)
-    gate = e.got(rule.gate, p) if rule.gate else None
-    gots = [x for x in (got, gate) if x is not None]
+    condition = e.got(rule.condition.metric, p) if rule.condition else None
+    gots = [x for x in (got, condition) if x is not None]
     ids: dict[str, Any] = {
-        "metric_ids": _metric_ids(*gots),
-        "canonical_value_ids": _canonical_ids(*gots),
+        "metric_ids": metric_ids(*gots),
+        "canonical_value_ids": canonical_ids(*gots),
     }
     if isinstance(got, Missing):
-        return ForensicSignal(
+        return EarningsQualityCheck(
             **common,
             **ids,
-            status=SignalStatus.INSUFFICIENT_DATA,
+            status=got.status,
+            severity=None,
             observed=None,
-            explanation=f"{rule.metric} unavailable: {got.what}",
+            observation=f"{rule.metric} unavailable: {got.what}",
         )
-    if isinstance(gate, Missing):
-        return ForensicSignal(
+    if isinstance(condition, Missing) and rule.condition is not None:
+        return EarningsQualityCheck(
             **common,
             **ids,
-            status=SignalStatus.INSUFFICIENT_DATA,
+            status=condition.status,
+            severity=None,
             observed=got.value,
-            explanation=f"condition '{rule.gate_meaning}' unavailable: {gate.what}",
+            observation=f"condition '{rule.condition.meaning}' unavailable: {condition.what}",
         )
-    if isinstance(gate, Fact) and gate.value <= 0:
-        return ForensicSignal(
+    if (
+        isinstance(condition, Fact)
+        and rule.condition is not None
+        and not rule.condition.holds(condition.value)
+    ):
+        return EarningsQualityCheck(
             **common,
             **ids,
-            status=SignalStatus.CLEAR,
+            status=S.CALCULATED,
+            severity=Severity.INFO,
             observed=got.value,
-            explanation=f"not applicable this year: {rule.gate} = {gate.value} "
-            f"(rule applies only when {rule.gate_meaning})",
+            observation=f"rule applies only when {rule.condition.meaning}; "
+            f"{rule.condition.metric} = {condition.value}",
         )
-    status = _grade(got.value, rule)
-    direction = ">=" if rule.higher_is_worse else "<="
-    return ForensicSignal(
+    severity = grade(rule, got.value)
+    threshold = rule.threshold(severity) if severity != Severity.INFO else rule.low
+    return EarningsQualityCheck(
         **common,
         **ids,
-        status=status,
+        status=S.CALCULATED,
+        severity=severity,
         observed=got.value,
-        explanation=(
-            f"{rule.metric} = {got.value} {rule.unit.value} for {p.label}; WATCH when "
-            f"{direction} {rule.watch}, ELEVATED when {direction} {rule.elevated}. Screening "
-            f"signal: {rule.meaning}."
+        observation=rule.definition().template.format(
+            metric=rule.metric,
+            observed=got.value,
+            unit=rule.unit.value,
+            period=p.label,
+            severity=severity.value,
+            threshold=threshold,
         ),
     )
 
 
-def _negative_fcf(e: Engine, latest: date | None) -> ForensicSignal:
+def _negative_fcf(e: Engine, latest: date | None) -> EarningsQualityCheck:
     code = "REPEATED_NEGATIVE_FCF"
     common: dict[str, Any] = {
-        "signal_id": _signal_id(e, code),
+        "check_id": uuid5(NS, f"{e.analytics_key}|{e.frame.basis.value}|check|{code}"),
+        "rule_id": f"EARNINGS_QUALITY/{code}/2",
         "code": code,
         "reporting_basis": e.frame.basis,
-        "watch_threshold": Decimal(NEGATIVE_FCF_WATCH),
-        "elevated_threshold": Decimal(NEGATIVE_FCF_ELEVATED),
-        "unit": U.TIMES,
-        "rule_id": f"{FORENSIC_RULES_VERSION}/{code}",
+        "unit": AnalyticsUnit.COUNT,
     }
     if latest is None:
-        return ForensicSignal(
+        return EarningsQualityCheck(
             **common,
             period=None,
-            status=SignalStatus.INSUFFICIENT_DATA,
+            status=S.INSUFFICIENT_HISTORY,
+            severity=None,
             observed=None,
-            explanation="no fiscal year available",
+            observation="no fiscal year available",
             metric_ids=(),
             canonical_value_ids=(),
         )
     years = [e.periods.fy(shift(latest, -12 * k)) for k in range(3)]
     gots = [e.got("FCF", y) for y in years]
     ids: dict[str, Any] = {
-        "metric_ids": _metric_ids(*gots),
-        "canonical_value_ids": _canonical_ids(*gots),
+        "metric_ids": metric_ids(*gots),
+        "canonical_value_ids": canonical_ids(*gots),
     }
     missing = [g for g in gots if isinstance(g, Missing)]
     if missing:
-        return ForensicSignal(
+        return EarningsQualityCheck(
             **common,
             **ids,
             period=years[0],
-            status=SignalStatus.INSUFFICIENT_DATA,
+            status=missing[0].status,
+            severity=None,
             observed=None,
-            explanation=f"FCF unavailable for {len(missing)} of the last 3 "
-            f"fiscal years: {missing[0].what}",
+            observation=f"FCF unavailable for {len(missing)} of the last "
+            f"3 fiscal years: {missing[0].what}",
         )
     negative = sum(1 for g in gots if isinstance(g, Fact) and g.value < 0)
-    status = (
-        SignalStatus.ELEVATED
-        if negative >= NEGATIVE_FCF_ELEVATED
-        else SignalStatus.WATCH
-        if negative >= NEGATIVE_FCF_WATCH
-        else SignalStatus.CLEAR
+    low, medium, high = REPEATED_NEGATIVE_FCF
+    severity = (
+        Severity.HIGH
+        if negative >= high
+        else Severity.MEDIUM
+        if negative >= medium
+        else Severity.LOW
+        if negative >= low
+        else Severity.INFO
     )
-    return ForensicSignal(
+    return EarningsQualityCheck(
         **common,
         **ids,
         period=years[0],
-        status=status,
+        status=S.CALCULATED,
+        severity=severity,
         observed=Decimal(negative),
-        explanation=f"free cash flow was negative in {negative} of the last 3 "
-        "fiscal years. Screening signal, not a conclusion.",
+        observation=f"free cash flow was negative in {negative} of the last 3 fiscal years "
+        f"({severity.value}). A screening signal that may require review.",
     )
 
 
-# --- models ------------------------------------------------------------------------------------
+# --- forensic models -------------------------------------------------------------------------
 
 
 def _component(
@@ -395,8 +218,8 @@ def _component(
 ) -> ForensicComponent:
     gots = [g for _, g in parts]
     ids: dict[str, Any] = {
-        "metric_ids": _metric_ids(*gots),
-        "canonical_value_ids": _canonical_ids(*gots),
+        "metric_ids": metric_ids(*gots),
+        "canonical_value_ids": canonical_ids(*gots),
     }
     missing = [f"{role}: {g.what}" for role, g in parts if isinstance(g, Missing)]
     if missing:
@@ -408,12 +231,14 @@ def _component(
             **ids,
         )
     values = {role: g.value for role, g in parts if isinstance(g, Fact)}
+    shown = tuple(sorted(values.items()))
     result = fn(values)
     if result is None:
         return ForensicComponent(
             name=name,
             status=ComponentStatus.UNAVAILABLE,
             formula=formula,
+            input_values=shown,
             missing_inputs=("a denominator is zero or negative",),
             **ids,
         )
@@ -421,11 +246,17 @@ def _component(
         return ForensicComponent(
             name=name,
             formula=formula,
+            input_values=shown,
             **ids,
             status=ComponentStatus.PASS if result else ComponentStatus.FAIL,
         )
     return ForensicComponent(
-        name=name, formula=formula, value=quantize(result), status=ComponentStatus.AVAILABLE, **ids
+        name=name,
+        formula=formula,
+        value=quantize(result),
+        input_values=shown,
+        status=ComponentStatus.AVAILABLE,
+        **ids,
     )
 
 
@@ -445,11 +276,20 @@ def _result(
     score: Decimal | None,
     status: CalculationStatus,
     applicability: str,
-    passed: int | None = None,
     zone: str | None = None,
     warnings: Sequence[str] = (),
+    pass_fail: bool = False,
 ) -> ForensicModelResult:
     available = sum(c.status != ComponentStatus.UNAVAILABLE for c in components)
+    passed = sum(c.status == ComponentStatus.PASS for c in components) if pass_fail else None
+    total = len(components)
+    label = (
+        f"{passed} / {available} available"
+        if pass_fail and available < total
+        else f"{passed} / {total}"
+        if pass_fail
+        else f"{available} / {total} components available"
+    )
     return ForensicModelResult(
         result_id=uuid5(
             NS, f"{e.analytics_key}|{e.frame.basis.value}|model|{model.value}|{variant}"
@@ -462,10 +302,13 @@ def _result(
         period=p,
         comparison_period=pp,
         components=tuple(components),
-        components_total=len(components),
+        components_total=total,
         components_available=available,
         components_passed=passed,
-        coverage=quantize(Decimal(available) / len(components)),
+        score_numerator=passed,
+        score_denominator=available if pass_fail else None,
+        availability_label=label,
+        coverage=quantize(Decimal(available) / total),
         score=score,
         zone=zone,
         applicability=applicability,
@@ -473,15 +316,22 @@ def _result(
     )
 
 
-def _unsupported(
-    e: Engine, model: ForensicModel, variant: str, formula: str, names: Sequence[str]
+def _unavailable(
+    e: Engine,
+    model: ForensicModel,
+    variant: str,
+    formula: str,
+    names: Sequence[str],
+    status: CalculationStatus,
+    why: str,
+    pass_fail: bool = False,
 ) -> ForensicModelResult:
     components = [
         ForensicComponent(
             name=n,
             status=ComponentStatus.UNAVAILABLE,
             formula="not evaluated",
-            missing_inputs=(f"model not applicable to {e.industry.value}",),
+            missing_inputs=(why,),
         )
         for n in names
     ]
@@ -494,8 +344,9 @@ def _unsupported(
         None,
         components,
         score=None,
-        status=S.UNSUPPORTED_INDUSTRY,
-        applicability=f"designed for non-financial companies; skipped for {e.industry.value}",
+        status=status,
+        applicability=why,
+        pass_fail=pass_fail,
     )
 
 
@@ -511,32 +362,45 @@ PIOTROSKI_NAMES = (
     "F9_ASSET_TURNOVER_IMPROVED",
 )
 PIOTROSKI_FORMULA = (
-    "F-score = number of passed signals out of 9 (Piotroski 2000); scored only when all 9 "
-    "signals are available"
+    "F-score = passed signals out of 9 (Piotroski 2000); a score is reported only when all 9 "
+    "signals are available; otherwise 'passed / available' is shown, never 'passed / 9'"
 )
+SKIPPED_FOR_FINANCIALS = "designed for non-financial companies; not applied to {}"
 
 
 def piotroski(e: Engine, latest: date | None) -> ForensicModelResult:
     if e.financial:
-        return _unsupported(
-            e, ForensicModel.PIOTROSKI_F_SCORE, "F9_STANDARD", PIOTROSKI_FORMULA, PIOTROSKI_NAMES
+        return _unavailable(
+            e,
+            ForensicModel.PIOTROSKI_F_SCORE,
+            "F9_STANDARD",
+            PIOTROSKI_FORMULA,
+            PIOTROSKI_NAMES,
+            S.UNSUPPORTED_SECTOR,
+            SKIPPED_FOR_FINANCIALS.format(e.industry.value),
+            pass_fail=True,
         )
     if latest is None:
-        return _insufficient(
-            e, ForensicModel.PIOTROSKI_F_SCORE, "F9_STANDARD", PIOTROSKI_FORMULA, PIOTROSKI_NAMES
+        return _unavailable(
+            e,
+            ForensicModel.PIOTROSKI_F_SCORE,
+            "F9_STANDARD",
+            PIOTROSKI_FORMULA,
+            PIOTROSKI_NAMES,
+            S.INSUFFICIENT_HISTORY,
+            "no fiscal year available",
+            pass_fail=True,
         )
     P = e.periods
     p, pp = P.fy(latest), P.fy(shift(latest, -12))
     b, bp = P.pit(latest), P.pit(shift(latest, -12))
     d = e.got
 
-    def improved(code: str, lower_is_better: bool = False) -> Callable[[dict[str, Decimal]], bool]:
-        def check(v: dict[str, Decimal]) -> bool:
-            if lower_is_better:
-                return v["now"] < v["before"] or v["now"] == v["before"] == 0
-            return v["now"] > v["before"]
+    def higher(v: dict[str, Decimal]) -> bool:
+        return v["now"] > v["before"]
 
-        return check
+    def lower(v: dict[str, Decimal]) -> bool:
+        return v["now"] < v["before"] or v["now"] == v["before"] == 0
 
     components = [
         _component("F1_ROA_POSITIVE", "ROA > 0", [("roa", d("ROA", p))], lambda v: v["roa"] > 0),
@@ -547,31 +411,30 @@ def piotroski(e: Engine, latest: date | None) -> ForensicModelResult:
             "F3_ROA_IMPROVED",
             "ROA_t > ROA_t-1",
             [("now", d("ROA", p)), ("before", d("ROA", pp))],
-            improved("ROA"),
+            higher,
         ),
         _component(
             "F4_CFO_EXCEEDS_PAT",
-            "CFO > PAT (accruals < 0)",
+            "CFO > PAT (total accruals < 0)",
             [("accruals", d("TOTAL_ACCRUALS", p))],
             lambda v: v["accruals"] < 0,
         ),
         _component(
             "F5_LEVERAGE_DECREASED",
-            "gross debt / total assets lower than a year earlier (gross-debt proxy for "
-            "long-term debt)",
+            "gross debt / total assets lower than a year earlier (proxy for long-term "
+            "debt / average assets)",
             [("now", d("DEBT_TO_ASSETS", p)), ("before", d("DEBT_TO_ASSETS", pp))],
-            improved("DEBT_TO_ASSETS", lower_is_better=True),
+            lower,
         ),
         _component(
             "F6_CURRENT_RATIO_IMPROVED",
             "current ratio_t > current ratio_t-1",
             [("now", d("CURRENT_RATIO", p)), ("before", d("CURRENT_RATIO", pp))],
-            improved("CURRENT_RATIO"),
+            higher,
         ),
         _component(
             "F7_NO_EQUITY_ISSUANCE",
-            "equity share capital not higher than a year earlier (share-capital proxy "
-            "for shares outstanding)",
+            "equity share capital not higher than a year earlier (proxy for shares outstanding)",
             [
                 ("now", e.canonical([M.EQUITY_SHARE_CAPITAL], b)),
                 ("before", e.canonical([M.EQUITY_SHARE_CAPITAL], bp)),
@@ -582,13 +445,13 @@ def piotroski(e: Engine, latest: date | None) -> ForensicModelResult:
             "F8_GROSS_MARGIN_IMPROVED",
             "gross margin_t > gross margin_t-1",
             [("now", d("GROSS_MARGIN", p)), ("before", d("GROSS_MARGIN", pp))],
-            improved("GROSS_MARGIN"),
+            higher,
         ),
         _component(
             "F9_ASSET_TURNOVER_IMPROVED",
             "asset turnover_t > asset turnover_t-1",
             [("now", d("ASSET_TURNOVER", p)), ("before", d("ASSET_TURNOVER", pp))],
-            improved("ASSET_TURNOVER"),
+            higher,
         ),
     ]
     passed = sum(c.status == ComponentStatus.PASS for c in components)
@@ -605,37 +468,11 @@ def piotroski(e: Engine, latest: date | None) -> ForensicModelResult:
         pp,
         components,
         score=Decimal(passed) if complete else None,
-        status=S.CALCULATED if complete else S.INSUFFICIENT_DATA,
+        status=S.CALCULATED if complete else S.INPUT_MISSING,
         applicability="non-financial companies; F5 and F7 use documented proxies",
-        passed=passed,
         zone=zone,
         warnings=["F5_GROSS_DEBT_PROXY", "F7_SHARE_CAPITAL_PROXY"],
-    )
-
-
-def _insufficient(
-    e: Engine, model: ForensicModel, variant: str, formula: str, names: Sequence[str]
-) -> ForensicModelResult:
-    components = [
-        ForensicComponent(
-            name=n,
-            status=ComponentStatus.UNAVAILABLE,
-            formula="not evaluated",
-            missing_inputs=("no fiscal year available",),
-        )
-        for n in names
-    ]
-    return _result(
-        e,
-        model,
-        variant,
-        formula,
-        None,
-        None,
-        components,
-        score=None,
-        status=S.INSUFFICIENT_DATA,
-        applicability="no fiscal year available",
+        pass_fail=True,
     )
 
 
@@ -648,44 +485,38 @@ ALTMAN_DOUBLE_PRIME = (
     "capital / TA, X2 = retained earnings / TA, X3 = EBIT / TA, X4 = book equity / total "
     "liabilities). Zones: > 2.60 safe, 1.10-2.60 grey, < 1.10 distress"
 )
+ORIGINAL_NAMES = ("X1", "X2", "X3", "X4_MARKET", "X5")
+DOUBLE_PRIME_NAMES = ("X1", "X2", "X3", "X4_BOOK")
 
 
 def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
-    names_original = ("X1", "X2", "X3", "X4_MARKET", "X5")
-    names_double = ("X1", "X2", "X3", "X4_BOOK")
+    variants = (
+        ("ORIGINAL_1968", ALTMAN_ORIGINAL, ORIGINAL_NAMES),
+        ("Z_DOUBLE_PRIME_1995", ALTMAN_DOUBLE_PRIME, DOUBLE_PRIME_NAMES),
+    )
     if e.financial:
+        why = SKIPPED_FOR_FINANCIALS.format(e.industry.value)
         return [
-            _unsupported(
-                e, ForensicModel.ALTMAN_Z, "ORIGINAL_1968", ALTMAN_ORIGINAL, names_original
-            ),
-            _unsupported(
-                e, ForensicModel.ALTMAN_Z, "Z_DOUBLE_PRIME_1995", ALTMAN_DOUBLE_PRIME, names_double
-            ),
+            _unavailable(e, ForensicModel.ALTMAN_Z, v, f, n, S.UNSUPPORTED_SECTOR, why)
+            for v, f, n in variants
         ]
     if latest is None:
         return [
-            _insufficient(
-                e, ForensicModel.ALTMAN_Z, "ORIGINAL_1968", ALTMAN_ORIGINAL, names_original
-            ),
-            _insufficient(
-                e, ForensicModel.ALTMAN_Z, "Z_DOUBLE_PRIME_1995", ALTMAN_DOUBLE_PRIME, names_double
-            ),
+            _unavailable(
+                e,
+                ForensicModel.ALTMAN_Z,
+                v,
+                f,
+                n,
+                S.INSUFFICIENT_HISTORY,
+                "no fiscal year available",
+            )
+            for v, f, n in variants
         ]
     P = e.periods
     p, b = P.fy(latest), P.pit(latest)
     g = e.canonical
     assets = g([M.TOTAL_ASSETS], b)
-    equity = e.got("SHAREHOLDERS_EQUITY", b)
-    liabilities = g([M.TOTAL_LIABILITIES], b)
-    if isinstance(liabilities, Missing):
-        total = g([M.TOTAL_EQUITY_AND_LIABILITIES], b)
-        if isinstance(total, Fact) and isinstance(equity, Fact):
-            liabilities = Fact(
-                total.value - equity.value,
-                total.inputs + equity.inputs,
-                total.confidence,
-                derived_from=equity.derived_from,
-            )
     x1 = _component(
         "X1",
         "net working capital / total assets",
@@ -707,7 +538,10 @@ def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
     x4_book = _component(
         "X4_BOOK",
         "book equity / total liabilities",
-        [("equity", equity), ("liabilities", liabilities)],
+        [
+            ("equity", e.got("SHAREHOLDERS_EQUITY", b)),
+            ("liabilities", e.got("TOTAL_LIABILITIES", b)),
+        ],
         lambda v: _div(v["equity"], v["liabilities"]),
     )
     x5 = _component(
@@ -721,8 +555,8 @@ def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
         status=ComponentStatus.UNAVAILABLE,
         formula="market value of equity / total liabilities",
         missing_inputs=(
-            "market value of equity is not part of the Box 4 canonical data; "
-            "Box 5 makes no market-data calls",
+            "market value of equity is not part of the Box 4 canonical data; Box 5 "
+            "makes no market-data calls",
         ),
     )
     original = _result(
@@ -734,14 +568,13 @@ def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
         None,
         [x1, x2, x3, x4_market, x5],
         score=None,
-        status=S.INSUFFICIENT_DATA,
-        applicability="public manufacturing companies; needs market capitalisation",
+        status=S.INPUT_MISSING,
+        applicability="public manufacturers; needs the market value of equity",
     )
     parts = (x1, x2, x3, x4_book)
-    complete = all(c.value is not None for c in parts)
-    score = zone = None
     values = [c.value for c in parts if c.value is not None]
-    if complete and len(values) == 4:
+    score = zone = None
+    if len(values) == 4:
         score = quantize(
             D("6.56") * values[0]
             + D("3.26") * values[1]
@@ -753,7 +586,7 @@ def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
             if score > D("2.60")
             else "GREY_ZONE"
             if score >= D("1.10")
-            else ("DISTRESS_ZONE")
+            else "DISTRESS_ZONE"
         )
     double = _result(
         e,
@@ -764,9 +597,9 @@ def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
         None,
         parts,
         score=score,
-        status=S.CALCULATED if complete else S.INSUFFICIENT_DATA,
-        applicability="non-financial, non-manufacturing variant on book values; the manufacturing "
-        "split is not known from canonical data",
+        status=S.CALCULATED if score is not None else S.INPUT_MISSING,
+        applicability="non-financial, non-manufacturing variant on book values (the "
+        "manufacturing split is not known from canonical data)",
         zone=zone,
         warnings=["X2_RETAINED_EARNINGS_PROXY"],
     )
@@ -776,7 +609,7 @@ def altman(e: Engine, latest: date | None) -> list[ForensicModelResult]:
 BENEISH_FORMULA = (
     "M = -4.84 + 0.920 DSRI + 0.528 GMI + 0.404 AQI + 0.892 SGI + 0.115 DEPI - 0.172 SGAI "
     "+ 4.679 TATA - 0.327 LVGI (Beneish 1999, 8 variables); screening threshold -1.78; scored "
-    "only when all 8 indices are available"
+    "only when all 8 indices are available; never a conclusion about manipulation"
 )
 BENEISH_WEIGHTS = {
     "DSRI": D("0.920"),
@@ -794,9 +627,25 @@ BENEISH_THRESHOLD = D("-1.78")
 def beneish(e: Engine, latest: date | None) -> ForensicModelResult:
     names = tuple(BENEISH_WEIGHTS)
     if e.financial:
-        return _unsupported(e, ForensicModel.BENEISH_M, "EIGHT_VARIABLE", BENEISH_FORMULA, names)
+        return _unavailable(
+            e,
+            ForensicModel.BENEISH_M,
+            "EIGHT_VARIABLE",
+            BENEISH_FORMULA,
+            names,
+            S.UNSUPPORTED_SECTOR,
+            SKIPPED_FOR_FINANCIALS.format(e.industry.value),
+        )
     if latest is None:
-        return _insufficient(e, ForensicModel.BENEISH_M, "EIGHT_VARIABLE", BENEISH_FORMULA, names)
+        return _unavailable(
+            e,
+            ForensicModel.BENEISH_M,
+            "EIGHT_VARIABLE",
+            BENEISH_FORMULA,
+            names,
+            S.INSUFFICIENT_HISTORY,
+            "no fiscal year available",
+        )
     P = e.periods
     p, pp = P.fy(latest), P.fy(shift(latest, -12))
     b, bp = P.pit(latest), P.pit(shift(latest, -12))
@@ -824,6 +673,11 @@ def beneish(e: Engine, latest: date | None) -> ForensicModelResult:
 
     def idx(a: Decimal | None, z: Decimal | None) -> Decimal | None:
         return None if a is None or z is None or z == 0 else a / z
+
+    def quality(v: dict[str, Decimal], s: str) -> Decimal | None:
+        if v[f"ta{s}"] <= 0:
+            return None
+        return 1 - (v[f"ca{s}"] + v[f"ppe{s}"] + v[f"sec{s}"]) / v[f"ta{s}"]
 
     components = [
         _component(
@@ -854,10 +708,7 @@ def beneish(e: Engine, latest: date | None) -> ForensicModelResult:
                 ("sec0", sec0),
                 ("ta0", ta0),
             ],
-            lambda v: idx(
-                None if v["ta"] <= 0 else 1 - (v["ca"] + v["ppe"] + v["sec"]) / v["ta"],
-                None if v["ta0"] <= 0 else 1 - (v["ca0"] + v["ppe0"] + v["sec0"]) / v["ta0"],
-            ),
+            lambda v: idx(quality(v, ""), quality(v, "0")),
         ),
         _component(
             "SGI",
@@ -875,7 +726,7 @@ def beneish(e: Engine, latest: date | None) -> ForensicModelResult:
         ),
         _component(
             "SGAI",
-            "(SG&A/sales)_t / (SG&A/sales)_t-1 with SG&A = selling + administrative",
+            "(SG&A/sales)_t / (SG&A/sales)_t-1; SG&A = selling + administrative",
             [
                 ("sell", sell),
                 ("adm", adm),
@@ -905,14 +756,13 @@ def beneish(e: Engine, latest: date | None) -> ForensicModelResult:
     score = zone = None
     if complete:
         total = D("-4.84") + sum(
-            (BENEISH_WEIGHTS[c.name] * c.value for c in components if c.value is not None),
-            D(0),
+            (BENEISH_WEIGHTS[c.name] * c.value for c in components if c.value is not None), D(0)
         )
         score = quantize(total)
         zone = (
             "ABOVE_SCREENING_THRESHOLD"
             if score > BENEISH_THRESHOLD
-            else ("BELOW_SCREENING_THRESHOLD")
+            else "BELOW_SCREENING_THRESHOLD"
         )
     return _result(
         e,
@@ -923,7 +773,8 @@ def beneish(e: Engine, latest: date | None) -> ForensicModelResult:
         pp,
         components,
         score=score,
-        status=S.CALCULATED if complete else S.INSUFFICIENT_DATA,
-        applicability="non-financial companies; a statistical screen, not evidence of manipulation",
+        status=S.CALCULATED if complete else S.INPUT_MISSING,
+        applicability="non-financial companies; a statistical screening signal that may require "
+        "review, never evidence of manipulation",
         zone=zone,
     )

@@ -1,36 +1,52 @@
-"""DETAILED_RESEARCH_V1 Box 5: deterministic financial calculations over Box 4 canonical data.
+"""DETAILED_RESEARCH_V1 Box 5: deterministic calculations over Box 4 canonical data.
 
-One _Frame = one reporting basis in one currency. A value is looked up by (metric, exact
+One Frame = one reporting basis in one currency. A value is looked up by (metric, exact
 Box 4 period key), so standalone/consolidated, quarter/YTD, FY/TTM and currencies can never
-meet. Every calculation goes through _Engine.emit, which records the formula/version, the
-exact canonical inputs (with their Box 4 lineage), the weakest confidence, propagated
-reconciliation warnings, and an explicit status when no number can honestly be produced.
-
-Formula conventions (all versioned in SPECS):
-  * growth / margins / returns are PERCENT (12.5 = 12.5 %); multiples are TIMES; DAYS = 365
-    for a fiscal year; margin changes are BASIS_POINTS.
-  * averages use opening and closing balance-sheet values; when the opening balance is
-    missing the closing balance is used, flagged ENDING_BALANCE_USED (confidence <= MEDIUM).
-  * nothing missing is ever treated as zero.
+meet. Every calculation goes through Engine.emit, which:
+  * resolves its FormulaDefinition (financial_formulas.FORMULAS) and checks sector and
+    period compatibility,
+  * records the exact canonical inputs with their Box 4 lineage (provenance), the input
+    periods and the calculated metrics it builds on,
+  * takes the weakest input confidence (further capped by Box 4 outcome and source
+    authority) and propagates reconciliation warnings,
+  * returns an explicit status, never a number, when the inputs cannot support one.
+Averages use BOTH the opening and the closing balance or nothing; a missing value is never
+zero.
 """
 
 import calendar
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import ROUND_HALF_EVEN, Decimal, localcontext
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.financial_formulas import (
+    DUPONT_TOLERANCE_PP,
+    FORMULAS,
+    Refused,
+    Result,
+    average,
+    cagr,
+    cash_conversion_cycle,
+    days,
+    dupont_roe,
+    free_cash_flow,
+    growth,
+    nopat,
+    positive_ratio,
+    ratio,
+)
 from stock_research_ai.application.financial_parsing import period_from
-from stock_research_ai.application.numerics import root_growth
+from stock_research_ai.domain.evidence import AUTHORITY_RANK, SourceAuthority
 from stock_research_ai.domain.financial_analytics import (
     DERIVED_QUANTUM,
     AnalyticsUnit,
+    CalculatedMetric,
     CalculationStatus,
-    DerivedMetric,
-    DerivedMetricInput,
-    MetricCategory,
+    MetricInput,
+    Sector,
 )
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
@@ -50,519 +66,32 @@ from stock_research_ai.domain.financial_canonical import (
 M = CanonicalMetric
 S = CalculationStatus
 U = AnalyticsUnit
-C = MetricCategory
 NS = UUID("b6f1d2a4-3c5e-4f7a-8b9c-0d1e2f3a4b5c")
 FINANCIAL_INDUSTRIES = {Industry.BANK, Industry.NBFC, Industry.INSURANCE}
 #: A SOURCE_PRECEDENCE input whose losing source differs by more than this share of the
-#: selected value is a material conflict: the metric is still calculated, flagged
-#: MATERIAL_INPUT_CONFLICT, and its confidence drops to LOW.
+#: selected value is a material conflict: confidence LOW, warning MATERIAL_INPUT_CONFLICT.
 MATERIAL_CONFLICT_SHARE = Decimal("0.10")
 CONFIDENCE_RANK = {Confidence.HIGH: 0, Confidence.MEDIUM: 1, Confidence.LOW: 2}
 #: When several inputs fail, the reported status is the first in this order.
 STATUS_PRIORITY = [
     S.INVALID_INPUT,
-    S.INCOMPATIBLE_BASIS,
-    S.INCOMPATIBLE_CURRENCY,
-    S.INCOMPATIBLE_PERIODS,
-    S.CONFLICTED_INPUT,
+    S.BASIS_MISMATCH,
+    S.CURRENCY_MISMATCH,
+    S.PERIOD_MISMATCH,
+    S.INPUT_CONFLICT,
     S.LOW_CONFIDENCE_INPUT,
-    S.UNSUPPORTED_INDUSTRY,
+    S.UNSUPPORTED_SECTOR,
     S.NOT_APPLICABLE,
-    S.ZERO_DENOMINATOR,
-    S.INSUFFICIENT_DATA,
+    S.DIVISION_BY_ZERO,
+    S.INPUT_MISSING,
+    S.INSUFFICIENT_HISTORY,
 ]
+#: an upstream calculation that produced no number leaves its dependants without an input
+UPSTREAM_UNAVAILABLE = {S.NOT_APPLICABLE, S.DIVISION_BY_ZERO, S.UNSUPPORTED_SECTOR, S.INVALID_INPUT}
 REVENUE = (M.REVENUE_FROM_OPERATIONS, M.REVENUE)
 EPS = (M.EPS, M.DILUTED_EPS, M.BASIC_EPS)
 FIXED = (M.PROPERTY_PLANT_EQUIPMENT, M.FIXED_ASSETS)
-
-
-@dataclass(frozen=True)
-class Spec:
-    name: str
-    category: MetricCategory
-    unit: AnalyticsUnit
-    formula: str
-    version: int = 1
-    banks: bool = False  # also meaningful for banks / NBFCs / insurers
-
-
-def _s(
-    name: str, cat: MetricCategory, unit: AnalyticsUnit, formula: str, banks: bool = False
-) -> Spec:
-    return Spec(name, cat, unit, formula, banks=banks)
-
-
-BANK_GROWTH = {
-    "REVENUE",
-    "PBT",
-    "PAT",
-    "EPS",
-    "TOTAL_ASSETS",
-    "EQUITY",
-    "DEPOSITS",
-    "ADVANCES",
-    "SHARE_CAPITAL",
-}
-SPECS: dict[str, Spec] = {
-    # --- building blocks -----------------------------------------------------------------
-    "EBITDA": _s("EBITDA", C.BASE, U.MONEY, "reported EBITDA; else PBT + finance cost + D&A"),
-    "EBIT": _s("EBIT", C.BASE, U.MONEY, "reported EBIT; else PBT + finance cost"),
-    "NOPAT": _s("NOPAT", C.BASE, U.MONEY, "EBIT x (1 - effective tax rate)"),
-    "CAPEX": _s("Capital expenditure", C.BASE, U.MONEY, "|CAPEX| else |purchase of PPE|"),
-    "FCF": _s("Free cash flow", C.BASE, U.MONEY, "CFO - capex (FCF/1, before leases)"),
-    "COGS": _s(
-        "Cost of goods sold",
-        C.BASE,
-        U.MONEY,
-        "raw materials + purchases of stock-in-trade + change in inventories (all three)",
-    ),
-    "SHAREHOLDERS_EQUITY": _s(
-        "Shareholders' equity",
-        C.BASE,
-        U.MONEY,
-        "equity share capital + reserves (or other equity); else total equity",
-        banks=True,
-    ),
-    "GROSS_DEBT": _s(
-        "Gross debt",
-        C.BASE,
-        U.MONEY,
-        "total debt; else total borrowings; else long-term + short-term borrowings",
-    ),
-    "NET_DEBT": _s("Net debt", C.BASE, U.MONEY, "gross debt - cash and cash equivalents"),
-    "CAPITAL_EMPLOYED": _s("Capital employed", C.BASE, U.MONEY, "equity + gross debt"),
-    "INVESTED_CAPITAL": _s(
-        "Invested capital", C.BASE, U.MONEY, "equity + gross debt - cash and cash equivalents"
-    ),
-    "NET_WORKING_CAPITAL": _s(
-        "Net working capital", C.BASE, U.MONEY, "total current assets - total current liabilities"
-    ),
-    "TOTAL_ACCRUALS": _s("Total accruals", C.ACCRUALS, U.MONEY, "PAT - CFO"),
-    # --- growth ----------------------------------------------------------------------------
-    **{
-        f"{name}_GROWTH_YOY": _s(
-            f"{label} growth (YoY)",
-            C.GROWTH,
-            U.PERCENT,
-            "(current / same period one year earlier - 1) x 100; base must be > 0",
-            banks=name in BANK_GROWTH,
-        )
-        for name, label in (
-            ("REVENUE", "Revenue"),
-            ("OPERATING_PROFIT", "Operating profit (Screener definition)"),
-            ("EBITDA", "EBITDA"),
-            ("PBT", "PBT"),
-            ("PAT", "PAT"),
-            ("EPS", "EPS"),
-            ("CFO", "CFO"),
-            ("FCF", "FCF"),
-            ("TOTAL_ASSETS", "Total assets"),
-            ("EQUITY", "Equity"),
-            ("GROSS_DEBT", "Gross debt"),
-            ("RECEIVABLES", "Trade receivables"),
-            ("INVENTORY", "Inventory"),
-            ("PAYABLES", "Trade payables"),
-            ("CAPEX", "Capex"),
-            ("SHARE_CAPITAL", "Equity share capital"),
-            ("DEPOSITS", "Deposits"),
-            ("ADVANCES", "Advances"),
-        )
-    },
-    **{
-        f"{name}_GROWTH_QOQ": _s(
-            f"{label} growth (QoQ, not seasonally adjusted)",
-            C.GROWTH,
-            U.PERCENT,
-            "(quarter / previous quarter - 1) x 100; base must be > 0",
-            banks=True,
-        )
-        for name, label in (("REVENUE", "Revenue"), ("PAT", "PAT"))
-    },
-    **{
-        f"{name}_CAGR_{years}Y": _s(
-            f"{label} {years}-year CAGR",
-            C.GROWTH,
-            U.PERCENT,
-            f"((end / start) ^ (1/{years}) - 1) x 100; both endpoints must be > 0",
-            banks=name
-            in ("REVENUE", "PAT", "EPS", "TOTAL_ASSETS", "EQUITY", "DEPOSITS", "ADVANCES"),
-        )
-        for name, label in (
-            ("REVENUE", "Revenue"),
-            ("OPERATING_PROFIT", "Operating profit"),
-            ("EBITDA", "EBITDA"),
-            ("PBT", "PBT"),
-            ("PAT", "PAT"),
-            ("EPS", "EPS"),
-            ("CFO", "CFO"),
-            ("FCF", "FCF"),
-            ("TOTAL_ASSETS", "Total assets"),
-            ("EQUITY", "Equity"),
-            ("DEPOSITS", "Deposits"),
-            ("ADVANCES", "Advances"),
-        )
-        for years in (3, 5, 10)
-    },
-    # --- margins ---------------------------------------------------------------------------
-    "GROSS_MARGIN": _s("Gross margin", C.MARGIN, U.PERCENT, "(revenue - COGS) / revenue x 100"),
-    "EBITDA_MARGIN": _s("EBITDA margin", C.MARGIN, U.PERCENT, "EBITDA / revenue x 100"),
-    "OPERATING_MARGIN": _s(
-        "Operating margin (Screener operating profit; not EBITDA)",
-        C.MARGIN,
-        U.PERCENT,
-        "OPERATING_PROFIT / revenue x 100",
-    ),
-    "EBIT_MARGIN": _s("EBIT margin", C.MARGIN, U.PERCENT, "EBIT / revenue x 100"),
-    "PBT_MARGIN": _s("PBT margin", C.MARGIN, U.PERCENT, "PBT / revenue x 100", banks=True),
-    "PAT_MARGIN": _s("PAT margin", C.MARGIN, U.PERCENT, "PAT / revenue x 100", banks=True),
-    "CFO_MARGIN": _s("CFO margin", C.MARGIN, U.PERCENT, "CFO / revenue x 100"),
-    "FCF_MARGIN": _s("FCF margin", C.MARGIN, U.PERCENT, "FCF / revenue x 100"),
-    "EMPLOYEE_COST_TO_REVENUE": _s(
-        "Employee cost / revenue", C.MARGIN, U.PERCENT, "employee cost / revenue x 100", banks=True
-    ),
-    "RAW_MATERIAL_COST_TO_REVENUE": _s(
-        "Raw-material cost / revenue", C.MARGIN, U.PERCENT, "raw materials / revenue x 100"
-    ),
-    "POWER_AND_FUEL_TO_REVENUE": _s(
-        "Power and fuel / revenue", C.MARGIN, U.PERCENT, "power and fuel / revenue x 100"
-    ),
-    "OTHER_EXPENSES_TO_REVENUE": _s(
-        "Other expenses / revenue", C.MARGIN, U.PERCENT, "other expenses / revenue x 100"
-    ),
-    "DEPRECIATION_TO_REVENUE": _s(
-        "Depreciation / revenue", C.MARGIN, U.PERCENT, "D&A / revenue x 100"
-    ),
-    "FINANCE_COST_TO_REVENUE": _s(
-        "Finance cost / revenue", C.MARGIN, U.PERCENT, "finance cost / revenue x 100"
-    ),
-    "OTHER_INCOME_TO_PBT": _s(
-        "Other income / PBT", C.MARGIN, U.PERCENT, "other income / PBT x 100; PBT must be > 0"
-    ),
-    "EXCEPTIONAL_TO_PBT": _s(
-        "Exceptional items / PBT",
-        C.MARGIN,
-        U.PERCENT,
-        "|exceptional items| / PBT x 100; PBT must be > 0",
-        banks=True,
-    ),
-    "TAX_RATE": _s(
-        "Effective tax rate",
-        C.MARGIN,
-        U.PERCENT,
-        "total tax / PBT; else (current + deferred tax) / PBT; else (PBT - PAT) / PBT [implied]",
-        banks=True,
-    ),
-    "TAX_RATE_CHANGE_YOY": _s(
-        "Effective tax rate change (YoY)",
-        C.MARGIN,
-        U.PERCENTAGE_POINTS,
-        "tax rate - tax rate one year earlier",
-        banks=True,
-    ),
-    "TAX_RATE_RANGE_5Y": _s(
-        "Effective tax rate range over 5 years",
-        C.MARGIN,
-        U.PERCENTAGE_POINTS,
-        "max - min effective tax rate over the last 5 fiscal years (>= 3 calculated)",
-        banks=True,
-    ),
-    **{
-        f"{name}_CHANGE_YOY": _s(
-            f"{name.replace('_', ' ').title()} change (YoY)",
-            C.MARGIN,
-            U.BASIS_POINTS,
-            "(margin - margin one year earlier) x 100",
-            banks=name in ("PAT_MARGIN", "PBT_MARGIN"),
-        )
-        for name in ("EBITDA_MARGIN", "OPERATING_MARGIN", "PBT_MARGIN", "PAT_MARGIN")
-    },
-    **{
-        f"{name}_CHANGE_{years}Y": _s(
-            f"{name.replace('_', ' ').title()} change over {years} years",
-            C.MARGIN,
-            U.BASIS_POINTS,
-            f"(margin - margin {years} years earlier) x 100",
-            banks=name in ("PAT_MARGIN", "PBT_MARGIN"),
-        )
-        for name in ("EBITDA_MARGIN", "OPERATING_MARGIN", "PBT_MARGIN", "PAT_MARGIN")
-        for years in (3, 5)
-    },
-    "OTHER_INCOME_TO_PBT_CHANGE_YOY": _s(
-        "Other income / PBT change (YoY)",
-        C.MARGIN,
-        U.PERCENTAGE_POINTS,
-        "other income / PBT - same ratio one year earlier",
-    ),
-    # --- returns ---------------------------------------------------------------------------
-    "ROE": _s("Return on equity", C.RETURN, U.PERCENT, "PAT / average equity x 100", banks=True),
-    "ROA": _s(
-        "Return on assets", C.RETURN, U.PERCENT, "PAT / average total assets x 100", banks=True
-    ),
-    "ROCE": _s(
-        "Return on capital employed", C.RETURN, U.PERCENT, "EBIT / average capital employed x 100"
-    ),
-    "ROIC": _s(
-        "Return on invested capital",
-        C.RETURN,
-        U.PERCENT,
-        "NOPAT / average invested capital x 100 (invested capital = equity + gross debt - cash)",
-    ),
-    "RETURN_ON_TANGIBLE_CAPITAL": _s(
-        "Return on tangible capital employed",
-        C.RETURN,
-        U.PERCENT,
-        "EBIT / average (capital employed - goodwill - intangible assets) x 100",
-    ),
-    "ASSET_TURNOVER": _s("Asset turnover", C.RETURN, U.TIMES, "revenue / average total assets"),
-    "FIXED_ASSET_TURNOVER": _s(
-        "Fixed-asset turnover", C.RETURN, U.TIMES, "revenue / average PPE (or fixed assets)"
-    ),
-    "INCREMENTAL_ROIC_3Y": _s(
-        "Incremental ROIC over 3 years",
-        C.RETURN,
-        U.PERCENT,
-        "(NOPAT_t - NOPAT_t-3) / (invested capital_t - invested capital_t-3) x 100; "
-        "the capital increase must be > 0",
-    ),
-    "ROE_CHANGE_YOY": _s(
-        "ROE change (YoY)", C.RETURN, U.PERCENTAGE_POINTS, "ROE - ROE one year earlier", banks=True
-    ),
-    # --- DuPont ----------------------------------------------------------------------------
-    "DUPONT_NET_MARGIN": _s("DuPont net profit margin", C.DUPONT, U.PERCENT, "PAT / revenue x 100"),
-    "DUPONT_ASSET_TURNOVER": _s(
-        "DuPont asset turnover", C.DUPONT, U.TIMES, "revenue / average total assets"
-    ),
-    "DUPONT_EQUITY_MULTIPLIER": _s(
-        "DuPont equity multiplier", C.DUPONT, U.TIMES, "average total assets / average equity"
-    ),
-    "DUPONT_ROE": _s(
-        "DuPont ROE",
-        C.DUPONT,
-        U.PERCENT,
-        "net margin x asset turnover x equity multiplier (equals ROE by construction)",
-    ),
-    **{
-        f"{name}_CHANGE_YOY": _s(
-            f"{name.replace('_', ' ').title()} change (YoY)",
-            C.DUPONT,
-            unit,
-            "driver - same driver one year earlier",
-        )
-        for name, unit in (
-            ("DUPONT_NET_MARGIN", U.PERCENTAGE_POINTS),
-            ("DUPONT_ASSET_TURNOVER", U.TIMES),
-            ("DUPONT_EQUITY_MULTIPLIER", U.TIMES),
-        )
-    },
-    # --- leverage & solvency -----------------------------------------------------------------
-    "DEBT_TO_EQUITY": _s("Debt / equity", C.LEVERAGE, U.TIMES, "gross debt / equity"),
-    "DEBT_TO_ASSETS": _s("Debt / assets", C.LEVERAGE, U.TIMES, "gross debt / total assets"),
-    "NET_DEBT_TO_EQUITY": _s(
-        "Net debt / equity", C.LEVERAGE, U.TIMES, "net debt / equity (negative = net cash)"
-    ),
-    "DEBT_TO_EBITDA": _s("Debt / EBITDA", C.LEVERAGE, U.TIMES, "gross debt / EBITDA; EBITDA > 0"),
-    "NET_DEBT_TO_EBITDA": _s(
-        "Net debt / EBITDA",
-        C.LEVERAGE,
-        U.TIMES,
-        "net debt / EBITDA; EBITDA > 0; not a multiple when the company holds net cash",
-    ),
-    "INTEREST_COVERAGE": _s("Interest coverage", C.LEVERAGE, U.TIMES, "EBIT / finance cost"),
-    "FINANCE_COST_COVERAGE": _s(
-        "Finance-cost coverage (EBITDA)", C.LEVERAGE, U.TIMES, "EBITDA / finance cost"
-    ),
-    "DEBT_TO_CFO": _s("Debt / CFO", C.LEVERAGE, U.TIMES, "gross debt / CFO; CFO > 0"),
-    "CFO_TO_DEBT": _s("CFO / debt", C.LEVERAGE, U.TIMES, "CFO / gross debt"),
-    "CASH_TO_DEBT": _s(
-        "Cash / debt", C.LEVERAGE, U.TIMES, "cash and cash equivalents / gross debt"
-    ),
-    "EQUITY_TO_ASSETS": _s(
-        "Equity / assets", C.LEVERAGE, U.PERCENT, "equity / total assets x 100", banks=True
-    ),
-    # --- liquidity -------------------------------------------------------------------------
-    "CURRENT_RATIO": _s(
-        "Current ratio", C.LIQUIDITY, U.TIMES, "total current assets / total current liabilities"
-    ),
-    "QUICK_RATIO": _s(
-        "Quick ratio",
-        C.LIQUIDITY,
-        U.TIMES,
-        "(total current assets - inventory) / total current liabilities (inventory required)",
-    ),
-    "CASH_RATIO": _s(
-        "Cash ratio", C.LIQUIDITY, U.TIMES, "cash and cash equivalents / total current liabilities"
-    ),
-    # --- working capital -------------------------------------------------------------------
-    "RECEIVABLE_DAYS": _s(
-        "Receivable days", C.WORKING_CAPITAL, U.DAYS, "average trade receivables / revenue x 365"
-    ),
-    "INVENTORY_DAYS": _s(
-        "Inventory days",
-        C.WORKING_CAPITAL,
-        U.DAYS,
-        "average inventory / COGS x 365 (COGS required)",
-    ),
-    "PAYABLE_DAYS": _s(
-        "Payable days",
-        C.WORKING_CAPITAL,
-        U.DAYS,
-        "average trade payables / COGS x 365 (COGS required)",
-    ),
-    "CASH_CONVERSION_CYCLE": _s(
-        "Cash conversion cycle",
-        C.WORKING_CAPITAL,
-        U.DAYS,
-        "receivable days + inventory days - payable days (all three required)",
-    ),
-    "RECEIVABLE_DAYS_CHANGE_YOY": _s(
-        "Receivable days change (YoY)", C.WORKING_CAPITAL, U.DAYS, "days - days one year earlier"
-    ),
-    "NWC_TO_REVENUE": _s(
-        "Net working capital / revenue", C.WORKING_CAPITAL, U.PERCENT, "NWC / revenue x 100"
-    ),
-    "NWC_CHANGE": _s(
-        "Net working capital change", C.WORKING_CAPITAL, U.MONEY, "NWC - NWC one year earlier"
-    ),
-    "RECEIVABLES_TO_REVENUE": _s(
-        "Receivables / revenue", C.WORKING_CAPITAL, U.PERCENT, "closing receivables / revenue x 100"
-    ),
-    "INVENTORY_TO_REVENUE": _s(
-        "Inventory / revenue", C.WORKING_CAPITAL, U.PERCENT, "closing inventory / revenue x 100"
-    ),
-    **{
-        f"{name}_VS_REVENUE_GROWTH": _s(
-            f"{name.title()} growth minus revenue growth",
-            C.WORKING_CAPITAL,
-            U.PERCENTAGE_POINTS,
-            f"{name.lower()} YoY growth - revenue YoY growth",
-        )
-        for name in ("RECEIVABLES", "INVENTORY", "PAYABLES")
-    },
-    # --- cash flow -------------------------------------------------------------------------
-    "CFO_TO_PAT": _s("CFO / PAT", C.CASH_FLOW, U.TIMES, "CFO / PAT; PAT > 0"),
-    "CFO_TO_EBITDA": _s("CFO / EBITDA", C.CASH_FLOW, U.TIMES, "CFO / EBITDA; EBITDA > 0"),
-    "CFO_TO_PBT": _s("CFO / PBT", C.CASH_FLOW, U.TIMES, "CFO / PBT; PBT > 0"),
-    "FCF_TO_PAT": _s("FCF / PAT", C.CASH_FLOW, U.TIMES, "FCF / PAT; PAT > 0"),
-    "FCF_TO_EBITDA": _s("FCF / EBITDA", C.CASH_FLOW, U.TIMES, "FCF / EBITDA; EBITDA > 0"),
-    "CAPEX_TO_REVENUE": _s("Capex / revenue", C.CASH_FLOW, U.PERCENT, "capex / revenue x 100"),
-    "CAPEX_TO_CFO": _s("Capex / CFO", C.CASH_FLOW, U.TIMES, "capex / CFO; CFO > 0"),
-    "DIVIDENDS_TO_CFO": _s(
-        "Dividends paid / CFO", C.CASH_FLOW, U.TIMES, "|dividends paid| / CFO; CFO > 0"
-    ),
-    "BUYBACK_TO_CFO": _s("Buyback / CFO", C.CASH_FLOW, U.TIMES, "|buyback| / CFO; CFO > 0"),
-    "CFO_TO_PAT_CHANGE_YOY": _s(
-        "CFO / PAT change (YoY)", C.CASH_FLOW, U.TIMES, "CFO/PAT - CFO/PAT one year earlier"
-    ),
-    "PAT_VS_CFO_GROWTH_GAP": _s(
-        "PAT growth minus CFO growth",
-        C.CASH_FLOW,
-        U.PERCENTAGE_POINTS,
-        "PAT YoY growth - CFO YoY growth",
-    ),
-    **{
-        f"CUMULATIVE_CFO_TO_PAT_{years}Y": _s(
-            f"Cumulative CFO / cumulative PAT over {years} years",
-            C.CASH_FLOW,
-            U.TIMES,
-            f"sum of CFO / sum of PAT over the last {years} consecutive fiscal years "
-            "(all required)",
-        )
-        for years in (3, 5)
-    },
-    **{
-        f"CUMULATIVE_FCF_{years}Y": _s(
-            f"Cumulative FCF over {years} years",
-            C.CASH_FLOW,
-            U.MONEY,
-            f"sum of FCF over the last {years} consecutive fiscal years (all required)",
-        )
-        for years in (3, 5)
-    },
-    # --- accruals --------------------------------------------------------------------------
-    "ACCRUAL_RATIO": _s(
-        "Accrual ratio (cash-flow based)",
-        C.ACCRUALS,
-        U.PERCENT,
-        "(PAT - CFO) / average total assets x 100",
-    ),
-    "BALANCE_SHEET_ACCRUAL_RATIO": _s(
-        "Accrual ratio (balance-sheet based)",
-        C.ACCRUALS,
-        U.PERCENT,
-        "((d current assets - d cash) - d current liabilities - D&A) / average total assets x 100",
-    ),
-    "ACCRUAL_RATIO_CHANGE_YOY": _s(
-        "Accrual ratio change (YoY)",
-        C.ACCRUALS,
-        U.PERCENTAGE_POINTS,
-        "accrual ratio - accrual ratio one year earlier",
-    ),
-    # --- forensic building blocks ----------------------------------------------------------
-    "DEPRECIATION_RATE": _s(
-        "Depreciation rate", C.ACCRUALS, U.PERCENT, "D&A / average PPE (or fixed assets) x 100"
-    ),
-    "DEPRECIATION_RATE_CHANGE_YOY": _s(
-        "Depreciation rate change (YoY)",
-        C.ACCRUALS,
-        U.PERCENTAGE_POINTS,
-        "depreciation rate - depreciation rate one year earlier",
-    ),
-    "CWIP_TO_FIXED_ASSETS": _s(
-        "CWIP / fixed assets", C.ACCRUALS, U.PERCENT, "CWIP / (PPE or fixed assets) x 100"
-    ),
-    "ASSET_MIX_SHIFT": _s(
-        "Largest one-year shift in asset mix",
-        C.ACCRUALS,
-        U.PERCENTAGE_POINTS,
-        "max |share of total assets now - one year earlier| over receivables, inventory, "
-        "cash, investments, fixed assets (components present in both years)",
-    ),
-    # --- banking ---------------------------------------------------------------------------
-    "COST_TO_INCOME": _s(
-        "Cost-to-income ratio",
-        C.BANKING,
-        U.PERCENT,
-        "bank operating expenses / (net interest income + other income) x 100",
-        banks=True,
-    ),
-    "FINANCING_PROFIT_MARGIN": _s(
-        "Financing profit / revenue (Screener financing profit)",
-        C.BANKING,
-        U.PERCENT,
-        "BANK_FINANCING_PROFIT / revenue x 100",
-        banks=True,
-    ),
-    "PROVISIONS_TO_REVENUE": _s(
-        "Provisions and contingencies / revenue",
-        C.BANKING,
-        U.PERCENT,
-        "provisions and contingencies / revenue x 100",
-        banks=True,
-    ),
-    "GROSS_NPA_RATIO": _s(
-        "Gross NPA ratio",
-        C.BANKING,
-        U.PERCENT,
-        "reported gross NPA % (not part of the Box 4 canonical taxonomy)",
-        banks=True,
-    ),
-    "NET_NPA_RATIO": _s(
-        "Net NPA ratio",
-        C.BANKING,
-        U.PERCENT,
-        "reported net NPA % (not part of the Box 4 canonical taxonomy)",
-        banks=True,
-    ),
-}
-BANK_ONLY = {
-    "COST_TO_INCOME",
-    "FINANCING_PROFIT_MARGIN",
-    "PROVISIONS_TO_REVENUE",
-    "GROSS_NPA_RATIO",
-    "NET_NPA_RATIO",
-    "DEPOSITS_GROWTH_YOY",
-    "ADVANCES_GROWTH_YOY",
-}
+AGGREGATOR_RANK = AUTHORITY_RANK[SourceAuthority.SECONDARY_AGGREGATOR]
 
 
 # --- facts -----------------------------------------------------------------------------------
@@ -571,7 +100,7 @@ BANK_ONLY = {
 @dataclass(frozen=True)
 class Fact:
     value: Decimal
-    inputs: tuple[DerivedMetricInput, ...]
+    inputs: tuple[MetricInput, ...]
     confidence: Confidence
     warnings: tuple[str, ...] = ()
     derived_from: tuple[UUID, ...] = ()
@@ -582,26 +111,16 @@ class Fact:
 class Missing:
     status: CalculationStatus
     what: str
-    inputs: tuple[DerivedMetricInput, ...] = ()
+    inputs: tuple[MetricInput, ...] = ()
     derived_from: tuple[UUID, ...] = ()
 
 
 Got = Fact | Missing
-
-
-@dataclass(frozen=True)
-class Refused:
-    """A calculation that has inputs but no meaningful number (zero or negative base ...)."""
-
-    status: CalculationStatus
-    interpretation: str | None = None
-
-
 Values = dict[str, Decimal]
-Formula = Callable[[Values], "Decimal | Refused"]
+Formula = Callable[[Values], Result]
 
 
-def weakest(confidences: Iterable[Confidence]) -> Confidence:
+def weakest(confidences: Sequence[Confidence]) -> Confidence:
     return max(confidences, key=lambda c: CONFIDENCE_RANK[c], default=Confidence.HIGH)
 
 
@@ -627,8 +146,20 @@ def compare_periods(
         or prior.period_end is None
         or shift(current.period_end, -months) != prior.period_end
     ):
-        return S.INCOMPATIBLE_PERIODS
+        return S.PERIOD_MISMATCH
     return None
+
+
+def quantize(value: Decimal) -> Decimal:
+    return value.quantize(DERIVED_QUANTUM, rounding=ROUND_HALF_EVEN)
+
+
+def first_available(*gots: Got) -> Got:
+    for got in gots:
+        if isinstance(got, Fact):
+            return got
+    missing = [g for g in gots if isinstance(g, Missing)]
+    return min(missing, key=lambda m: STATUS_PRIORITY.index(m.status))
 
 
 class Periods:
@@ -677,7 +208,10 @@ class Frame:
         self.basis = basis
         self.currency = currency
         self.truncated = False
-        sources = {o.observation_id: o.source.source_type for o in data.observations}
+        self.observations = {
+            o.observation_id: (o.source.source_type, o.authority, o.source.locator)
+            for o in data.observations
+        }
         self.records: dict[UUID, ReconciliationRecord] = {
             r.record_id: r for r in data.reconciliation
         }
@@ -700,6 +234,7 @@ class Frame:
             consumed += 1
             self.values[key] = value
         self.consumed = consumed
+        self.period_keys = {key for _, key in self.values}
         self.unresolved: dict[tuple[CanonicalMetric, str], ReconciliationRecord] = {
             (r.metric, r.period.key()): r
             for r in data.reconciliation
@@ -707,7 +242,6 @@ class Frame:
             and r.selected_observation_id is None
             and r.currency in (currency, Currency.UNKNOWN)
         }
-        self.sources = sources
 
     def periods(self, period_type: PeriodType) -> list[date]:
         ends = {
@@ -732,18 +266,21 @@ class Frame:
         for metric in metrics:
             record = self.unresolved.get((metric, key))
             if record is not None and record.outcome in (Outcome.CONFLICT, Outcome.AMBIGUOUS):
-                return Missing(S.CONFLICTED_INPUT, f"{what} (Box 4 {record.outcome.value})")
+                return Missing(S.INPUT_CONFLICT, f"{what} (Box 4 {record.outcome.value})")
             if record is not None:
                 return Missing(S.LOW_CONFIDENCE_INPUT, f"{what} (Box 4 {record.outcome.value})")
         if any((metric, key) in self.other_currency for metric in metrics):
-            return Missing(S.INCOMPATIBLE_CURRENCY, f"{what} (only in another currency)")
-        return Missing(S.INSUFFICIENT_DATA, f"{what} (not reported)")
+            return Missing(S.CURRENCY_MISMATCH, f"{what} (only in another currency)")
+        if key not in self.period_keys:
+            return Missing(S.INSUFFICIENT_HISTORY, f"{what} (period not in the data)")
+        return Missing(S.INPUT_MISSING, f"{what} (not reported)")
 
     def _fact(self, value: CanonicalFinancialValue) -> Got:
         if value.confidence == Confidence.LOW:
             return Missing(S.LOW_CONFIDENCE_INPUT, f"{value.metric.value} @ {value.period.label}")
         warnings: list[str] = []
         confidence: Confidence = value.confidence
+        source, authority, locator = self.observations[value.selected_observation_id]
         if value.outcome in (Outcome.SOURCE_PRECEDENCE, Outcome.RESTATEMENT):
             warnings.append(f"INPUT_{value.outcome.value}")
             confidence = weakest([confidence, Confidence.MEDIUM])
@@ -756,11 +293,15 @@ class Frame:
             ):
                 warnings.append("MATERIAL_INPUT_CONFLICT")
                 confidence = Confidence.LOW
-        source = self.sources[value.selected_observation_id]
+        elif (
+            value.outcome == Outcome.SINGLE_SOURCE and AUTHORITY_RANK[authority] >= AGGREGATOR_RANK
+        ):
+            warnings.append("INPUT_AGGREGATOR_ONLY")  # not confirmed by a primary source
+            confidence = weakest([confidence, Confidence.MEDIUM])
         return Fact(
             value=value.value,
             inputs=(
-                DerivedMetricInput(
+                MetricInput(
                     role="",
                     canonical_value_id=value.canonical_value_id,
                     metric=value.metric,
@@ -774,6 +315,8 @@ class Frame:
                     reconciliation_record_id=value.reconciliation_record_id,
                     selected_observation_id=value.selected_observation_id,
                     selected_source=source,
+                    selected_authority=authority,
+                    source_locator=locator,
                     supporting_observation_ids=value.supporting_observation_ids,
                     conflicting_observation_ids=value.conflicting_observation_ids,
                 ),
@@ -781,59 +324,6 @@ class Frame:
             confidence=confidence,
             warnings=tuple(warnings),
         )
-
-
-def first_available(*gots: Got) -> Got:
-    """The first fact; when all are missing, the most informative failure."""
-    for got in gots:
-        if isinstance(got, Fact):
-            return got
-    missing = [g for g in gots if isinstance(g, Missing)]
-    return min(missing, key=lambda m: STATUS_PRIORITY.index(m.status))
-
-
-def quantize(value: Decimal) -> Decimal:
-    return value.quantize(DERIVED_QUANTUM, rounding=ROUND_HALF_EVEN)
-
-
-def ratio(numerator: Decimal, denominator: Decimal, scale: int = 1) -> Decimal | Refused:
-    if denominator == 0:
-        return Refused(S.ZERO_DENOMINATOR)
-    return numerator * scale / denominator
-
-
-def positive_ratio(
-    numerator: Decimal, denominator: Decimal, scale: int = 1, what: str = "DENOMINATOR"
-) -> Decimal | Refused:
-    if denominator == 0:
-        return Refused(S.ZERO_DENOMINATOR)
-    if denominator < 0:
-        return Refused(S.NOT_APPLICABLE, f"NEGATIVE_{what}")
-    return numerator * scale / denominator
-
-
-def growth(current: Decimal, prior: Decimal) -> Decimal | Refused:
-    if prior == 0:
-        return Refused(S.ZERO_DENOMINATOR, "ZERO_BASE")
-    if prior < 0:
-        return Refused(S.NOT_APPLICABLE, "NEGATIVE_BASE")
-    return (current / prior - 1) * 100
-
-
-def cagr(end: Decimal, start: Decimal, years: int) -> Decimal | Refused:
-    if start == 0:
-        return Refused(S.ZERO_DENOMINATOR, "ZERO_START")
-    if start < 0 or end <= 0:
-        return Refused(S.NOT_APPLICABLE, "NON_POSITIVE_ENDPOINT")
-    with localcontext() as ctx:
-        ctx.prec = 34
-        return root_growth(end / start, Decimal(years)) * 100
-
-
-def average(v: Values, name: str) -> Decimal:
-    close = v[f"{name}_close"]
-    opening = v.get(f"{name}_open")
-    return close if opening is None else (close + opening) / 2
 
 
 # --- the engine --------------------------------------------------------------------------------
@@ -845,36 +335,42 @@ class Engine:
     periods: Periods
     industry: Industry
     analytics_key: str
+    max_provenance_refs: int = 64
     latest_fy: FinancialPeriod | None = None
-    metrics: dict[UUID, DerivedMetric] = field(default_factory=dict)
-    index: dict[tuple[str, str], DerivedMetric] = field(default_factory=dict)
+    metrics: dict[UUID, CalculatedMetric] = field(default_factory=dict)
+    index: dict[tuple[str, str], CalculatedMetric] = field(default_factory=dict)
+    provenance_overflows: int = 0
+
+    @property
+    def sector(self) -> Sector:
+        return Sector.FINANCIAL if self.industry in FINANCIAL_INDUSTRIES else Sector.GENERAL
 
     @property
     def financial(self) -> bool:
-        return self.industry in FINANCIAL_INDUSTRIES
+        return self.sector == Sector.FINANCIAL
 
-    def applicable(self, code: str) -> bool:
-        if self.financial:
-            return SPECS[code].banks
-        return code not in BANK_ONLY
-
-    def find(self, code: str, period: FinancialPeriod) -> DerivedMetric | None:
+    def find(self, code: str, period: FinancialPeriod) -> CalculatedMetric | None:
         return self.index.get((code, period.key()))
 
     def got(self, code: str, period: FinancialPeriod) -> Got:
         metric = self.find(code, period)
         if metric is None:
-            return Missing(S.INSUFFICIENT_DATA, f"{code} @ {period.label} (not derived)")
+            if period.key() not in self.frame.period_keys:
+                return Missing(
+                    S.INSUFFICIENT_HISTORY, f"{code} @ {period.label} (period not in the data)"
+                )
+            return Missing(S.INPUT_MISSING, f"{code} @ {period.label} (not derived)")
         if metric.value is None or metric.confidence is None:
+            status = S.INPUT_MISSING if metric.status in UPSTREAM_UNAVAILABLE else metric.status
             return Missing(
-                metric.status,
+                status,
                 f"{code} @ {period.label} ({metric.status.value})",
-                metric.inputs,
+                metric.provenance,
                 (metric.metric_id,),
             )
         return Fact(
             metric.value,
-            metric.inputs,
+            metric.provenance,
             metric.confidence,
             metric.warnings,
             (metric.metric_id,),
@@ -889,47 +385,69 @@ class Engine:
         code: str,
         period: FinancialPeriod,
         parts: Sequence[tuple[str, Got]],
-        formula: Formula,
+        compute: Formula,
         *,
         comparison: FinancialPeriod | None = None,
         variant: str | None = None,
         warnings: Sequence[str] = (),
         cap: Confidence | None = None,
         missing_note: str | None = None,
-    ) -> DerivedMetric:
-        spec = SPECS[code]
-        formula_id = f"{code}/{spec.version}" + (f"/{variant}" if variant else "")
+    ) -> CalculatedMetric:
+        definition = FORMULAS[code]
+        expression = definition.expression
+        if variant is not None:
+            match = next((v for v in definition.variants if v.name == variant), None)
+            if match is None:
+                raise ValueError(f"{code} has no registered variant {variant}")
+            expression = f"{definition.expression} [{variant}: {match.expression}]"
+        formula_id = definition.formula_id + (f"/{variant}" if variant else "")
         metric_id = uuid5(
             NS,
             f"{self.analytics_key}|{self.frame.basis.value}|{self.frame.currency.value}|{code}|"
             f"{period.key()}|{comparison.key() if comparison else '-'}",
         )
-        currency = self.frame.currency if spec.unit in (U.MONEY, U.PER_SHARE) else None
+        currency = self.frame.currency if definition.unit in (U.MONEY, U.PER_SHARE) else None
         common: dict[str, Any] = {
             "metric_id": metric_id,
             "code": code,
-            "name": spec.name,
-            "category": spec.category,
-            "unit": spec.unit,
+            "label": definition.name,
+            "category": definition.category,
+            "unit": definition.unit,
             "currency": currency,
             "reporting_basis": self.frame.basis,
             "period": period,
             "comparison_period": comparison,
             "formula_id": formula_id,
-            "formula": spec.formula,
+            "formula_text": expression,
         }
-        if not self.applicable(code):
-            metric = DerivedMetric(
+        if self.sector not in definition.sectors:
+            metric = CalculatedMetric(
                 **common,
-                status=S.NOT_APPLICABLE,
+                status=S.UNSUPPORTED_SECTOR,
                 value=None,
-                inputs=(),
+                input_value_ids=(),
+                provenance=(),
                 confidence=None,
-                interpretation="INDUSTRY_NOT_APPLICABLE",
-                missing_inputs=(f"not meaningful for industry {self.industry.value}",),
+                interpretation="SECTOR_NOT_APPLICABLE",
+                missing_inputs=(f"not defined for {self.industry.value} ({self.sector.value})",),
             )
             if self.latest_fy is None or period.key() == self.latest_fy.key():
                 self._store(metric)
+            return metric
+        if period.period_type not in definition.periods:
+            metric = CalculatedMetric(
+                **common,
+                status=S.PERIOD_MISMATCH,
+                value=None,
+                input_value_ids=(),
+                provenance=(),
+                confidence=None,
+                missing_inputs=(
+                    f"{code} is defined for {[p.value for p in definition.periods]}, "
+                    f"not {period.period_type.value}",
+                ),
+            )
+            self._store(metric)
             return metric
         facts: dict[str, Fact] = {}
         missing: list[tuple[str, Missing]] = []
@@ -938,70 +456,84 @@ class Engine:
                 facts[role] = got
             else:
                 missing.append((role, got))
-        inputs: list[DerivedMetricInput] = []
+        inputs: list[MetricInput] = []
         derived: list[UUID] = []
         items: list[tuple[str, Fact | Missing]] = [*facts.items(), *missing]
         for role, item in items:
             for i in item.inputs:
-                inputs.append(
-                    i.model_copy(update={"role": role if not i.role else f"{role}.{i.role}"})
-                )
+                inputs.append(i.model_copy(update={"role": f"{role}.{i.role}" if i.role else role}))
             derived.extend(d for d in item.derived_from if d in self.metrics)
-        all_warnings = sorted({w for f in facts.values() for w in f.warnings} | set(warnings))
+        all_warnings = {w for f in facts.values() for w in f.warnings} | set(warnings)
         status = S.CALCULATED
         value: Decimal | None = None
         interpretation: str | None = None
         notes = [f"{role}: {m.what}" for role, m in missing]
         if missing_note:
             notes.append(missing_note)
+        unique_inputs = {i.canonical_value_id for i in inputs}
         if missing:
             status = min((m.status for _, m in missing), key=STATUS_PRIORITY.index)
-            if status in (S.NOT_APPLICABLE, S.ZERO_DENOMINATOR):
-                status = S.INSUFFICIENT_DATA  # an upstream refusal leaves this one unsupported
+            if status in UPSTREAM_UNAVAILABLE:
+                status = S.INPUT_MISSING
+        elif len(unique_inputs) > self.max_provenance_refs:
+            status = S.INVALID_INPUT
+            self.provenance_overflows += 1
+            notes.append(
+                f"{len(unique_inputs)} canonical inputs exceed the provenance bound "
+                f"of {self.max_provenance_refs}"
+            )
+            inputs = []
         else:
             mixed = self._mixing(inputs)
             if mixed is not None:
                 status = mixed
             else:
-                result = formula({role: fact.value for role, fact in facts.items()})
+                result = compute({role: fact.value for role, fact in facts.items()})
                 if isinstance(result, Refused):
                     status, interpretation = result.status, result.interpretation
                 else:
-                    value = result if spec.unit == U.MONEY else quantize(result)
+                    value = result if definition.unit == U.MONEY else quantize(result)
         by_code: dict[str, set[str]] = {}
         for f in facts.values():
             if f.formula_id and f.formula_id.count("/") >= 2:
                 code_part, _, variant_part = f.formula_id.rpartition("/")
                 by_code.setdefault(code_part, set()).add(variant_part)
         if any(len(found) > 1 for found in by_code.values()):
-            # the same building block computed two different ways at the two endpoints
-            all_warnings.append("MIXED_FORMULA_VARIANTS")
+            all_warnings.add("MIXED_FORMULA_VARIANTS")  # one block built two ways at two dates
         confidence: Confidence | None = None
         if status == S.CALCULATED:
             confidence = weakest([f.confidence for f in facts.values()] + ([cap] if cap else []))
-        metric = DerivedMetric(
+        metric = CalculatedMetric(
             **common,
             status=status,
             value=value,
-            inputs=tuple(inputs) if status == S.CALCULATED or inputs else (),
-            derived_from=tuple(sorted(set(derived), key=str)),
+            input_value_ids=tuple(sorted({i.canonical_value_id for i in inputs}, key=str)),
+            input_metric_ids=tuple(sorted(set(derived), key=str)),
+            input_periods=tuple(sorted({i.period.key() for i in inputs})),
+            provenance=tuple(inputs),
             missing_inputs=tuple(notes),
             confidence=confidence,
             interpretation=interpretation,
-            warnings=tuple(sorted(set(all_warnings))),
+            warnings=tuple(sorted(all_warnings)),
         )
         self._store(metric)
         return metric
 
-    def _store(self, metric: DerivedMetric) -> None:
+    def _store(self, metric: CalculatedMetric) -> None:
         self.metrics[metric.metric_id] = metric
         self.index[(metric.code, metric.period.key())] = metric
 
-    def _mixing(self, inputs: Sequence[DerivedMetricInput]) -> CalculationStatus | None:
+    def annotate(self, metric: CalculatedMetric, interpretation: str) -> CalculatedMetric:
+        updated = metric.model_copy(update={"interpretation": interpretation})
+        self._store(updated)
+        return updated
+
+    @staticmethod
+    def _mixing(inputs: Sequence[MetricInput]) -> CalculationStatus | None:
         if len({i.reporting_basis for i in inputs}) > 1:
-            return S.INCOMPATIBLE_BASIS
+            return S.BASIS_MISMATCH
         if len({i.currency for i in inputs}) > 1:
-            return S.INCOMPATIBLE_CURRENCY
+            return S.CURRENCY_MISMATCH
         return None
 
     # --- generic shapes ----------------------------------------------------------------------
@@ -1016,10 +548,10 @@ class Engine:
         scale: int = 100,
         positive_denominator: bool = False,
         absolute_numerator: bool = False,
-    ) -> DerivedMetric:
+    ) -> CalculatedMetric:
         n_role, d_role = numerator[0], denominator[0]
 
-        def compute(v: Values) -> Decimal | Refused:
+        def compute(v: Values) -> Result:
             top = abs(v[n_role]) if absolute_numerator else v[n_role]
             if positive_denominator:
                 return positive_ratio(top, v[d_role], scale, d_role.upper())
@@ -1033,30 +565,47 @@ class Engine:
         period: FinancialPeriod,
         numerator: tuple[str, Got],
         balance: str,
-        close: Got,
+        closing: Got,
         opening: Got,
         *,
         scale: int = 100,
-        extra: Sequence[tuple[str, Got]] = (),
-        numerator_fn: Callable[[Values], Decimal] | None = None,
-    ) -> DerivedMetric:
-        """numerator / average(balance); falls back to the closing balance, flagged."""
-        parts: list[tuple[str, Got]] = [numerator, *extra, (f"{balance}_close", close)]
-        warnings: list[str] = []
-        cap = None
-        variant = "AVERAGE"
-        if isinstance(opening, Fact):
-            parts.append((f"{balance}_open", opening))
-        else:
-            warnings.append("ENDING_BALANCE_USED")
-            cap = Confidence.MEDIUM
-            variant = "ENDING"
+    ) -> CalculatedMetric:
+        """numerator / average(opening, closing) - both balances are required."""
 
-        def compute(v: Values) -> Decimal | Refused:
-            top = numerator_fn(v) if numerator_fn else v[numerator[0]]
-            return positive_ratio(top, average(v, balance), scale, balance.upper())
+        def compute(v: Values) -> Result:
+            mean = average(v[f"{balance}_open"], v[f"{balance}_close"])
+            return positive_ratio(v[numerator[0]], mean, scale, balance.upper())
 
-        return self.emit(code, period, parts, compute, variant=variant, warnings=warnings, cap=cap)
+        return self.emit(
+            code,
+            period,
+            [numerator, (f"{balance}_open", opening), (f"{balance}_close", closing)],
+            compute,
+            comparison=self._prior(period),
+        )
+
+    def days_metric(
+        self,
+        code: str,
+        period: FinancialPeriod,
+        flow: tuple[str, Got],
+        balance: str,
+        closing: Got,
+        opening: Got,
+    ) -> CalculatedMetric:
+        """average(opening, closing) / annual flow x 365 - both balances are required."""
+        return self.emit(
+            code,
+            period,
+            [flow, (f"{balance}_open", opening), (f"{balance}_close", closing)],
+            lambda v: days(average(v[f"{balance}_open"], v[f"{balance}_close"]), v[flow[0]]),
+            comparison=self._prior(period),
+        )
+
+    def _prior(self, period: FinancialPeriod) -> FinancialPeriod | None:
+        if period.period_end is None:
+            return None
+        return self.periods.fy(shift(period.period_end, -12))
 
     def yoy(
         self,
@@ -1066,10 +615,10 @@ class Engine:
         period: FinancialPeriod,
         prior_period: FinancialPeriod,
         months: int = 12,
-    ) -> DerivedMetric:
+    ) -> CalculatedMetric:
         mismatch = compare_periods(period, prior_period, months)
 
-        def compute(v: Values) -> Decimal | Refused:
+        def compute(v: Values) -> Result:
             if mismatch is not None:
                 return Refused(mismatch)
             return growth(v["current"], v["prior"])
@@ -1084,9 +633,9 @@ class Engine:
         current: Got,
         prior: Got,
         period: FinancialPeriod,
-        prior_period: FinancialPeriod,
+        prior_period: FinancialPeriod | None,
         scale: int = 1,
-    ) -> DerivedMetric:
+    ) -> CalculatedMetric:
         return self.emit(
             code,
             period,
@@ -1094,6 +643,9 @@ class Engine:
             lambda v: (v["current"] - v["prior"]) * scale,
             comparison=prior_period,
         )
+
+    def magnitude(self, code: str, period: FinancialPeriod, got: Got) -> CalculatedMetric:
+        return self.emit(code, period, [("reported", got)], lambda v: abs(v["reported"]))
 
 
 # --- building blocks ---------------------------------------------------------------------------
@@ -1161,18 +713,24 @@ def base_flow_metrics(e: Engine, p: FinancialPeriod) -> None:
         "NOPAT",
         p,
         [("ebit", e.got("EBIT", p)), ("tax_rate", e.got("TAX_RATE", p))],
-        lambda v: quantize(v["ebit"] * (1 - v["tax_rate"] / 100)),
+        lambda v: quantize(nopat(v["ebit"], v["tax_rate"])),
     )
     capex = g([M.CAPEX], p)
-    variant = "CAPEX"
-    if not isinstance(capex, Fact):
-        capex, variant = first_available(g([M.PURCHASE_OF_PPE], p), capex), "PURCHASE_OF_PPE"
-    e.emit("CAPEX", p, [("capex", capex)], lambda v: abs(v["capex"]), variant=variant)
+    if isinstance(capex, Fact):
+        e.emit("CAPEX", p, [("capex", capex)], lambda v: abs(v["capex"]), variant="CAPEX")
+    else:
+        e.emit(
+            "CAPEX",
+            p,
+            [("purchase_of_ppe", g([M.PURCHASE_OF_PPE], p))],
+            lambda v: abs(v["purchase_of_ppe"]),
+            variant="PURCHASE_OF_PPE",
+        )
     e.emit(
         "FCF",
         p,
         [("cfo", g([M.CFO], p)), ("capex", e.got("CAPEX", p))],
-        lambda v: v["cfo"] - v["capex"],
+        lambda v: free_cash_flow(v["cfo"], v["capex"]),
     )
     e.emit(
         "COGS",
@@ -1219,26 +777,28 @@ def base_balance_metrics(e: Engine, b: FinancialPeriod) -> None:
             lambda v: v["long_term"] + v["short_term"],
             variant="COMPONENTS",
         )
-    cash = g([M.CASH_AND_CASH_EQUIVALENTS], b)
-    net = e.emit(
-        "NET_DEBT",
+    gross = e.got("GROSS_DEBT", b)
+    e.emit(
+        "LEASE_ADJUSTED_DEBT",
         b,
-        [("debt", e.got("GROSS_DEBT", b)), ("cash", cash)],
-        lambda v: v["debt"] - v["cash"],
+        [("debt", gross), ("leases", g([M.LEASE_LIABILITIES], b))],
+        lambda v: v["debt"] + v["leases"],
     )
+    cash = g([M.CASH_AND_CASH_EQUIVALENTS], b)
+    net = e.emit("NET_DEBT", b, [("debt", gross), ("cash", cash)], lambda v: v["debt"] - v["cash"])
     if net.value is not None and net.value < 0:
-        e._store(net.model_copy(update={"interpretation": "NET_CASH"}))
-    equity, debt_got = e.got("SHAREHOLDERS_EQUITY", b), e.got("GROSS_DEBT", b)
+        e.annotate(net, "NET_CASH")
+    equity = e.got("SHAREHOLDERS_EQUITY", b)
     e.emit(
         "CAPITAL_EMPLOYED",
         b,
-        [("equity", equity), ("debt", debt_got)],
+        [("equity", equity), ("debt", gross)],
         lambda v: v["equity"] + v["debt"],
     )
     e.emit(
         "INVESTED_CAPITAL",
         b,
-        [("equity", equity), ("debt", debt_got), ("cash", cash)],
+        [("equity", equity), ("debt", gross), ("cash", cash)],
         lambda v: v["equity"] + v["debt"] - v["cash"],
     )
     e.emit(
@@ -1250,22 +810,55 @@ def base_balance_metrics(e: Engine, b: FinancialPeriod) -> None:
         ],
         lambda v: v["current_assets"] - v["current_liabilities"],
     )
+    reported = g([M.TOTAL_LIABILITIES], b)
+    current_l = g([M.TOTAL_CURRENT_LIABILITIES], b)
+    non_current_l = g([M.TOTAL_NON_CURRENT_LIABILITIES], b)
+    if isinstance(reported, Fact):
+        e.emit(
+            "TOTAL_LIABILITIES",
+            b,
+            [("liabilities", reported)],
+            lambda v: v["liabilities"],
+            variant="REPORTED",
+        )
+    elif isinstance(current_l, Fact) and isinstance(non_current_l, Fact):
+        e.emit(
+            "TOTAL_LIABILITIES",
+            b,
+            [("current", current_l), ("non_current", non_current_l)],
+            lambda v: v["current"] + v["non_current"],
+            variant="CURRENT_PLUS_NON_CURRENT",
+        )
+    else:
+        e.emit(
+            "TOTAL_LIABILITIES",
+            b,
+            [
+                ("equity_and_liabilities", g([M.TOTAL_EQUITY_AND_LIABILITIES], b)),
+                ("total_equity", g([M.TOTAL_EQUITY], b)),
+            ],
+            lambda v: v["equity_and_liabilities"] - v["total_equity"],
+            variant="TOTAL_LESS_EQUITY",
+        )
 
 
 # --- annual analytics --------------------------------------------------------------------------
 
-GROWTH_FLOWS: dict[str, tuple[CanonicalMetric, ...] | str] = {
+Source = tuple[CanonicalMetric, ...] | str
+GROWTH_FLOWS: dict[str, Source] = {
     "REVENUE": REVENUE,
     "OPERATING_PROFIT": (M.OPERATING_PROFIT,),
     "EBITDA": "EBITDA",
+    "EBIT": "EBIT",
     "PBT": (M.PBT,),
     "PAT": (M.PAT,),
     "EPS": EPS,
     "CFO": (M.CFO,),
     "FCF": "FCF",
     "CAPEX": "CAPEX",
+    "COGS": "COGS",
 }
-GROWTH_BALANCES: dict[str, tuple[CanonicalMetric, ...] | str] = {
+GROWTH_BALANCES: dict[str, Source] = {
     "TOTAL_ASSETS": (M.TOTAL_ASSETS,),
     "EQUITY": "SHAREHOLDERS_EQUITY",
     "GROSS_DEBT": "GROSS_DEBT",
@@ -1279,19 +872,14 @@ GROWTH_BALANCES: dict[str, tuple[CanonicalMetric, ...] | str] = {
 
 
 def pair(
-    e: Engine,
-    source: tuple[CanonicalMetric, ...] | str,
-    current: FinancialPeriod,
-    prior: FinancialPeriod,
+    e: Engine, source: Source, current: FinancialPeriod, prior: FinancialPeriod
 ) -> tuple[Got, Got]:
-    """Both endpoints of a comparison, always the SAME canonical metric (never basic EPS
-    against diluted EPS, never revenue against total income)."""
+    """Both endpoints of a comparison, always the SAME canonical metric."""
     if isinstance(source, str):
         return e.got(source, current), e.got(source, prior)
     now = e.canonical(source, current)
     if isinstance(now, Fact):
-        same = (now.inputs[0].metric,)
-        return now, e.canonical(same, prior)
+        return now, e.canonical((now.inputs[0].metric,), prior)
     return now, e.canonical(source, prior)
 
 
@@ -1309,7 +897,8 @@ def annual_metrics(e: Engine, end: date) -> None:
         current, prior = pair(e, source, b, bp)
         e.yoy(f"{name}_GROWTH_YOY", current, prior, p, pp)
 
-    flow_margins = {
+    # profitability
+    margins: dict[str, Got] = {
         "EBITDA_MARGIN": e.got("EBITDA", p),
         "OPERATING_MARGIN": g([M.OPERATING_PROFIT], p),
         "EBIT_MARGIN": e.got("EBIT", p),
@@ -1320,11 +909,13 @@ def annual_metrics(e: Engine, end: date) -> None:
         "EMPLOYEE_COST_TO_REVENUE": g([M.EMPLOYEE_COST], p),
         "RAW_MATERIAL_COST_TO_REVENUE": g([M.RAW_MATERIAL_COST], p),
         "POWER_AND_FUEL_TO_REVENUE": g([M.POWER_AND_FUEL], p),
+        "OTHER_OPERATING_COST_TO_REVENUE": g([M.OTHER_OPERATING_EXPENSE], p),
         "OTHER_EXPENSES_TO_REVENUE": g([M.OTHER_EXPENSES], p),
         "DEPRECIATION_TO_REVENUE": g([M.DEPRECIATION_AMORTIZATION], p),
         "FINANCE_COST_TO_REVENUE": g([M.FINANCE_COST], p),
+        "CAPEX_TO_REVENUE": e.got("CAPEX", p),
     }
-    for code, numerator in flow_margins.items():
+    for code, numerator in margins.items():
         e.ratio_metric(
             code, p, ("numerator", numerator), ("revenue", revenue), positive_denominator=True
         )
@@ -1383,20 +974,28 @@ def annual_metrics(e: Engine, end: date) -> None:
         e.got("INVESTED_CAPITAL", b),
         e.got("INVESTED_CAPITAL", bp),
     )
-    tangible = [("goodwill", g([M.GOODWILL], b)), ("intangibles", g([M.INTANGIBLE_ASSETS], b))]
     e.emit(
         "RETURN_ON_TANGIBLE_CAPITAL",
         p,
-        [("ebit", e.got("EBIT", p)), ("capital_employed", e.got("CAPITAL_EMPLOYED", b)), *tangible],
+        [
+            ("ebit", e.got("EBIT", p)),
+            ("capital_open", e.got("CAPITAL_EMPLOYED", bp)),
+            ("goodwill_open", g([M.GOODWILL], bp)),
+            ("intangibles_open", g([M.INTANGIBLE_ASSETS], bp)),
+            ("capital_close", e.got("CAPITAL_EMPLOYED", b)),
+            ("goodwill_close", g([M.GOODWILL], b)),
+            ("intangibles_close", g([M.INTANGIBLE_ASSETS], b)),
+        ],
         lambda v: positive_ratio(
             v["ebit"],
-            v["capital_employed"] - v["goodwill"] - v["intangibles"],
+            average(
+                v["capital_open"] - v["goodwill_open"] - v["intangibles_open"],
+                v["capital_close"] - v["goodwill_close"] - v["intangibles_close"],
+            ),
             100,
             "TANGIBLE_CAPITAL",
         ),
-        variant="ENDING",
-        warnings=["ENDING_BALANCE_USED"],
-        cap=Confidence.MEDIUM,
+        comparison=pp,
     )
     e.averaged_ratio(
         "ASSET_TURNOVER", p, ("revenue", revenue), "assets", assets, assets_open, scale=1
@@ -1406,35 +1005,54 @@ def annual_metrics(e: Engine, end: date) -> None:
         "FIXED_ASSET_TURNOVER", p, ("revenue", revenue), "fixed_assets", fixed, fixed_open, scale=1
     )
     e.difference("ROE_CHANGE_YOY", e.got("ROE", p), e.got("ROE", pp), p, pp)
+    e.difference("ROCE_CHANGE_YOY", e.got("ROCE", p), e.got("ROCE", pp), p, pp)
 
-    # DuPont (both balances averaged, so the product equals ROE)
+    # DuPont: implied vs direct ROE
     e.ratio_metric(
         "DUPONT_NET_MARGIN", p, ("pat", pat), ("revenue", revenue), positive_denominator=True
     )
     e.averaged_ratio(
         "DUPONT_ASSET_TURNOVER", p, ("revenue", revenue), "assets", assets, assets_open, scale=1
     )
-    dupont_parts: list[tuple[str, Got]] = [("assets_close", assets), ("equity_close", equity)]
-    if isinstance(assets_open, Fact) and isinstance(equity_open, Fact):
-        dupont_parts += [("assets_open", assets_open), ("equity_open", equity_open)]
     e.emit(
         "DUPONT_EQUITY_MULTIPLIER",
         p,
-        dupont_parts,
-        lambda v: positive_ratio(average(v, "assets"), average(v, "equity"), 1, "EQUITY"),
-        variant="AVERAGE" if len(dupont_parts) == 4 else "ENDING",
-        warnings=[] if len(dupont_parts) == 4 else ["ENDING_BALANCE_USED"],
-        cap=None if len(dupont_parts) == 4 else Confidence.MEDIUM,
+        [
+            ("assets_open", assets_open),
+            ("assets_close", assets),
+            ("equity_open", equity_open),
+            ("equity_close", equity),
+        ],
+        lambda v: positive_ratio(
+            average(v["assets_open"], v["assets_close"]),
+            average(v["equity_open"], v["equity_close"]),
+            1,
+            "EQUITY",
+        ),
+        comparison=pp,
     )
     e.emit(
-        "DUPONT_ROE",
+        "DUPONT_IMPLIED_ROE",
         p,
         [
             ("net_margin", e.got("DUPONT_NET_MARGIN", p)),
             ("asset_turnover", e.got("DUPONT_ASSET_TURNOVER", p)),
             ("equity_multiplier", e.got("DUPONT_EQUITY_MULTIPLIER", p)),
         ],
-        lambda v: v["net_margin"] * v["asset_turnover"] * v["equity_multiplier"],
+        lambda v: dupont_roe(v["net_margin"], v["asset_turnover"], v["equity_multiplier"]),
+    )
+    implied, direct = e.got("DUPONT_IMPLIED_ROE", p), e.got("ROE", p)
+    gap = (
+        implied.value - direct.value
+        if isinstance(implied, Fact) and isinstance(direct, Fact)
+        else Decimal(0)
+    )
+    e.emit(
+        "DUPONT_ROE_DIFFERENCE",
+        p,
+        [("implied", implied), ("direct", direct)],
+        lambda v: v["implied"] - v["direct"],
+        warnings=["DUPONT_TOLERANCE_EXCEEDED"] if abs(gap) > DUPONT_TOLERANCE_PP else [],
     )
     for code in ("DUPONT_NET_MARGIN", "DUPONT_ASSET_TURNOVER", "DUPONT_EQUITY_MULTIPLIER"):
         e.difference(f"{code}_CHANGE_YOY", e.got(code, p), e.got(code, pp), p, pp)
@@ -1447,7 +1065,29 @@ def annual_metrics(e: Engine, end: date) -> None:
         "DEBT_TO_EQUITY", p, ("debt", debt), ("equity", equity), scale=1, positive_denominator=True
     )
     e.ratio_metric(
+        "LEASE_ADJUSTED_DEBT_TO_EQUITY",
+        p,
+        ("debt", e.got("LEASE_ADJUSTED_DEBT", b)),
+        ("equity", equity),
+        scale=1,
+        positive_denominator=True,
+    )
+    e.ratio_metric(
         "DEBT_TO_ASSETS", p, ("debt", debt), ("assets", assets), scale=1, positive_denominator=True
+    )
+    e.emit(
+        "DEBT_TO_CAPITAL",
+        p,
+        [("debt", debt), ("equity", equity)],
+        lambda v: positive_ratio(v["debt"], v["debt"] + v["equity"], 1, "CAPITAL"),
+    )
+    e.ratio_metric(
+        "LIABILITIES_TO_ASSETS",
+        p,
+        ("liabilities", e.got("TOTAL_LIABILITIES", b)),
+        ("assets", assets),
+        scale=1,
+        positive_denominator=True,
     )
     nde = e.ratio_metric(
         "NET_DEBT_TO_EQUITY",
@@ -1458,12 +1098,12 @@ def annual_metrics(e: Engine, end: date) -> None:
         positive_denominator=True,
     )
     if nde.value is not None and nde.value < 0:
-        e._store(nde.model_copy(update={"interpretation": "NET_CASH"}))
+        e.annotate(nde, "NET_CASH")
     e.ratio_metric(
         "DEBT_TO_EBITDA", p, ("debt", debt), ("ebitda", ebitda), scale=1, positive_denominator=True
     )
 
-    def net_debt_to_ebitda(v: Values) -> Decimal | Refused:
+    def net_debt_to_ebitda(v: Values) -> Result:
         if v["net_debt"] < 0:
             return Refused(S.NOT_APPLICABLE, "NET_CASH")
         return positive_ratio(v["net_debt"], v["ebitda"], 1, "EBITDA")
@@ -1478,6 +1118,13 @@ def annual_metrics(e: Engine, end: date) -> None:
     e.ratio_metric(
         "FINANCE_COST_COVERAGE", p, ("ebitda", ebitda), ("finance_cost", finance_cost), scale=1
     )
+    e.yoy(
+        "INTEREST_COVERAGE_CHANGE_YOY",
+        e.got("INTEREST_COVERAGE", p),
+        e.got("INTEREST_COVERAGE", pp),
+        p,
+        pp,
+    )
     e.ratio_metric(
         "DEBT_TO_CFO", p, ("debt", debt), ("cfo", cfo), scale=1, positive_denominator=True
     )
@@ -1488,10 +1135,8 @@ def annual_metrics(e: Engine, end: date) -> None:
     )
 
     # liquidity (as at the fiscal year end)
-    current_assets, current_liabilities = (
-        g([M.TOTAL_CURRENT_ASSETS], b),
-        g([M.TOTAL_CURRENT_LIABILITIES], b),
-    )
+    current_assets = g([M.TOTAL_CURRENT_ASSETS], b)
+    current_liabilities = g([M.TOTAL_CURRENT_LIABILITIES], b)
     e.ratio_metric(
         "CURRENT_RATIO",
         p,
@@ -1513,23 +1158,21 @@ def annual_metrics(e: Engine, end: date) -> None:
         "CASH_RATIO", p, ("cash", cash), ("current_liabilities", current_liabilities), scale=1
     )
 
-    # working capital (days on a 365-day fiscal year, average balances)
-    receivables, receivables_open = g([M.TRADE_RECEIVABLES], b), g([M.TRADE_RECEIVABLES], bp)
+    # working capital
+    receivables = g([M.TRADE_RECEIVABLES], b)
     cogs = e.got("COGS", p)
-    _days(
-        e, "RECEIVABLE_DAYS", p, ("revenue", revenue), "receivables", receivables, receivables_open
-    )
-    _days(
-        e,
-        "INVENTORY_DAYS",
+    e.days_metric(
+        "RECEIVABLE_DAYS",
         p,
-        ("cogs", cogs),
-        "inventory",
-        g([M.INVENTORY], b),
-        g([M.INVENTORY], bp),
+        ("revenue", revenue),
+        "receivables",
+        receivables,
+        g([M.TRADE_RECEIVABLES], bp),
     )
-    _days(
-        e,
+    e.days_metric(
+        "INVENTORY_DAYS", p, ("cogs", cogs), "inventory", g([M.INVENTORY], b), g([M.INVENTORY], bp)
+    )
+    e.days_metric(
         "PAYABLE_DAYS",
         p,
         ("cogs", cogs),
@@ -1545,15 +1188,12 @@ def annual_metrics(e: Engine, end: date) -> None:
             ("inventory_days", e.got("INVENTORY_DAYS", p)),
             ("payable_days", e.got("PAYABLE_DAYS", p)),
         ],
-        lambda v: v["receivable_days"] + v["inventory_days"] - v["payable_days"],
+        lambda v: cash_conversion_cycle(
+            v["receivable_days"], v["inventory_days"], v["payable_days"]
+        ),
     )
-    e.difference(
-        "RECEIVABLE_DAYS_CHANGE_YOY",
-        e.got("RECEIVABLE_DAYS", p),
-        e.got("RECEIVABLE_DAYS", pp),
-        p,
-        pp,
-    )
+    for code in ("RECEIVABLE_DAYS", "INVENTORY_DAYS"):
+        e.difference(f"{code}_CHANGE_YOY", e.got(code, p), e.got(code, pp), p, pp)
     nwc = e.got("NET_WORKING_CAPITAL", b)
     e.ratio_metric(
         "NWC_TO_REVENUE", p, ("nwc", nwc), ("revenue", revenue), positive_denominator=True
@@ -1579,14 +1219,12 @@ def annual_metrics(e: Engine, end: date) -> None:
         ("revenue", revenue),
         positive_denominator=True,
     )
-    for name in ("RECEIVABLES", "INVENTORY", "PAYABLES"):
-        e.difference(
-            f"{name}_VS_REVENUE_GROWTH",
-            e.got(f"{name}_GROWTH_YOY", p),
-            e.got("REVENUE_GROWTH_YOY", p),
-            p,
-            pp,
-        )
+    for code, a, z in (
+        ("RECEIVABLES_VS_REVENUE_GROWTH", "RECEIVABLES", "REVENUE"),
+        ("INVENTORY_VS_REVENUE_GROWTH", "INVENTORY", "REVENUE"),
+        ("PAYABLES_VS_COGS_GROWTH", "PAYABLES", "COGS"),
+    ):
+        e.difference(code, e.got(f"{a}_GROWTH_YOY", p), e.got(f"{z}_GROWTH_YOY", p), p, pp)
 
     # cash-flow quality
     fcf = e.got("FCF", p)
@@ -1596,20 +1234,86 @@ def annual_metrics(e: Engine, end: date) -> None:
         ("CFO_TO_PBT", ("cfo", cfo), ("pbt", pbt)),
         ("FCF_TO_PAT", ("fcf", fcf), ("pat", pat)),
         ("FCF_TO_EBITDA", ("fcf", fcf), ("ebitda", ebitda)),
-        ("CAPEX_TO_CFO", ("capex", e.got("CAPEX", p)), ("cfo", cfo)),
     ):
         e.ratio_metric(code, p, top, bottom, scale=1, positive_denominator=True)
     e.ratio_metric(
-        "CAPEX_TO_REVENUE",
+        "CASH_TAX_RATE",
         p,
-        ("capex", e.got("CAPEX", p)),
-        ("revenue", revenue),
+        ("tax_paid", g([M.TAX_PAID], p)),
+        ("pbt", pbt),
         positive_denominator=True,
+        absolute_numerator=True,
+    )
+    e.emit(
+        "CASH_TAX_VS_BOOK_TAX_GAP",
+        p,
+        [("cash_tax_rate", e.got("CASH_TAX_RATE", p)), ("tax_rate", e.got("TAX_RATE", p))],
+        lambda v: v["cash_tax_rate"] - v["tax_rate"],
+    )
+    e.emit(
+        "CASH_INTEREST_COVERAGE",
+        p,
+        [("cfo", cfo), ("interest_paid", g([M.INTEREST_PAID], p))],
+        lambda v: ratio(v["cfo"] + abs(v["interest_paid"]), abs(v["interest_paid"])),
+    )
+    e.difference("CFO_TO_PAT_CHANGE_YOY", e.got("CFO_TO_PAT", p), e.got("CFO_TO_PAT", pp), p, pp)
+    e.difference(
+        "PAT_VS_CFO_GROWTH_GAP", e.got("PAT_GROWTH_YOY", p), e.got("CFO_GROWTH_YOY", p), p, pp
+    )
+    e.difference(
+        "PAT_VS_EPS_GROWTH_GAP", e.got("PAT_GROWTH_YOY", p), e.got("EPS_GROWTH_YOY", p), p, pp
+    )
+
+    # capital allocation
+    capex = e.got("CAPEX", p)
+    dividends, buyback = g([M.DIVIDENDS_PAID], p), g([M.BUYBACK], p)
+    depreciation = g([M.DEPRECIATION_AMORTIZATION], p)
+    e.ratio_metric(
+        "CAPEX_TO_CFO", p, ("capex", capex), ("cfo", cfo), scale=1, positive_denominator=True
+    )
+    e.ratio_metric(
+        "CAPEX_TO_DEPRECIATION",
+        p,
+        ("capex", capex),
+        ("depreciation", depreciation),
+        scale=1,
+        positive_denominator=True,
+    )
+    for code, metric in (
+        ("ACQUISITION_SPEND", M.ACQUISITIONS),
+        ("DIVIDENDS_PAID", M.DIVIDENDS_PAID),
+        ("BUYBACK_SPEND", M.BUYBACK),
+        ("DEBT_RAISED", M.DEBT_RAISED),
+        ("DEBT_REPAID", M.DEBT_REPAID),
+    ):
+        e.magnitude(code, p, g([metric], p))
+    e.ratio_metric(
+        "DIVIDEND_PAYOUT",
+        p,
+        ("dividends", dividends),
+        ("pat", pat),
+        positive_denominator=True,
+        absolute_numerator=True,
+    )
+    e.ratio_metric(
+        "DIVIDENDS_TO_FCF",
+        p,
+        ("dividends", dividends),
+        ("fcf", fcf),
+        scale=1,
+        positive_denominator=True,
+        absolute_numerator=True,
+    )
+    e.emit(
+        "SHAREHOLDER_DISTRIBUTION_TO_FCF",
+        p,
+        [("dividends", dividends), ("buyback", buyback), ("fcf", fcf)],
+        lambda v: positive_ratio(abs(v["dividends"]) + abs(v["buyback"]), v["fcf"], 1, "FCF"),
     )
     e.ratio_metric(
         "DIVIDENDS_TO_CFO",
         p,
-        ("dividends", g([M.DIVIDENDS_PAID], p)),
+        ("dividends", dividends),
         ("cfo", cfo),
         scale=1,
         positive_denominator=True,
@@ -1618,55 +1322,92 @@ def annual_metrics(e: Engine, end: date) -> None:
     e.ratio_metric(
         "BUYBACK_TO_CFO",
         p,
-        ("buyback", g([M.BUYBACK], p)),
+        ("buyback", buyback),
         ("cfo", cfo),
         scale=1,
         positive_denominator=True,
         absolute_numerator=True,
     )
-    e.difference("CFO_TO_PAT_CHANGE_YOY", e.got("CFO_TO_PAT", p), e.got("CFO_TO_PAT", pp), p, pp)
-    e.difference(
-        "PAT_VS_CFO_GROWTH_GAP", e.got("PAT_GROWTH_YOY", p), e.got("CFO_GROWTH_YOY", p), p, pp
+    e.emit(
+        "REINVESTMENT_RATE",
+        p,
+        [
+            ("capex", capex),
+            ("depreciation", depreciation),
+            ("nwc_change", e.got("NWC_CHANGE", p)),
+            ("nopat", e.got("NOPAT", p)),
+        ],
+        lambda v: positive_ratio(
+            v["capex"] - v["depreciation"] + v["nwc_change"], v["nopat"], 100, "NOPAT"
+        ),
+    )
+    e.emit(
+        "NET_DEBT_CHANGE",
+        p,
+        [("current", net_debt), ("prior", e.got("NET_DEBT", bp))],
+        lambda v: v["current"] - v["prior"],
+        comparison=pp,
+    )
+    e.emit(
+        "CASH_CHANGE",
+        p,
+        [("current", cash), ("prior", g([M.CASH_AND_CASH_EQUIVALENTS], bp))],
+        lambda v: v["current"] - v["prior"],
+        comparison=pp,
     )
 
     # accruals
     e.emit("TOTAL_ACCRUALS", p, [("pat", pat), ("cfo", cfo)], lambda v: v["pat"] - v["cfo"])
     e.averaged_ratio(
-        "ACCRUAL_RATIO", p, ("accruals", e.got("TOTAL_ACCRUALS", p)), "assets", assets, assets_open
+        "CASH_FLOW_ACCRUAL_RATIO",
+        p,
+        ("accruals", e.got("TOTAL_ACCRUALS", p)),
+        "assets",
+        assets,
+        assets_open,
     )
-    bs_parts: list[tuple[str, Got]] = [
-        ("ca", current_assets),
-        ("ca_prior", g([M.TOTAL_CURRENT_ASSETS], bp)),
-        ("cash", cash),
-        ("cash_prior", g([M.CASH_AND_CASH_EQUIVALENTS], bp)),
-        ("cl", current_liabilities),
-        ("cl_prior", g([M.TOTAL_CURRENT_LIABILITIES], bp)),
-        ("depreciation", g([M.DEPRECIATION_AMORTIZATION], p)),
-        ("assets_close", assets),
-        ("assets_open", assets_open),
-    ]
     e.emit(
         "BALANCE_SHEET_ACCRUAL_RATIO",
         p,
-        bs_parts,
+        [
+            ("ca", current_assets),
+            ("ca_prior", g([M.TOTAL_CURRENT_ASSETS], bp)),
+            ("cash", cash),
+            ("cash_prior", g([M.CASH_AND_CASH_EQUIVALENTS], bp)),
+            ("cl", current_liabilities),
+            ("cl_prior", g([M.TOTAL_CURRENT_LIABILITIES], bp)),
+            ("depreciation", depreciation),
+            ("assets_close", assets),
+            ("assets_open", assets_open),
+        ],
         lambda v: positive_ratio(
             (v["ca"] - v["ca_prior"])
             - (v["cash"] - v["cash_prior"])
             - (v["cl"] - v["cl_prior"])
             - v["depreciation"],
-            average(v, "assets"),
+            average(v["assets_open"], v["assets_close"]),
             100,
             "ASSETS",
         ),
         comparison=pp,
     )
     e.difference(
-        "ACCRUAL_RATIO_CHANGE_YOY", e.got("ACCRUAL_RATIO", p), e.got("ACCRUAL_RATIO", pp), p, pp
+        "CASH_FLOW_ACCRUAL_RATIO_CHANGE_YOY",
+        e.got("CASH_FLOW_ACCRUAL_RATIO", p),
+        e.got("CASH_FLOW_ACCRUAL_RATIO", pp),
+        p,
+        pp,
+    )
+    e.emit(
+        "NON_CASH_EARNINGS_SHARE",
+        p,
+        [("pat", pat), ("cfo", cfo)],
+        lambda v: positive_ratio(v["pat"] - v["cfo"], v["pat"], 100, "PAT"),
     )
     e.averaged_ratio(
         "DEPRECIATION_RATE",
         p,
-        ("depreciation", g([M.DEPRECIATION_AMORTIZATION], p)),
+        ("depreciation", depreciation),
         "fixed_assets",
         fixed,
         fixed_open,
@@ -1715,51 +1456,21 @@ def annual_metrics(e: Engine, end: date) -> None:
         positive_denominator=True,
     )
     for code in ("GROSS_NPA_RATIO", "NET_NPA_RATIO"):
-        if e.financial:
-            e.emit(
-                code,
-                p,
-                [],
-                lambda v: Refused(S.INSUFFICIENT_DATA),
-                missing_note="NPA % is preserved by Box 4 as an unmapped percentage line, "
-                "not as a canonical value; Box 5 does not reinterpret raw lines",
-            )
-
-
-def _days(
-    e: Engine,
-    code: str,
-    p: FinancialPeriod,
-    flow: tuple[str, Got],
-    balance: str,
-    close: Got,
-    opening: Got,
-) -> DerivedMetric:
-    """average balance / annual flow x 365."""
-    parts: list[tuple[str, Got]] = [flow, (f"{balance}_close", close)]
-    warnings: list[str] = []
-    cap = None
-    if isinstance(opening, Fact):
-        parts.append((f"{balance}_open", opening))
-    else:
-        warnings.append("ENDING_BALANCE_USED")
-        cap = Confidence.MEDIUM
-    return e.emit(
-        code,
-        p,
-        parts,
-        lambda v: positive_ratio(average(v, balance) * 365, v[flow[0]], 1, flow[0].upper()),
-        variant="AVERAGE" if cap is None else "ENDING",
-        warnings=warnings,
-        cap=cap,
-    )
+        e.emit(
+            code,
+            p,
+            [],
+            lambda v: Refused(S.INPUT_MISSING),
+            missing_note="NPA % is preserved by Box 4 as an unmapped percentage line, not as "
+            "a canonical value; Box 5 does not reinterpret raw lines",
+        )
 
 
 def _asset_mix(
     e: Engine, p: FinancialPeriod, pp: FinancialPeriod, b: FinancialPeriod, bp: FinancialPeriod
 ) -> None:
     g = e.canonical
-    components = {
+    components: dict[str, tuple[CanonicalMetric, ...]] = {
         "receivables": (M.TRADE_RECEIVABLES,),
         "inventory": (M.INVENTORY,),
         "cash": (M.CASH_AND_CASH_EQUIVALENTS,),
@@ -1772,16 +1483,16 @@ def _asset_mix(
     ]
     present = []
     for name, metrics in components.items():
-        now, before = g(metrics, b), g(metrics, bp)
+        now, before = pair(e, metrics, b, bp)
         if isinstance(now, Fact) and isinstance(before, Fact):
             parts += [(name, now), (f"{name}_prior", before)]
             present.append(name)
 
-    def compute(v: Values) -> Decimal | Refused:
+    def compute(v: Values) -> Result:
         if not present:
-            return Refused(S.INSUFFICIENT_DATA)
+            return Refused(S.INPUT_MISSING)
         if v["assets"] <= 0 or v["assets_prior"] <= 0:
-            return Refused(S.ZERO_DENOMINATOR)
+            return Refused(S.DIVISION_BY_ZERO)
         return max(
             abs(v[n] / v["assets"] - v[f"{n}_prior"] / v["assets_prior"]) * 100 for n in present
         )
@@ -1790,14 +1501,14 @@ def _asset_mix(
 
 
 def _cagr_formula(years: int) -> Formula:
-    def compute(v: Values) -> Decimal | Refused:
+    def compute(v: Values) -> Result:
         return cagr(v["end"], v["start"], years)
 
     return compute
 
 
 def _cumulative_ratio(years: int) -> Formula:
-    def compute(v: Values) -> Decimal | Refused:
+    def compute(v: Values) -> Result:
         cfo = sum((v[f"cfo_{k}"] for k in range(years)), Decimal(0))
         pat = sum((v[f"pat_{k}"] for k in range(years)), Decimal(0))
         return positive_ratio(cfo, pat, 1, "CUMULATIVE_PAT")
@@ -1806,7 +1517,7 @@ def _cumulative_ratio(years: int) -> Formula:
 
 
 def _cumulative_sum(name: str, years: int) -> Formula:
-    def compute(v: Values) -> Decimal | Refused:
+    def compute(v: Values) -> Result:
         return sum((v[f"{name}_{k}"] for k in range(years)), Decimal(0))
 
     return compute
@@ -1816,10 +1527,11 @@ def window_metrics(e: Engine, latest: date) -> None:
     """CAGR, multi-year margin change, cumulative cash flows, incremental ROIC (latest FY)."""
     P = e.periods
     p = P.fy(latest)
-    cagr_sources: dict[str, tuple[CanonicalMetric, ...] | str] = {
+    cagr_sources: dict[str, Source] = {
         "REVENUE": REVENUE,
         "OPERATING_PROFIT": (M.OPERATING_PROFIT,),
         "EBITDA": "EBITDA",
+        "EBIT": "EBIT",
         "PBT": (M.PBT,),
         "PAT": (M.PAT,),
         "EPS": EPS,
@@ -1888,22 +1600,23 @@ def window_metrics(e: Engine, latest: date) -> None:
     )
     tax_points = [e.got("TAX_RATE", P.fy(shift(latest, -12 * k))) for k in range(5)]
     available = [t for t in tax_points if isinstance(t, Fact)]
-    parts = [(f"tax_rate_{k}", t) for k, t in enumerate(tax_points) if isinstance(t, Fact)]
-    e.emit(
-        "TAX_RATE_RANGE_5Y",
-        p,
-        parts
-        if len(available) >= 3
-        else [
-            *parts,
+    parts: list[tuple[str, Got]] = [
+        (f"tax_rate_{k}", t) for k, t in enumerate(tax_points) if isinstance(t, Fact)
+    ]
+    if len(available) < 3:
+        parts.append(
             (
                 "tax_rate_history",
                 Missing(
-                    S.INSUFFICIENT_DATA,
+                    S.INSUFFICIENT_HISTORY,
                     f"{len(available)} of 5 fiscal years have a tax rate (3 needed)",
                 ),
-            ),
-        ],
+            )
+        )
+    e.emit(
+        "TAX_RATE_RANGE_5Y",
+        p,
+        parts,
         lambda v: max(v.values()) - min(v.values()),
         comparison=P.fy(shift(latest, -48)),
     )
@@ -1914,18 +1627,20 @@ def quarterly_metrics(e: Engine, end: date) -> None:
     q, yq, sq = P.quarter(end), P.quarter(shift(end, -12)), P.quarter(shift(end, -3))
     g = e.canonical
     base_flow_metrics(e, q)
-    for name, source in (
-        ("REVENUE", REVENUE),
-        ("OPERATING_PROFIT", (M.OPERATING_PROFIT,)),
-        ("PBT", (M.PBT,)),
-        ("PAT", (M.PAT,)),
-        ("EPS", EPS),
-    ):
+    quarterly: dict[str, Source] = {
+        "REVENUE": REVENUE,
+        "OPERATING_PROFIT": (M.OPERATING_PROFIT,),
+        "EBITDA": "EBITDA",
+        "PBT": (M.PBT,),
+        "PAT": (M.PAT,),
+        "EPS": EPS,
+    }
+    for name, source in quarterly.items():
         current, prior = pair(e, source, q, yq)
         e.yoy(f"{name}_GROWTH_YOY", current, prior, q, yq)
-    for name, source in (("REVENUE", REVENUE), ("PAT", (M.PAT,))):
-        current, prior = pair(e, source, q, sq)
-        e.yoy(f"{name}_GROWTH_QOQ", current, prior, q, sq, months=3)
+        if f"{name}_GROWTH_QOQ" in FORMULAS:
+            current, prior = pair(e, source, q, sq)
+            e.yoy(f"{name}_GROWTH_QOQ", current, prior, q, sq, months=3)
     revenue = g(REVENUE, q)
     for code, numerator in (
         ("EBITDA_MARGIN", e.got("EBITDA", q)),

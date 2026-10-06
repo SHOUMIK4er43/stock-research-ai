@@ -1,4 +1,11 @@
-"""DETAILED_RESEARCH_V1 Box 5: deterministic financial analytics & forensics (offline)."""
+"""DETAILED_RESEARCH_V1 Box 5: deterministic financial analytics (offline).
+
+Fixtures (see the factory below): A healthy industrial, B deteriorating, C negative FCF,
+D high debt, E loss-making, F negative starting CAGR, G missing periods, H conflicted Box 4
+inputs, I standalone + consolidated, J FY + TTM + quarterly, K bank, L YESBANK, M missing
+capex, N missing working-capital components, O zero denominator, P restated periods,
+T deterministic serialization. Q/R/S (forensic models) live in test_financial_forensics.py.
+"""
 
 import ast
 import json
@@ -16,29 +23,44 @@ from test_summary_input import INFY, YESBANK
 from stock_research_ai.application import (
     financial_analytics,
     financial_forensics,
+    financial_formulas,
     financial_metrics,
+    financial_rules,
 )
 from stock_research_ai.application.financial_analytics import (
     build_financial_analytics,
     canonical_analytics_json,
     classify_trend,
 )
-from stock_research_ai.application.financial_metrics import cagr, compare_periods, growth
+from stock_research_ai.application.financial_formulas import (
+    FORMULAS,
+    average,
+    cagr,
+    cash_conversion_cycle,
+    days,
+    dupont_roe,
+    free_cash_flow,
+    growth,
+    nopat,
+    positive_ratio,
+    ratio,
+)
+from stock_research_ai.application.financial_metrics import compare_periods
 from stock_research_ai.application.financial_reconciliation import build_canonical_dataset
 from stock_research_ai.domain import financial_analytics as analytics_domain
 from stock_research_ai.domain.evidence import SourceAuthority
 from stock_research_ai.domain.financial_analytics import (
     AnalyticsLimits,
+    AnalyticsUnit,
+    CalculatedMetric,
     CalculationStatus,
-    ComponentStatus,
-    DerivedMetric,
     FinancialAnalyticsDataset,
-    ForensicModel,
     HealthDimension,
     HealthState,
     MetricCategory,
     PeriodRole,
-    SignalStatus,
+    Sector,
+    Severity,
     TrendClass,
 )
 from stock_research_ai.domain.financial_canonical import (
@@ -63,6 +85,7 @@ from stock_research_ai.domain.financial_canonical import (
     SourceType,
     StatementType,
     TolerancePolicy,
+    UnmappedFinancialLine,
     ValueKind,
 )
 
@@ -71,7 +94,7 @@ B = ReportingBasis
 S = CalculationStatus
 NOW = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
 NS = UUID("0e4c1f8a-2b3d-4c5e-8f9a-1b2c3d4e5f6a")
-FY26, FY25, FY24, FY21 = date(2026, 3, 31), date(2025, 3, 31), date(2024, 3, 31), date(2021, 3, 31)
+FY26, FY25, FY21 = date(2026, 3, 31), date(2025, 3, 31), date(2021, 3, 31)
 
 
 # --- a compact Box 4 dataset factory -----------------------------------------------------------
@@ -146,12 +169,27 @@ BALANCE = {
     M.TOTAL_LIABILITIES,
     M.FIXED_ASSETS,
     M.TOTAL_INVESTMENTS,
+    M.LEASE_LIABILITIES,
+    M.TOTAL_NON_CURRENT_LIABILITIES,
 }
-CASH = {M.CFO, M.PURCHASE_OF_PPE, M.CAPEX, M.DIVIDENDS_PAID, M.BUYBACK, M.CFI, M.CFF}
+CASH = {
+    M.CFO,
+    M.PURCHASE_OF_PPE,
+    M.CAPEX,
+    M.DIVIDENDS_PAID,
+    M.BUYBACK,
+    M.CFI,
+    M.CFF,
+    M.TAX_PAID,
+    M.INTEREST_PAID,
+}
 
 
 def make(
-    rows: list[V], industry: Industry = Industry.GENERAL, fy_end: int | None = 3
+    rows: list[V],
+    industry: Industry = Industry.GENERAL,
+    fy_end: int | None = 3,
+    unmapped: tuple[UnmappedFinancialLine, ...] = (),
 ) -> CanonicalFinancialDataset:
     observations, records, values = [], [], []
     for n, row in enumerate(rows):
@@ -271,7 +309,7 @@ def make(
         limits=FinancialLimits(),
         status="COMPLETE",
         observations=tuple(observations),
-        unmapped_lines=(),
+        unmapped_lines=unmapped,
         reconciliation=tuple(records),
         canonical_values=tuple(values),
         statements=(),
@@ -283,7 +321,7 @@ def make(
             observations_by_statement={},
             mapped_observations=len(observations),
             unmapped_observations=0,
-            unmapped_lines=0,
+            unmapped_lines=len(unmapped),
             canonical_values=len(values),
             outcomes={},
             validation_pass=0,
@@ -292,10 +330,8 @@ def make(
     )
 
 
-def company_year(
-    year: int, basis: ReportingBasis = B.CONSOLIDATED, **override: int | None
-) -> list[V]:
-    """A simple industrial company that grows 100 of revenue a year from FY2021."""
+def company_year(year: int, basis: ReportingBasis = B.CONSOLIDATED, **override) -> list[V]:
+    """Fixture A: a healthy industrial company growing 100 of revenue a year from FY2021."""
     k = year - 2021
     pbt = 270 + 40 * k
     tax = Decimal(pbt) / 4
@@ -319,6 +355,9 @@ def company_year(
         M.CFO: pat + 30,
         M.PURCHASE_OF_PPE: -(60 + 5 * k),
         M.DIVIDENDS_PAID: -50,
+        M.BUYBACK: -10,
+        M.TAX_PAID: -(tax + 10),
+        M.INTEREST_PAID: -20,
     }
     balances = {
         M.EQUITY_SHARE_CAPITAL: 100,
@@ -326,11 +365,13 @@ def company_year(
         M.TOTAL_BORROWINGS: 300,
         M.LONG_TERM_BORROWINGS: 200,
         M.SHORT_TERM_BORROWINGS: 100,
+        M.LEASE_LIABILITIES: 40,
         M.CASH_AND_CASH_EQUIVALENTS: 150 + 20 * k,
         M.TOTAL_ASSETS: 2000 + 150 * k,
         M.TOTAL_EQUITY_AND_LIABILITIES: 2000 + 150 * k,
         M.TOTAL_CURRENT_ASSETS: 800 + 60 * k,
         M.TOTAL_CURRENT_LIABILITIES: 400 + 20 * k,
+        M.TOTAL_NON_CURRENT_LIABILITIES: 600 + 30 * k,
         M.TRADE_RECEIVABLES: 200 + 25 * k,
         M.INVENTORY: 150 + 10 * k,
         M.TRADE_PAYABLES: 120 + 5 * k,
@@ -345,23 +386,32 @@ def company_year(
         value = override.get(metric.value, value)
         if value is None:
             continue
-        period = pit(year) if metric in balances else fy(year)
-        rows.append(V(metric, period, value, basis))
-    rows.append(V(M.EPS, fy(year), quantize_eps(pat), basis, kind=ValueKind.PER_SHARE))
+        rows.append(V(metric, pit(year) if metric in balances else fy(year), value, basis))
+    rows.append(
+        V(M.EPS, fy(year), (pat / 10).quantize(Decimal("0.01")), basis, kind=ValueKind.PER_SHARE)
+    )
     return rows
 
 
-def quantize_eps(pat: Decimal) -> Decimal:
-    return (pat / 10).quantize(Decimal("0.01"))
-
-
-def company(years: range = range(2021, 2027), **override: int | None) -> list[V]:
+def company(years: range = range(2021, 2027), **override) -> list[V]:
     return [row for year in years for row in company_year(year, **override)]
+
+
+def replace(rows: list[V], metric: CanonicalMetric, values: dict[int, object]) -> list[V]:
+    """Rows with `metric` replaced by explicit per-year values (None drops a year)."""
+    balance = metric in BALANCE
+    kept = [r for r in rows if r.metric != metric]
+    return kept + [
+        V(metric, pit(y) if balance else fy(y), v) for y, v in values.items() if v is not None
+    ]
 
 
 def analyse(rows: list[V], **kw) -> FinancialAnalyticsDataset:
     industry = kw.pop("industry", Industry.GENERAL)
-    return build_financial_analytics(make(rows, industry), generated_at=NOW, **kw)
+    unmapped = kw.pop("unmapped", ())
+    return build_financial_analytics(
+        make(rows, industry, unmapped=unmapped), generated_at=NOW, **kw
+    )
 
 
 def metric(
@@ -370,10 +420,10 @@ def metric(
     end: date = FY26,
     basis=B.CONSOLIDATED,
     ptype: PeriodType = PeriodType.FY,
-) -> DerivedMetric:
+) -> CalculatedMetric:
     found = [
         m
-        for m in a.metrics
+        for m in a.all_metrics()
         if m.code == code
         and m.reporting_basis == basis
         and m.period.period_end == end
@@ -383,406 +433,306 @@ def metric(
     return found[0]
 
 
-def q(x: str) -> Decimal:
-    return Decimal(x).quantize(Decimal("0.000001"))
+def q(x: object) -> Decimal:
+    return Decimal(str(x)).quantize(Decimal("0.000001"))
 
 
-BASE = analyse(company())
+A = analyse(company())
 
 
-# --- A. period selection ------------------------------------------------------------------------
+# --- formula registry and pure arithmetic -----------------------------------------------------
 
 
-def test_a_period_selection():
-    roles = {p.role: p for p in BASE.periods if p.reporting_basis == B.CONSOLIDATED}
-    assert roles[PeriodRole.LATEST_FY].period.period_end == FY26
-    assert roles[PeriodRole.PREVIOUS_FY].period.period_end == FY25
-    assert roles[PeriodRole.WINDOW_3Y].start_period.period_end == date(2023, 3, 31)
-    assert roles[PeriodRole.WINDOW_5Y].start_period.period_end == FY21
-    assert roles[PeriodRole.WINDOW_10Y].status == "UNAVAILABLE"
-    assert roles[PeriodRole.LATEST_QUARTER].status == "UNAVAILABLE"
-    assert roles[PeriodRole.PREVIOUS_TTM].status == "UNAVAILABLE"
-    rows = [
-        V(M.REVENUE_FROM_OPERATIONS, quarter(date(2025, 6, 30)), 300),
-        V(M.REVENUE_FROM_OPERATIONS, quarter(date(2026, 3, 31)), 330),
-        V(M.REVENUE_FROM_OPERATIONS, quarter(date(2026, 6, 30)), 345),
-        V(M.REVENUE_FROM_OPERATIONS, TTM, 1300, source=SourceType.SCREENER),
-    ]
-    a = analyse(rows)
-    roles = {p.role: p for p in a.periods}
-    assert roles[PeriodRole.LATEST_QUARTER].period.label == "Q1 FY2027"
-    assert roles[PeriodRole.PRIOR_YEAR_QUARTER].period.period_end == date(2025, 6, 30)
-    assert roles[PeriodRole.SEQUENTIAL_QUARTER].period.period_end == date(2026, 3, 31)
-    assert roles[PeriodRole.LATEST_TTM].status == "SELECTED"
-    assert roles[PeriodRole.LATEST_FY].status == "UNAVAILABLE"
+def test_formula_registry_is_complete_and_versioned():
+    assert financial_formulas.FORMULA_REGISTRY_VERSION == "formulas/2"
+    for code, f in FORMULAS.items():
+        assert f.formula_id == f"{code}/2" and f.required_inputs and f.periods and f.sectors
+    used = {m.formula_id for m in A.all_metrics()}
+    for formula_id in used:
+        code, _, *variant = formula_id.split("/")
+        definition = FORMULAS[code]
+        assert not variant or variant[0] in {v.name for v in definition.variants}
+    assert {f.formula_id for f in A.manifest.formulas} == {
+        FORMULAS[m.code].formula_id for m in A.all_metrics()
+    }
+    assert A.manifest.rule_registry_version == financial_rules.RULE_REGISTRY_VERSION
 
 
-# --- B-D. growth ------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (growth(Decimal(110), Decimal(100)), Decimal(10)),
+        (ratio(Decimal(1), Decimal(4), 100), Decimal(25)),
+        (positive_ratio(Decimal(3), Decimal(4)), Decimal("0.75")),
+        (average(Decimal(100), Decimal(200)), Decimal(150)),
+        (days(Decimal(100), Decimal(365)), Decimal(100)),
+        (cash_conversion_cycle(Decimal(60), Decimal(30), Decimal(45)), Decimal(45)),
+        (free_cash_flow(Decimal(100), Decimal(-30)), Decimal(70)),
+        (free_cash_flow(Decimal(100), Decimal(30)), Decimal(70)),
+        (dupont_roe(Decimal(10), Decimal(2), Decimal("1.5")), Decimal(30)),
+        (nopat(Decimal(200), Decimal(25)), Decimal(150)),
+    ],
+)
+def test_pure_formulas(result, expected):
+    assert result == expected
 
 
-def test_b_yoy_growth():
-    m = metric(BASE, "REVENUE_GROWTH_YOY")
-    assert (m.status, m.value) == (S.CALCULATED, q("7.142857"))  # 1500 / 1400 - 1
-    assert m.comparison_period.period_end == FY25
-    assert {i.role for i in m.inputs} == {"current", "prior"}
-    assert {i.value for i in m.inputs} == {Decimal(1500), Decimal(1400)}
-    assert metric(BASE, "REVENUE_GROWTH_YOY", FY21).status == S.INSUFFICIENT_DATA  # no FY2020
-
-
-def test_c_cagr():
-    m = metric(BASE, "REVENUE_CAGR_5Y")
-    assert m.value == q("8.447177")  # (1500/1000)^(1/5) - 1
-    assert m.comparison_period.period_end == FY21
-    assert metric(BASE, "REVENUE_CAGR_3Y").value == q("7.721735")  # (1500/1200)^(1/3) - 1
-    assert metric(BASE, "REVENUE_CAGR_10Y").status == S.INSUFFICIENT_DATA
-
-
-def test_d_zero_and_negative_endpoints():
-    assert growth(Decimal(5), Decimal(0)).status == S.ZERO_DENOMINATOR
+def test_pure_formula_refusals():
+    assert growth(Decimal(5), Decimal(0)).status == S.DIVISION_BY_ZERO
     assert growth(Decimal(5), Decimal(-4)).interpretation == "NEGATIVE_BASE"
+    assert ratio(Decimal(1), Decimal(0)).status == S.DIVISION_BY_ZERO
+    assert positive_ratio(Decimal(1), Decimal(-2)).status == S.NOT_APPLICABLE
     assert cagr(Decimal(5), Decimal(-4), 3).status == S.NOT_APPLICABLE
     assert cagr(Decimal(-5), Decimal(4), 3).interpretation == "NON_POSITIVE_ENDPOINT"
-    assert cagr(Decimal(5), Decimal(0), 3).status == S.ZERO_DENOMINATOR
-    a = analyse(
-        company(**{"PAT": None})
-        + [
-            V(M.PAT, fy(2021), -50),
-            V(M.PAT, fy(2023), 0),
-            V(M.PAT, fy(2025), 100),
-            V(M.PAT, fy(2026), 120),
-        ]
+    assert cagr(Decimal(5), Decimal(0), 3).status == S.DIVISION_BY_ZERO
+    assert cagr(Decimal(5), Decimal(4), 0).status == S.INVALID_INPUT
+    assert q(cagr(Decimal(1500), Decimal(1000), 5)) == q("8.447177")
+
+
+# --- period alignment ---------------------------------------------------------------------------
+
+
+def test_period_selection():
+    roles = {p.role: p for p in A.periods if p.reporting_basis == B.CONSOLIDATED}
+    assert roles[PeriodRole.LATEST_FY].period.period_end == FY26
+    assert roles[PeriodRole.PREVIOUS_FY].period.period_end == FY25
+    assert roles[PeriodRole.WINDOW_5Y].start_period.period_end == FY21
+    assert roles[PeriodRole.WINDOW_10Y].status == "UNAVAILABLE"
+    assert roles[PeriodRole.PREVIOUS_TTM].status == "UNAVAILABLE"
+
+
+def test_average_balances_record_opening_and_closing_inputs():
+    roe = metric(A, "ROE")
+    roles = {i.role: i for i in roe.provenance}
+    assert roles["equity_open.share_capital"].period.period_end == FY25
+    assert roles["equity_close.reserves"].period.period_end == FY26
+    assert roe.comparison_period.period_end == FY25
+    assert roe.input_periods == tuple(sorted({i.period.key() for i in roe.provenance}))
+    first = metric(A, "ROE", FY21)  # no FY2020 opening balance: no average, no proxy
+    assert (first.status, first.value) == (S.INSUFFICIENT_HISTORY, None)
+
+
+# --- A. healthy industrial: exact formulas ---------------------------------------------------
+
+
+def test_growth_yoy_and_cagr():
+    m = metric(A, "REVENUE_GROWTH_YOY")
+    assert (m.status, m.value, m.formula_id) == (
+        S.CALCULATED,
+        q("7.142857"),
+        "REVENUE_GROWTH_YOY/2",
     )
+    assert {i.value for i in m.provenance} == {Decimal(1500), Decimal(1400)}
+    assert metric(A, "REVENUE_CAGR_5Y").value == q("8.447177")
+    assert metric(A, "REVENUE_CAGR_3Y").value == q("7.721735")
+    assert metric(A, "REVENUE_CAGR_10Y").status == S.INSUFFICIENT_HISTORY
+    assert metric(A, "EBIT_GROWTH_YOY").value == q(str((Decimal(490) / 450 - 1) * 100))
+    assert metric(A, "REVENUE_GROWTH_YOY", FY21).status == S.INSUFFICIENT_HISTORY
+
+
+def test_profitability():
+    assert metric(A, "EBITDA").value == Decimal(530)
+    assert metric(A, "EBITDA").formula_id == "EBITDA/2/DERIVED"
+    assert metric(A, "EBITDA_MARGIN").value == q(str(Decimal(530) * 100 / 1500))
+    assert metric(A, "OPERATING_MARGIN").value == q(str(Decimal(500) * 100 / 1500))
+    assert metric(A, "EBIT_MARGIN").value == q(str(Decimal(490) * 100 / 1500))
+    assert metric(A, "PAT_MARGIN").value == q(str(Decimal("352.5") * 100 / 1500))
+    assert metric(A, "GROSS_MARGIN").value == q(str(Decimal(1500 - 590) * 100 / 1500))
+    assert metric(A, "TAX_RATE").value == q("25") and metric(A, "TAX_RATE").formula_id.endswith(
+        "/TOTAL_TAX"
+    )
+    assert metric(A, "OTHER_INCOME_TO_PBT").value == q(str(Decimal(30) * 100 / 470))
+    assert metric(A, "POWER_AND_FUEL_TO_REVENUE").status == S.INPUT_MISSING
+    pat26, pat25 = q(str(Decimal("352.5") * 100 / 1500)), q(str(Decimal("322.5") * 100 / 1400))
+    assert metric(A, "PAT_MARGIN_CHANGE_YOY").value == q(str((pat26 - pat25) * 100))
+    assert metric(A, "PAT_MARGIN_CHANGE_YOY").unit == AnalyticsUnit.BASIS_POINTS
+
+
+def test_returns_and_dupont():
+    assert metric(A, "ROE").value == q(str(Decimal("352.5") * 100 / 1450))
+    assert metric(A, "ROA").value == q(str(Decimal("352.5") * 100 / 2675))
+    assert metric(A, "ROCE").value == q(str(Decimal(490) * 100 / 1750))
+    assert metric(A, "ROIC").value == q(str(q(str(Decimal(490) * Decimal("0.75"))) * 100 / 1510))
+    assert metric(A, "RETURN_ON_TANGIBLE_CAPITAL").value == q(str(Decimal(490) * 100 / 1680))
+    implied, direct = metric(A, "DUPONT_IMPLIED_ROE"), metric(A, "ROE")
+    difference = metric(A, "DUPONT_ROE_DIFFERENCE")
+    assert difference.value == implied.value - direct.value
+    assert abs(difference.value) <= financial_formulas.DUPONT_TOLERANCE_PP
+    assert "DUPONT_TOLERANCE_EXCEEDED" not in difference.warnings
+    assert metric(A, "DUPONT_EQUITY_MULTIPLIER").value == q(str(Decimal(2675) / 1450))
+
+
+def test_leverage_and_liquidity():
+    assert metric(A, "DEBT_TO_EQUITY").value == q(str(Decimal(300) / 1500))
+    assert metric(A, "LEASE_ADJUSTED_DEBT_TO_EQUITY").value == q(str(Decimal(340) / 1500))
+    assert metric(A, "DEBT_TO_CAPITAL").value == q(str(Decimal(300) / 1800))
+    assert metric(A, "LIABILITIES_TO_ASSETS").value == q(str(Decimal(1250) / 2750))
+    net = next(m for m in A.building_blocks if m.code == "NET_DEBT" and m.period.period_end == FY26)
+    assert (net.value, net.interpretation) == (Decimal(50), None)
+    assert metric(A, "DEBT_TO_EBITDA").value == q(str(Decimal(300) / 530))
+    assert metric(A, "INTEREST_COVERAGE").value == q("24.5")
+    assert metric(A, "CURRENT_RATIO").value == q(str(Decimal(1100) / 500))
+    assert metric(A, "QUICK_RATIO").value == q(str(Decimal(900) / 500))
+    assert metric(A, "CASH_RATIO").value == q(str(Decimal(250) / 500))
+
+
+def test_working_capital_days():
+    receivable = Decimal(625) / 2 * 365 / 1500
+    inventory = Decimal(390) / 2 * 365 / 590
+    payable = Decimal(285) / 2 * 365 / 590
+    assert metric(A, "RECEIVABLE_DAYS").value == q(receivable)
+    assert metric(A, "INVENTORY_DAYS").value == q(inventory)
+    assert metric(A, "PAYABLE_DAYS").value == q(payable)
+    assert metric(A, "CASH_CONVERSION_CYCLE").value == q(q(receivable) + q(inventory) - q(payable))
+    assert metric(A, "NWC_CHANGE").value == Decimal(40)
+
+
+def test_cash_flow_and_capital_allocation():
+    assert metric(A, "FCF").value == Decimal("382.5") - 85
+    assert metric(A, "CAPEX").formula_id == "CAPEX/2/PURCHASE_OF_PPE"
+    assert metric(A, "CFO_TO_PAT").value == q(str(Decimal("382.5") / Decimal("352.5")))
+    assert metric(A, "CFO_TO_EBITDA").value == q(str(Decimal("382.5") / 530))
+    assert metric(A, "FCF_TO_PAT").value == q(str(Decimal("297.5") / Decimal("352.5")))
+    assert metric(A, "CAPEX_TO_REVENUE").value == q(str(Decimal(85) * 100 / 1500))
+    assert metric(A, "CAPEX_TO_DEPRECIATION").value == q(str(Decimal(85) / 40))
+    assert metric(A, "DIVIDEND_PAYOUT").value == q(str(Decimal(50) * 100 / Decimal("352.5")))
+    assert metric(A, "SHAREHOLDER_DISTRIBUTION_TO_FCF").value == q(
+        str(Decimal(60) / Decimal("297.5"))
+    )
+    assert metric(A, "CASH_TAX_RATE").value == q(str(Decimal("127.5") * 100 / 470))
+    assert metric(A, "CASH_TAX_VS_BOOK_TAX_GAP").value == q(str(Decimal("127.5") * 100 / 470)) - 25
+    assert metric(A, "CASH_INTEREST_COVERAGE").value == q(str(Decimal("402.5") / 20))
+    assert metric(A, "CASH_CHANGE").value == Decimal(20)
+    assert metric(A, "NET_DEBT_CHANGE").value == Decimal(-20)
+    reinvest = metric(A, "REINVESTMENT_RATE")
+    assert reinvest.value == q(
+        str((Decimal(85) - 40 + 40) * 100 / q(str(Decimal(490) * Decimal("0.75"))))
+    )
+    pats = [Decimal(270 + 40 * k) * Decimal("0.75") for k in (3, 4, 5)]
+    assert metric(A, "CUMULATIVE_CFO_TO_PAT_3Y").value == q(str((sum(pats) + 90) / sum(pats)))
+    assert metric(A, "ACQUISITION_SPEND").status == S.INPUT_MISSING  # never zero
+
+
+def test_accruals():
+    assert metric(A, "TOTAL_ACCRUALS").value == Decimal(-30)
+    assert metric(A, "CASH_FLOW_ACCRUAL_RATIO").value == q(str(Decimal(-30) * 100 / 2675))
+    bs = (Decimal(60) - Decimal(20) - Decimal(20) - 40) * 100 / 2675
+    assert metric(A, "BALANCE_SHEET_ACCRUAL_RATIO").value == q(str(bs))
+    assert metric(A, "NON_CASH_EARNINGS_SHARE").value == q(
+        str(Decimal(-30) * 100 / Decimal("352.5"))
+    )
+    assert (
+        metric(A, "CASH_FLOW_ACCRUAL_RATIO").formula_id
+        != metric(A, "BALANCE_SHEET_ACCRUAL_RATIO").formula_id
+    )
+
+
+# --- B-G. other company shapes -----------------------------------------------------------------
+
+
+def test_b_deteriorating_company():
+    rows = replace(
+        company(), M.OPERATING_PROFIT, {y: 400 - 40 * (y - 2021) for y in range(2021, 2027)}
+    )
+    rows = replace(rows, M.CFO, {y: 400 - 50 * (y - 2021) for y in range(2021, 2027)})
+    a = analyse(rows)
+    trends = {t.series_code: t for t in a.trends}
+    assert trends["OPERATING_MARGIN"].classification == TrendClass.STRONGLY_DETERIORATING
+    assert trends["OPERATING_MARGIN"].direction_consistency == q("1")
+    assert any(x.code == "REVENUE_UP_CFO_DOWN" for x in a.anomalies)
+    health = {h.dimension: h.state for h in a.health}
+    assert health[HealthDimension.CASH_CONVERSION] in (
+        HealthState.WATCH,
+        HealthState.WEAK,
+        HealthState.NEUTRAL,
+    )
+
+
+def test_c_negative_fcf_company():
+    rows = replace(company(), M.PURCHASE_OF_PPE, {y: -600 for y in range(2021, 2027)})
+    a = analyse(rows)
+    assert metric(a, "FCF").value < 0
+    assert metric(a, "FCF_TO_PAT").value < 0
+    assert metric(a, "DIVIDENDS_TO_FCF").status == S.NOT_APPLICABLE  # negative FCF denominator
+    assert any(
+        x.code == "REPEATED_NEGATIVE_FCF" and x.severity == Severity.HIGH for x in a.anomalies
+    )
+
+
+def test_d_high_debt_company():
+    rows = replace(
+        company(), M.TOTAL_BORROWINGS, {y: 3000 + 200 * (y - 2021) for y in range(2021, 2027)}
+    )
+    rows = replace(rows, M.FINANCE_COST, {y: 250 for y in range(2021, 2027)})
+    a = analyse(rows)
+    assert metric(a, "DEBT_TO_EQUITY").value == q(str(Decimal(4000) / 1500))
+    assert metric(a, "INTEREST_COVERAGE").value == q(str(Decimal(470 + 250) / 250))
+    assert metric(a, "NET_DEBT_TO_EBITDA").value > 1
+    states = {h.dimension: h.state for h in a.health}
+    assert states[HealthDimension.BALANCE_SHEET] in (HealthState.WATCH, HealthState.WEAK)
+
+
+def test_e_loss_making_company():
+    pats = {y: Decimal(270 + 40 * (y - 2021)) * Decimal("0.75") for y in range(2021, 2027)}
+    rows = replace(company(), M.PAT, pats | {2025: 50, 2026: -40})
+    a = analyse(rows)
+    assert metric(a, "PAT_MARGIN").value == q(str(Decimal(-40) * 100 / 1500))
+    assert metric(a, "PAT_GROWTH_YOY").value == q("-180")
+    assert metric(a, "CFO_TO_PAT").status == S.NOT_APPLICABLE  # negative PAT denominator
+    assert metric(a, "PAT_CAGR_5Y").interpretation == "NON_POSITIVE_ENDPOINT"
+
+
+def test_f_negative_starting_value_cagr():
+    a = analyse(replace(company(), M.PAT, {2021: -50, 2023: 0, 2025: 100, 2026: 120}))
     five = metric(a, "PAT_CAGR_5Y")
     assert (five.status, five.value, five.interpretation) == (
         S.NOT_APPLICABLE,
         None,
         "NON_POSITIVE_ENDPOINT",
     )
-    assert metric(a, "PAT_CAGR_3Y").status == S.ZERO_DENOMINATOR
+    assert metric(a, "PAT_CAGR_3Y").status == S.DIVISION_BY_ZERO
     assert metric(a, "PAT_GROWTH_YOY").value == q("20")
 
 
-# --- E-F. margins ---------------------------------------------------------------------------------
+def test_g_missing_periods():
+    rows = [r for r in company() if r.period not in (fy(2024), pit(2024))]
+    a = analyse(rows)
+    assert metric(a, "REVENUE_GROWTH_YOY", date(2025, 3, 31)).status == S.INSUFFICIENT_HISTORY
+    assert metric(a, "ROE", date(2025, 3, 31)).status == S.INSUFFICIENT_HISTORY
+    assert metric(a, "REVENUE_CAGR_5Y").status == S.CALCULATED  # endpoints exist
+    assert metric(a, "CUMULATIVE_CFO_TO_PAT_3Y").status == S.INSUFFICIENT_HISTORY
 
 
-def test_e_margins():
-    ebitda = metric(BASE, "EBITDA", ptype=PeriodType.FY)
-    assert (ebitda.value, ebitda.formula_id) == (Decimal(470 + 20 + 40), "EBITDA/1/DERIVED")
-    assert metric(BASE, "EBITDA_MARGIN").value == q("35.333333")  # 530 / 1500
-    assert metric(BASE, "OPERATING_MARGIN").value == q("33.333333")  # 500 / 1500
-    gross = metric(BASE, "GROSS_MARGIN")  # COGS = 550 + 50 - 10
-    assert gross.value == q(str(Decimal(1500 - 590) * 100 / 1500))
-    assert metric(BASE, "TAX_RATE").value == q("25")
-    assert metric(BASE, "TAX_RATE").formula_id == "TAX_RATE/1/TOTAL_TAX"
-    assert metric(BASE, "OTHER_INCOME_TO_PBT").value == q(str(Decimal(30) * 100 / 470))
-    assert metric(BASE, "POWER_AND_FUEL_TO_REVENUE").status == S.INSUFFICIENT_DATA
+# --- H, P. conflicts, restatements, confidence ------------------------------------------------
 
 
-def test_f_margin_changes_in_basis_points():
-    pat26, pat25 = Decimal("352.5") / 1500 * 100, Decimal("322.5") / 1400 * 100
-    change = metric(BASE, "PAT_MARGIN_CHANGE_YOY")
-    assert change.value == q(str((q(str(pat26)) - q(str(pat25))) * 100))
-    assert change.unit.value == "BASIS_POINTS"
-    assert metric(BASE, "PAT_MARGIN_CHANGE_5Y").comparison_period.period_end == FY21
-
-
-# --- G-J. returns and DuPont ------------------------------------------------------------------
-
-
-def test_g_roe_on_average_equity():
-    m = metric(BASE, "ROE")
-    # equity = share capital + reserves: 1400 (FY25) and 1500 (FY26); PAT FY26 = 352.5
-    assert m.value == q(str(Decimal("352.5") * 100 / 1450))
-    assert m.formula_id == "ROE/1/AVERAGE"
-    roles = {i.role for i in m.inputs}
-    assert {"pat", "equity_close.share_capital", "equity_open.reserves"} <= roles
-
-
-def test_h_roce_and_i_roic():
-    ce26, ce25 = Decimal(1500 + 300), Decimal(1400 + 300)
-    assert metric(BASE, "ROCE").value == q(str(Decimal(490) * 100 / ((ce26 + ce25) / 2)))
-    ic26, ic25 = ce26 - 250, ce25 - 230
-    nopat = Decimal(490) * Decimal("0.75")
-    assert metric(BASE, "ROIC").value == q(str(q(str(nopat)) * 100 / ((ic26 + ic25) / 2)))
-    assert metric(BASE, "INCREMENTAL_ROIC_3Y").status == S.CALCULATED
-    tangible = metric(BASE, "RETURN_ON_TANGIBLE_CAPITAL")
-    assert "ENDING_BALANCE_USED" in tangible.warnings and tangible.confidence == Confidence.MEDIUM
-
-
-def test_j_dupont():
-    roe = metric(BASE, "ROE").value
-    dupont = metric(BASE, "DUPONT_ROE")
-    assert abs(dupont.value - roe) < Decimal("0.0001")
-    assert len(dupont.derived_from) == 3
-    assert metric(BASE, "DUPONT_EQUITY_MULTIPLIER").value == q(str(Decimal(2675) / Decimal(1450)))
-    assert metric(BASE, "DUPONT_NET_MARGIN_CHANGE_YOY").status == S.CALCULATED
-
-
-# --- K-N. leverage and liquidity ---------------------------------------------------------------
-
-
-def test_k_leverage():
-    assert metric(BASE, "DEBT_TO_EQUITY").value == q(str(Decimal(300) / 1500))
-    assert metric(BASE, "DEBT_TO_EBITDA").value == q(str(Decimal(300) / 530))
-    assert metric(BASE, "NET_DEBT_TO_EBITDA").value == q(str(Decimal(50) / 530))
-    assert metric(BASE, "INTEREST_COVERAGE").value == q("24.5")  # EBIT 490 / 20
-    net = next(m for m in BASE.metrics if m.code == "NET_DEBT" and m.period.period_end == FY26)
-    assert (net.value, net.interpretation) == (Decimal(50), None)
-
-
-def test_l_net_cash():
-    a = analyse(company(**{"CASH_AND_CASH_EQUIVALENTS": 900}))
-    net = next(m for m in a.metrics if m.code == "NET_DEBT" and m.period.period_end == FY26)
-    assert (net.value, net.interpretation) == (Decimal(-600), "NET_CASH")
-    ratio = metric(a, "NET_DEBT_TO_EBITDA")
-    assert (ratio.status, ratio.value, ratio.interpretation) == (S.NOT_APPLICABLE, None, "NET_CASH")
-    assert metric(a, "NET_DEBT_TO_EQUITY").interpretation == "NET_CASH"
-    health = {h.dimension: h for h in a.health}
-    assert health[HealthDimension.BALANCE_SHEET].state == HealthState.STRONG
-
-
-def test_m_interest_coverage_without_finance_cost():
-    a = analyse(company(**{"FINANCE_COST": 0}))
-    assert metric(a, "INTEREST_COVERAGE").status == S.ZERO_DENOMINATOR
-    assert metric(a, "INTEREST_COVERAGE").value is None
-
-
-def test_n_liquidity():
-    assert metric(BASE, "CURRENT_RATIO").value == q(str(Decimal(1100) / 500))
-    assert metric(BASE, "QUICK_RATIO").value == q(str(Decimal(1100 - 200) / 500))
-    assert metric(BASE, "CASH_RATIO").value == q(str(Decimal(250) / 500))
-    no_inventory = analyse(company(**{"INVENTORY": None}))
-    assert metric(no_inventory, "QUICK_RATIO").status == S.INSUFFICIENT_DATA  # never zero
-
-
-# --- O-R. working capital -----------------------------------------------------------------------
-
-
-def test_o_p_q_r_days_and_cash_conversion_cycle():
-    receivable = Decimal(325 + 300) / 2 * 365 / 1500
-    inventory = Decimal(200 + 190) / 2 * 365 / 590
-    payable = Decimal(145 + 140) / 2 * 365 / 590
-    assert metric(BASE, "RECEIVABLE_DAYS").value == q(str(receivable))
-    assert metric(BASE, "INVENTORY_DAYS").value == q(str(inventory))
-    assert metric(BASE, "PAYABLE_DAYS").value == q(str(payable))
-    ccc = metric(BASE, "CASH_CONVERSION_CYCLE")
-    assert ccc.value == q(str(q(str(receivable)) + q(str(inventory)) - q(str(payable))))
-    no_cogs = analyse(company(**{"RAW_MATERIAL_COST": None}))
-    assert metric(no_cogs, "INVENTORY_DAYS").status == S.INSUFFICIENT_DATA
-    assert metric(no_cogs, "CASH_CONVERSION_CYCLE").status == S.INSUFFICIENT_DATA
-    assert metric(no_cogs, "RECEIVABLE_DAYS").status == S.CALCULATED
-    assert metric(BASE, "NWC_CHANGE").value == Decimal(40)
-
-
-# --- S-V. cash flow and accruals --------------------------------------------------------------
-
-
-def test_s_t_u_cash_conversion_and_fcf():
-    assert metric(BASE, "CFO_TO_PAT").value == q(str(Decimal("382.5") / Decimal("352.5")))
-    fcf = metric(BASE, "FCF")
-    assert (fcf.value, fcf.formula_id) == (Decimal("382.5") - 85, "FCF/1")
-    capex = metric(BASE, "CAPEX")
-    assert (capex.value, capex.formula_id) == (Decimal(85), "CAPEX/1/PURCHASE_OF_PPE")
-    pats = [Decimal(270 + 40 * k) * Decimal("0.75") for k in (3, 4, 5)]
-    assert metric(BASE, "CUMULATIVE_CFO_TO_PAT_3Y").value == q(str((sum(pats) + 90) / sum(pats)))
-    assert metric(BASE, "CUMULATIVE_FCF_3Y").status == S.CALCULATED
-    no_capex = analyse(company(**{"PURCHASE_OF_PPE": None}))
-    assert metric(no_capex, "FCF").status == S.INSUFFICIENT_DATA  # capex is never assumed zero
-
-
-def test_v_accruals():
-    m = metric(BASE, "ACCRUAL_RATIO")
-    assert m.value == q(str(Decimal(-30) * 100 / Decimal(2675)))
-    assert metric(BASE, "TOTAL_ACCRUALS").value == Decimal(-30)
-    assert metric(BASE, "BALANCE_SHEET_ACCRUAL_RATIO").status == S.CALCULATED
-    assert metric(BASE, "ACCRUAL_RATIO_CHANGE_YOY").status == S.CALCULATED
-
-
-# --- W-AA. forensic models -----------------------------------------------------------------------
-
-
-def model(a, kind, variant=None, basis=B.CONSOLIDATED):
-    return next(
-        r
-        for r in a.forensic_models
-        if r.model == kind
-        and r.reporting_basis == basis
-        and (variant is None or r.variant == variant)
+def test_h_conflicted_inputs():
+    rows = replace(
+        company(),
+        M.PAT,
+        {y: Decimal(270 + 40 * (y - 2021)) * Decimal("0.75") for y in range(2021, 2026)},
     )
-
-
-def test_w_piotroski_components():
-    f = model(BASE, ForensicModel.PIOTROSKI_F_SCORE)
-    assert f.status == S.CALCULATED and f.components_available == 9
-    statuses = {c.name: c.status for c in f.components}
-    assert statuses["F1_ROA_POSITIVE"] == ComponentStatus.PASS
-    assert statuses["F4_CFO_EXCEEDS_PAT"] == ComponentStatus.PASS
-    assert statuses["F7_NO_EQUITY_ISSUANCE"] == ComponentStatus.PASS
-    assert f.score == Decimal(f.components_passed)
-    assert all(c.canonical_value_ids for c in f.components)
-
-
-def test_x_incomplete_piotroski_is_not_scored():
-    a = analyse(company(**{"RAW_MATERIAL_COST": None}))
-    f = model(a, ForensicModel.PIOTROSKI_F_SCORE)
-    assert (f.status, f.score, f.components_available) == (S.INSUFFICIENT_DATA, None, 8)
-    assert f.coverage == q(str(Decimal(8) / 9))
-    gross = next(c for c in f.components if c.name == "F8_GROSS_MARGIN_IMPROVED")
-    assert gross.status == ComponentStatus.UNAVAILABLE and gross.missing_inputs
-    assert f.components_passed is not None  # reported, but never turned into a score
-
-
-def test_y_altman_variants_and_applicability():
-    original = model(BASE, ForensicModel.ALTMAN_Z, "ORIGINAL_1968")
-    assert original.status == S.INSUFFICIENT_DATA
-    market = next(c for c in original.components if c.name == "X4_MARKET")
-    assert market.status == ComponentStatus.UNAVAILABLE
-    double = model(BASE, ForensicModel.ALTMAN_Z, "Z_DOUBLE_PRIME_1995")
-    x = {c.name: c.value for c in double.components}
-    expected = (
-        Decimal("6.56") * x["X1"]
-        + Decimal("3.26") * x["X2"]
-        + Decimal("6.72") * x["X3"]
-        + Decimal("1.05") * x["X4_BOOK"]
-    )
-    assert double.score == q(str(expected)) and double.zone == "SAFE_ZONE"
-    assert x["X1"] == q(str(Decimal(1100 - 500) / 2750))
-    bank = analyse(company(), industry=Industry.BANK)
-    assert model(bank, ForensicModel.ALTMAN_Z, "Z_DOUBLE_PRIME_1995").status == (
-        S.UNSUPPORTED_INDUSTRY
-    )
-
-
-def test_z_beneish_components():
-    m = model(BASE, ForensicModel.BENEISH_M)
-    assert m.status == S.CALCULATED and m.components_available == 8
-    c = {x.name: x.value for x in m.components}
-    assert c["SGI"] == q(str(Decimal(1500) / 1400))
-    assert c["DSRI"] == q(str((Decimal(325) / 1500) / (Decimal(300) / 1400)))
-    assert c["TATA"] == q(str(Decimal(-30) / 2750))
-    expected = Decimal("-4.84") + sum(
-        financial_forensics.BENEISH_WEIGHTS[n] * v for n, v in c.items()
-    )
-    assert m.score == q(str(expected))
-    assert m.zone in ("ABOVE_SCREENING_THRESHOLD", "BELOW_SCREENING_THRESHOLD")
-
-
-def test_aa_incomplete_beneish_is_not_scored():
-    a = analyse(company(**{"SELLING_EXPENSE": None}))
-    m = model(a, ForensicModel.BENEISH_M)
-    assert (m.status, m.score, m.zone, m.components_available) == (
-        S.INSUFFICIENT_DATA,
-        None,
-        None,
-        7,
-    )
-    sgai = next(x for x in m.components if x.name == "SGAI")
-    assert sgai.status == ComponentStatus.UNAVAILABLE and sgai.value is None
-
-
-# --- AB-AD. trends, anomalies, earnings quality -------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("values", "kind", "higher", "expected"),
-    [
-        (["10", "11", "12.5"], "LEVEL", True, TrendClass.IMPROVING),
-        (["10", "13", "16"], "LEVEL", True, TrendClass.STRONGLY_IMPROVING),
-        (["10", "13", "16"], "LEVEL", False, TrendClass.STRONGLY_DETERIORATING),
-        (["10", "10.2", "10.4"], "LEVEL", True, TrendClass.STABLE),
-        (["10", "20", "8", "19"], "LEVEL", True, TrendClass.VOLATILE),
-        (["100", "110", "125"], "MONEY", True, TrendClass.IMPROVING),
-        (["100", "120"], "LEVEL", True, TrendClass.INSUFFICIENT_DATA),
-        (["0", "5", "9"], "MONEY", True, TrendClass.INSUFFICIENT_DATA),
-        (["60", "70", "80"], "DAYS", False, TrendClass.STRONGLY_DETERIORATING),
-    ],
-)
-def test_ab_trend_classification(values, kind, higher, expected):
-    assert classify_trend([Decimal(v) for v in values], kind, higher)[0] == expected
-
-
-def test_ab_trends_on_the_dataset():
-    trends = {t.series_code: t for t in BASE.trends if t.reporting_basis == B.CONSOLIDATED}
-    roe = trends["ROE"]
-    assert roe.points_used == 5 and roe.rule_id == "trend-rules/1/LEVEL"
-    assert len(roe.metric_ids) == 5
-    assert trends["RECEIVABLE_DAYS"].higher_is_better is False
-    assert "DEPOSITS_GROWTH_YOY" not in trends  # banking trend, not for an industrial company
-
-
-def test_ac_anomalies_have_rules_thresholds_and_inputs():
-    a = analyse(
-        company(**{"TRADE_RECEIVABLES": None})
-        + [
-            V(M.TRADE_RECEIVABLES, pit(y), v)
-            for y, v in (
-                (2021, 200),
-                (2022, 225),
-                (2023, 250),
-                (2024, 275),
-                (2025, 300),
-                (2026, 450),
-            )
-        ]
-    )
-    anomaly = next(x for x in a.anomalies if x.code == "RECEIVABLES_OUTGROWING_REVENUE")
-    assert anomaly.period.period_end == FY26 and anomaly.severity == "ELEVATED"
-    assert anomaly.threshold == Decimal(30) and anomaly.rule_id.startswith("anomaly-rules/1/")
-    assert anomaly.canonical_value_ids and "not a conclusion" in anomaly.explanation
-    assert not any(x.code == "RECEIVABLES_OUTGROWING_REVENUE" for x in BASE.anomalies)
-
-
-def test_ad_earnings_quality_signals():
-    signals = {s.code: s for s in BASE.forensic_signals}
-    assert signals["OTHER_INCOME_DEPENDENCE"].status == SignalStatus.CLEAR
-    assert signals["REPEATED_NEGATIVE_FCF"].status == SignalStatus.CLEAR
-    assert signals["CUMULATIVE_PAT_VS_CFO"].observed > 1
-    assert all(s.rule_id.startswith("forensic-rules/1/") for s in signals.values())
-    stretched = analyse(
-        company(**{"TRADE_RECEIVABLES": None})
-        + [
-            V(M.TRADE_RECEIVABLES, pit(y), v)
-            for y, v in (
-                (2021, 200),
-                (2022, 225),
-                (2023, 250),
-                (2024, 275),
-                (2025, 300),
-                (2026, 400),
-            )
-        ]
-    )
-    receivables = next(s for s in stretched.forensic_signals if s.code == "RECEIVABLES_VS_REVENUE")
-    assert receivables.status == SignalStatus.ELEVATED and receivables.canonical_value_ids
-    no_cfo = analyse(company(**{"CFO": None}))
-    cash = next(s for s in no_cfo.forensic_signals if s.code == "CUMULATIVE_PAT_VS_CFO")
-    assert cash.status == SignalStatus.INSUFFICIENT_DATA and cash.observed is None
-    text = json.dumps([s.explanation for s in BASE.forensic_signals]).lower()
-    for word in ("fraud", "manipulation proven", "buy", "sell"):
-        assert word not in text
-
-
-# --- AE-AJ. conflicts, confidence and isolation -----------------------------------------------
-
-
-def test_ae_conflict_propagation():
-    rows = [r for r in company() if not (r.metric == M.TOTAL_ASSETS and r.period == pit(2026))]
-    rows += [
+    rows += [V(M.PAT, fy(2026), None, outcome=Outcome.CONFLICT)]
+    a = analyse(rows)
+    roe = metric(a, "ROE")
+    assert (roe.status, roe.value) == (S.INPUT_CONFLICT, None)
+    assert any("CONFLICT" in note for note in roe.missing_inputs)
+    assert any(w.code == "BOX4_UNRESOLVED_CONFLICTS" for w in a.warnings)
+    precedence = [
+        r for r in company() if not (r.metric == M.TOTAL_ASSETS and r.period == pit(2026))
+    ]
+    precedence += [
         V(
             M.TOTAL_ASSETS,
             pit(2026),
             2750,
             outcome=Outcome.SOURCE_PRECEDENCE,
-            confidence=Confidence.HIGH,
             max_difference=Decimal(20),
         )
     ]
-    a = analyse(rows)
-    roa = metric(a, "ROA")
+    roa = metric(analyse(precedence), "ROA")
     assert "INPUT_SOURCE_PRECEDENCE" in roa.warnings and roa.confidence == Confidence.MEDIUM
-    assert any(i.outcome == Outcome.SOURCE_PRECEDENCE for i in roa.inputs)
-    material = [r for r in rows if not (r.metric == M.TOTAL_ASSETS and r.period == pit(2026))]
-    material += [
+    material = precedence[:-1] + [
         V(
             M.TOTAL_ASSETS,
             pit(2026),
@@ -793,64 +743,95 @@ def test_ae_conflict_propagation():
     ]
     roa = metric(analyse(material), "ROA")
     assert "MATERIAL_INPUT_CONFLICT" in roa.warnings and roa.confidence == Confidence.LOW
-    conflicted = [r for r in company() if not (r.metric == M.PAT and r.period == fy(2026))]
-    conflicted += [V(M.PAT, fy(2026), None, outcome=Outcome.CONFLICT)]
-    a = analyse(conflicted)
-    roe = metric(a, "ROE")
-    assert (roe.status, roe.value) == (S.CONFLICTED_INPUT, None)
-    assert any("CONFLICT" in note for note in roe.missing_inputs)
-    assert any(w.code == "BOX4_UNRESOLVED_CONFLICTS" for w in a.warnings)
+    low = [r for r in company() if not (r.metric == M.PAT and r.period == fy(2026))]
+    low += [V(M.PAT, fy(2026), None, outcome=Outcome.NOT_COMPARABLE)]
+    assert metric(analyse(low), "PAT_MARGIN").status == S.LOW_CONFIDENCE_INPUT
 
 
-def test_af_low_confidence_inputs():
-    rows = [r for r in company() if not (r.metric == M.PAT and r.period == fy(2026))]
-    rows += [V(M.PAT, fy(2026), None, outcome=Outcome.NOT_COMPARABLE)]
-    assert metric(analyse(rows), "PAT_MARGIN").status == S.LOW_CONFIDENCE_INPUT
-    weakest = [r for r in company() if not (r.metric == M.CFO and r.period == fy(2026))]
-    weakest += [V(M.CFO, fy(2026), "382.5", confidence=Confidence.MEDIUM)]
-    m = metric(analyse(weakest), "CFO_TO_PAT")
-    assert m.confidence == Confidence.MEDIUM  # never above the weakest input
-
-
-def test_ag_standalone_and_consolidated_never_mix():
-    rows = [r for r in company() if r.period not in (fy(2025), pit(2025))]
-    rows += [r for r in company_year(2025, basis=B.STANDALONE)]
-    a = analyse(rows)
-    assert metric(a, "REVENUE_GROWTH_YOY").status == S.INSUFFICIENT_DATA
-    assert {f.reporting_basis for f in a.frames} == {B.CONSOLIDATED, B.STANDALONE}
-    for m in a.metrics:
-        assert {i.reporting_basis for i in m.inputs} <= {m.reporting_basis}
-
-
-def test_ah_quarter_and_ytd_never_mix():
-    q1, q4 = date(2025, 12, 31), date(2024, 12, 31)
+def test_p_restated_inputs_are_flagged():
     rows = [
+        r for r in company() if not (r.metric == M.REVENUE_FROM_OPERATIONS and r.period == fy(2025))
+    ]
+    rows += [V(M.REVENUE_FROM_OPERATIONS, fy(2025), 1400, outcome=Outcome.RESTATEMENT)]
+    m = metric(analyse(rows), "REVENUE_GROWTH_YOY")
+    assert m.status == S.CALCULATED and "INPUT_RESTATEMENT" in m.warnings
+    assert m.confidence == Confidence.MEDIUM
+    assert any(i.outcome == Outcome.RESTATEMENT for i in m.provenance)
+
+
+def test_confidence_reflects_source_authority():
+    filing = metric(A, "CFO_TO_PAT")
+    assert filing.confidence == Confidence.HIGH
+    rows = [
+        V(r.metric, r.period, r.value, source=SourceType.SCREENER, kind=r.kind) for r in company()
+    ]
+    aggregator = metric(analyse(rows), "CFO_TO_PAT")
+    assert aggregator.value == filing.value
+    assert aggregator.confidence == Confidence.MEDIUM
+    assert "INPUT_AGGREGATOR_ONLY" in aggregator.warnings
+    weaker = replace(company(), M.CFO, {2026: "382.5"})
+    weaker = [
+        r
+        if not (r.metric == M.CFO and r.period == fy(2026))
+        else V(M.CFO, fy(2026), "382.5", confidence=Confidence.MEDIUM)
+        for r in weaker
+    ]
+    assert metric(analyse(weaker), "CFO_TO_PAT").confidence == Confidence.MEDIUM
+
+
+# --- I, J. basis / period / currency safety -------------------------------------------------
+
+
+def test_i_standalone_and_consolidated_never_mix():
+    rows = [r for r in company() if r.period not in (fy(2025), pit(2025))]
+    rows += company_year(2025, basis=B.STANDALONE)
+    a = analyse(rows)
+    assert metric(a, "REVENUE_GROWTH_YOY").status == S.INSUFFICIENT_HISTORY
+    assert set(a.reporting_bases) == {B.CONSOLIDATED, B.STANDALONE}
+    for m in a.all_metrics():
+        assert {i.reporting_basis for i in m.provenance} <= {m.reporting_basis}
+
+
+def test_j_fy_ttm_quarter_and_ytd_never_mix():
+    q1, q0 = date(2025, 12, 31), date(2024, 12, 31)
+    rows = company() + [
+        V(M.REVENUE_FROM_OPERATIONS, TTM, 1550, source=SourceType.SCREENER),
+        V(M.PAT, TTM, 360, source=SourceType.SCREENER),
         V(M.REVENUE_FROM_OPERATIONS, quarter(q1), 420),
-        V(M.REVENUE_FROM_OPERATIONS, quarter(q4), 390),
+        V(M.REVENUE_FROM_OPERATIONS, quarter(q0), 390),
+        V(M.REVENUE_FROM_OPERATIONS, quarter(date(2025, 9, 30)), 400),
         V(M.REVENUE_FROM_OPERATIONS, quarter(q1, 9, PeriodType.NINE_MONTH), 1200),
-        V(M.REVENUE_FROM_OPERATIONS, quarter(q4, 9, PeriodType.NINE_MONTH), 1100),
+        V(M.REVENUE_FROM_OPERATIONS, quarter(q0, 9, PeriodType.NINE_MONTH), 1100),
     ]
     a = analyse(rows)
-    m = metric(a, "REVENUE_GROWTH_YOY", q1, ptype=PeriodType.QUARTER)
-    assert m.value == q(str((Decimal(420) / 390 - 1) * 100))
-    assert {i.period.period_type for i in m.inputs} == {PeriodType.QUARTER}
-    assert compare_periods(quarter(q1), quarter(q4, 9, PeriodType.NINE_MONTH), 12) == (
-        S.INCOMPATIBLE_PERIODS
+    yoy = metric(a, "REVENUE_GROWTH_YOY", q1, ptype=PeriodType.QUARTER)
+    assert yoy.value == q(str((Decimal(420) / 390 - 1) * 100))
+    assert {i.period.period_type for i in yoy.provenance} == {PeriodType.QUARTER}
+    qoq = metric(a, "REVENUE_GROWTH_QOQ", q1, ptype=PeriodType.QUARTER)
+    assert qoq.value == q(str((Decimal(420) / 400 - 1) * 100))
+    ttm = [m for m in a.all_metrics() if m.period.period_type == PeriodType.TTM]
+    assert {m.code for m in ttm if m.status == S.CALCULATED} >= {"PAT_MARGIN"}
+    assert not any(m.category == MetricCategory.GROWTH for m in ttm)
+    annual = metric(a, "REVENUE_GROWTH_YOY")
+    assert {i.period.period_type for i in annual.provenance} == {PeriodType.FY}
+    assert compare_periods(fy(2026), TTM, 12) == S.PERIOD_MISMATCH
+    assert compare_periods(quarter(q1), quarter(q0, 9, PeriodType.NINE_MONTH), 12) == (
+        S.PERIOD_MISMATCH
     )
 
 
-def test_ai_fy_and_ttm_never_mix():
-    assert compare_periods(fy(2026), TTM, 12) == S.INCOMPATIBLE_PERIODS
-    assert compare_periods(TTM, TTM, 12) == S.INCOMPATIBLE_PERIODS  # TTM has no end date
-    a = analyse(company() + [V(M.REVENUE_FROM_OPERATIONS, TTM, 1550), V(M.PAT, TTM, 360)])
-    ttm = [m for m in a.metrics if m.period.period_type == PeriodType.TTM]
-    assert {m.code for m in ttm if m.status == S.CALCULATED} >= {"PAT_MARGIN"}
-    assert not any(m.category == MetricCategory.GROWTH for m in ttm)
+def test_point_in_time_denominators_use_the_fiscal_year_end():
+    for code in ("DEBT_TO_EQUITY", "CURRENT_RATIO"):
+        m = metric(A, code)
+        balance = [i for i in m.provenance if i.period.period_type == PeriodType.POINT_IN_TIME]
+        assert balance and {i.period.period_end for i in balance} == {FY26}
 
 
-def test_aj_currencies_never_mix():
-    rows = company() + [V(M.TOTAL_ASSETS, pit(2027), 30, currency=Currency.USD)]
-    rows += [V(M.EMPLOYEE_COST, fy(2026), 18, currency=Currency.USD)]
+def test_currency_mismatch_is_rejected():
+    rows = company() + [
+        V(M.TOTAL_ASSETS, pit(2027), 30, currency=Currency.USD),
+        V(M.EMPLOYEE_COST, fy(2026), 18, currency=Currency.USD),
+    ]
     rows = [
         r
         for r in rows
@@ -859,81 +840,41 @@ def test_aj_currencies_never_mix():
     a = analyse(rows)
     assert [f.currency for f in a.frames] == [Currency.INR]
     assert a.frames[0].excluded_other_currency_values == 2
-    assert any(w.code == "OTHER_CURRENCY_EXCLUDED" for w in a.warnings)
-    assert metric(a, "EMPLOYEE_COST_TO_REVENUE").status == S.INCOMPATIBLE_CURRENCY
-    assert all(i.currency == Currency.INR for m in a.metrics for i in m.inputs)
+    assert metric(a, "EMPLOYEE_COST_TO_REVENUE").status == S.CURRENCY_MISMATCH
+    assert all(i.currency == Currency.INR for m in a.all_metrics() for i in m.provenance)
 
 
-# --- AK-AM. determinism, provenance, bounds -------------------------------------------------------
+# --- K, L. banks --------------------------------------------------------------------------------
 
 
-def test_ak_deterministic_serialization():
-    again = analyse(company())
-    encoded = canonical_analytics_json(BASE)
-    assert encoded == canonical_analytics_json(again)
-    assert FinancialAnalyticsDataset.model_validate_json(encoded) == BASE
-    assert json.loads(encoded)["schema_version"] == "FINANCIAL_ANALYTICS_DATASET_V1"
-
-
-def test_al_provenance_reaches_box4():
-    data = make(company())
-    a = build_financial_analytics(data, generated_at=NOW)
-    canonical = {v.canonical_value_id: v for v in data.canonical_values}
-    ids = {m.metric_id for m in a.metrics}
-    for m in a.metrics:
-        if m.status == S.CALCULATED:
-            assert m.inputs
-        for i in m.inputs:
-            source = canonical[i.canonical_value_id]
-            assert (i.value, i.selected_observation_id, i.reconciliation_record_id) == (
-                source.value,
-                source.selected_observation_id,
-                source.reconciliation_record_id,
-            )
-        assert set(m.derived_from) <= ids
-    for s in a.forensic_signals:
-        assert set(s.canonical_value_ids) <= set(canonical)
-
-
-def test_am_resource_bounds():
-    a = analyse(company(), limits=AnalyticsLimits(max_derived_metrics=50, max_periods_per_series=2))
-    assert a.status == "PARTIAL" and len(a.metrics) == 50
-    assert any(w.code == "DERIVED_METRIC_LIMIT_REACHED" for w in a.warnings)
-    assert all(len(s.points) <= 2 for s in a.series)
-    small = analyse(company(), limits=AnalyticsLimits(max_canonical_values=5))
-    assert small.status == "PARTIAL" and small.statistics.canonical_values_consumed == 5
-
-
-# --- AN-AP. banks and real fixtures -------------------------------------------------------------
-
-
-def test_an_bank_applicability():
-    a = analyse(
-        company() + [V(M.DEPOSITS, pit(y), 5000 + 400 * (y - 2021)) for y in range(2021, 2027)],
-        industry=Industry.BANK,
-    )
+def test_k_bank_safety():
+    rows = company() + [V(M.DEPOSITS, pit(y), 5000 + 400 * (y - 2021)) for y in range(2021, 2027)]
+    a = analyse(rows, industry=Industry.BANK)
+    assert a.sector == Sector.FINANCIAL
     for code in (
-        "DEBT_TO_EBITDA",
-        "CURRENT_RATIO",
-        "CASH_CONVERSION_CYCLE",
         "EBITDA_MARGIN",
-        "DUPONT_ROE",
         "ROCE",
+        "ROIC",
+        "INVENTORY_DAYS",
+        "PAYABLE_DAYS",
+        "CASH_CONVERSION_CYCLE",
+        "DEBT_TO_EBITDA",
+        "DUPONT_IMPLIED_ROE",
+        "EBITDA",
     ):
         m = metric(a, code)
-        assert (m.status, m.interpretation) == (S.NOT_APPLICABLE, "INDUSTRY_NOT_APPLICABLE")
+        assert (m.status, m.interpretation) == (S.UNSUPPORTED_SECTOR, "SECTOR_NOT_APPLICABLE")
     assert metric(a, "DEPOSITS_GROWTH_YOY").value == q(str((Decimal(7000) / 6600 - 1) * 100))
-    assert metric(a, "ROE").status == S.CALCULATED
-    assert not [m for m in a.metrics if m.code == "GROSS_DEBT" and m.status == S.CALCULATED]
-    assert {r.status for r in a.forensic_models} == {S.UNSUPPORTED_INDUSTRY}
-    assert {s.code for s in a.forensic_signals} <= {
-        "EXCEPTIONAL_ITEM_DEPENDENCE",
-        "TAX_RATE_VOLATILITY",
-        "EQUITY_DILUTION",
-    }
+    assert metric(a, "ROE").status == S.CALCULATED and metric(a, "ROA").status == S.CALCULATED
+    assert not [m for m in a.all_metrics() if m.code == "GROSS_DEBT" and m.value is not None]
+    assert {m.status for m in a.forensic_scores} == {S.UNSUPPORTED_SECTOR}
+    npa = metric(a, "GROSS_NPA_RATIO")
+    assert (npa.status, npa.value) == (S.INPUT_MISSING, None) and npa.missing_inputs
+    states = {h.dimension: h.state for h in a.health}
+    assert states[HealthDimension.BALANCE_SHEET] == HealthState.NOT_APPLICABLE
 
 
-async def test_ao_yesbank_fixture(tmp_path, fixture_dir):
+async def test_l_yesbank_fixture(tmp_path, fixture_dir):
     screener = await screener_dataset(tmp_path, fixture_dir, YESBANK)
     data = build_canonical_dataset(
         company_key=screener.company_key,
@@ -944,19 +885,24 @@ async def test_ao_yesbank_fixture(tmp_path, fixture_dir):
         generated_at=NOW,
     )
     a = build_financial_analytics(data, generated_at=NOW)
-    assert a.industry == Industry.BANK
-    deposits = metric(a, "DEPOSITS_GROWTH_YOY")
-    assert deposits.value == q(str((Decimal(318969) / 284420 - 1) * 100))
-    for m in a.metrics:  # deposits never feed a leverage calculation
+    assert a.industry == Industry.BANK and a.sector == Sector.FINANCIAL
+    assert metric(a, "DEPOSITS_GROWTH_YOY").value == q(str((Decimal(318969) / 284420 - 1) * 100))
+    for m in a.all_metrics():  # deposits never feed a leverage calculation
         if m.category == MetricCategory.LEVERAGE:
-            assert all(i.metric != M.DEPOSITS for i in m.inputs)
-    assert metric(a, "DEBT_TO_EBITDA").status == S.NOT_APPLICABLE
-    assert metric(a, "GROSS_NPA_RATIO").status == S.INSUFFICIENT_DATA
+            assert all(i.metric != M.DEPOSITS for i in m.provenance)
+        assert all(i.metric != M.FINANCE_COST for i in m.provenance)  # bank interest is not
+    for code in ("EBITDA", "DEBT_TO_EBITDA", "ROIC", "INVENTORY_DAYS", "PAYABLE_DAYS"):
+        assert metric(a, code).status == S.UNSUPPORTED_SECTOR
+    assert metric(a, "GROSS_NPA_RATIO").status == S.INPUT_MISSING
     assert metric(a, "ROA").status == S.CALCULATED
-    assert {r.status for r in a.forensic_models} == {S.UNSUPPORTED_INDUSTRY}
+    assert {r.status for r in a.forensic_scores} == {S.UNSUPPORTED_SECTOR}
+    assert any(
+        "npa" in r.raw_label.lower() and "GROSS_NPA_RATIO" in r.review_hints
+        for r in a.unmapped.references
+    )
 
 
-async def test_ap_infy_fixture(tmp_path, fixture_dir):
+async def test_infy_fixture(tmp_path, fixture_dir):
     screener = await screener_dataset(tmp_path, fixture_dir, INFY)
     data = build_canonical_dataset(
         company_key=screener.company_key,
@@ -967,58 +913,211 @@ async def test_ap_infy_fixture(tmp_path, fixture_dir):
         generated_at=NOW,
     )
     a = build_financial_analytics(data, generated_at=NOW)
-    growth_ = metric(a, "REVENUE_GROWTH_YOY", basis=B.STANDALONE)
-    assert growth_.value == q(str((Decimal(148819) / 136592 - 1) * 100))
-    assert {i.selected_source for i in growth_.inputs} == {SourceType.SCREENER}
+    m = metric(a, "REVENUE_GROWTH_YOY", basis=B.STANDALONE)
+    assert m.value == q(str((Decimal(148819) / 136592 - 1) * 100))
+    assert {i.selected_source for i in m.provenance} == {SourceType.SCREENER}
+    assert m.confidence == Confidence.MEDIUM  # aggregator-only inputs
     assert metric(a, "OPERATING_MARGIN", basis=B.STANDALONE).value == q(
         str(Decimal(36013) * 100 / 148819)
     )
-    assert metric(a, "EBITDA_MARGIN", basis=B.STANDALONE).status == S.CALCULATED
-    assert metric(a, "ROE", basis=B.STANDALONE).status == S.CALCULATED
-    # Screener carries no current assets: liquidity and Altman Z'' stay honest
-    assert metric(a, "CURRENT_RATIO", basis=B.STANDALONE).status == S.INSUFFICIENT_DATA
-    assert model(a, ForensicModel.ALTMAN_Z, "Z_DOUBLE_PRIME_1995", B.STANDALONE).status == (
-        S.INSUFFICIENT_DATA
-    )
+    assert metric(a, "CURRENT_RATIO", basis=B.STANDALONE).status == S.INPUT_MISSING
 
 
-# --- AQ-AS. missing data, zero denominators, architecture ----------------------------------------
+# --- M, N, O. missing inputs and zero denominators ------------------------------------------
 
 
-def test_aq_missing_data_is_never_zero():
+def test_m_missing_capex():
+    a = analyse(company(**{"PURCHASE_OF_PPE": None}))
+    for code in ("CAPEX", "FCF", "FCF_TO_PAT", "CAPEX_TO_REVENUE", "CUMULATIVE_FCF_3Y"):
+        m = metric(a, code)
+        assert m.status == S.INPUT_MISSING and m.value is None, code
+    assert "PURCHASE_OF_PPE" in metric(a, "CAPEX").missing_inputs[0]
+
+
+def test_n_missing_working_capital_components():
+    a = analyse(company(**{"RAW_MATERIAL_COST": None, "INVENTORY": None}))
+    for code in (
+        "INVENTORY_DAYS",
+        "PAYABLE_DAYS",
+        "CASH_CONVERSION_CYCLE",
+        "QUICK_RATIO",
+        "GROSS_MARGIN",
+    ):
+        assert metric(a, code).status == S.INPUT_MISSING, code
+    assert metric(a, "RECEIVABLE_DAYS").status == S.CALCULATED  # revenue never replaces COGS
+
+
+def test_o_zero_denominators():
+    a = analyse(company(**{"REVENUE_FROM_OPERATIONS": 0, "FINANCE_COST": 0}))
+    for code in (
+        "PAT_MARGIN",
+        "EBITDA_MARGIN",
+        "RECEIVABLE_DAYS",
+        "REVENUE_GROWTH_YOY",
+        "INTEREST_COVERAGE",
+    ):
+        m = metric(a, code)
+        assert (m.status, m.value) == (S.DIVISION_BY_ZERO, None), code
+
+
+def test_missing_data_is_never_zero():
     a = analyse(
         [V(M.REVENUE_FROM_OPERATIONS, fy(2025), 1000), V(M.REVENUE_FROM_OPERATIONS, fy(2026), 1100)]
     )
     assert metric(a, "REVENUE_GROWTH_YOY").value == q("10")
-    pat = metric(a, "PAT_MARGIN")
-    assert (pat.status, pat.value) == (S.INSUFFICIENT_DATA, None)
-    assert pat.missing_inputs and "PAT" in pat.missing_inputs[0]
-    for m in a.metrics:
+    for m in a.all_metrics():
         if m.status != S.CALCULATED:
             assert m.value is None and m.confidence is None
-    assert {r.status for r in a.forensic_models} == {S.INSUFFICIENT_DATA}
-    states = {h.dimension: h.state for h in a.health}
-    assert states[HealthDimension.RETURNS] == HealthState.INSUFFICIENT_DATA
+    assert metric(a, "PAT_MARGIN").status == S.INPUT_MISSING
 
 
-def test_ar_division_by_zero():
-    a = analyse(company(**{"REVENUE_FROM_OPERATIONS": 0}))
-    for code in ("PAT_MARGIN", "EBITDA_MARGIN", "RECEIVABLE_DAYS"):
-        assert metric(a, code).status == S.ZERO_DENOMINATOR
-    assert metric(a, "REVENUE_GROWTH_YOY").status == S.ZERO_DENOMINATOR
+# --- unmapped lines, series, statistics, bounds, determinism ---------------------------------
 
 
-def test_contract_requires_lineage():
-    m = metric(BASE, "ROE")
+def test_unmapped_lines_are_referenced_with_review_hints():
+    line = UnmappedFinancialLine(
+        line_id=uuid5(NS, "line"),
+        statement_type=StatementType.CASH_FLOW,
+        reporting_basis=B.CONSOLIDATED,
+        raw_label="Expenditure on property, plant and equipment",
+        label_context=None,
+        source_type=SourceType.FILING,
+        observation_ids=(),
+    )
+    a = analyse(company(**{"PURCHASE_OF_PPE": None}), unmapped=(line,))
+    (ref,) = a.unmapped.references
+    assert ref.review_hints == ("CAPEX", "FCF")
+    fragment = UnmappedFinancialLine(
+        line_id=uuid5(NS, "fragment"),
+        statement_type=StatementType.CASH_FLOW,
+        reporting_basis=B.CONSOLIDATED,
+        raw_label="(Refer to Note",
+        label_context="cash flows from investing activities > expenditure on property, plant",
+        source_type=SourceType.FILING,
+        observation_ids=(),
+    )
+    unrelated = fragment.model_copy(
+        update={"line_id": uuid5(NS, "unrelated"), "raw_label": "Certificates of deposit"}
+    )
+    b = analyse(company(**{"PURCHASE_OF_PPE": None}), unmapped=(fragment, unrelated))
+    hints = {r.raw_label: r.review_hints for r in b.unmapped.references}
+    assert hints == {"(Refer to Note": ("CAPEX", "FCF"), "Certificates of deposit": ()}
+    assert ref.hinted_calculations_unavailable == ("CAPEX", "FCF")
+    assert a.unmapped.lines_with_unavailable_hints == 1
+    assert any(w.code == "UNMAPPED_LINES_MAY_AFFECT_ANALYTICS" for w in a.warnings)
+    assert a.statistics.unmapped_lines_referenced == 1
+
+
+def test_series_are_sorted_and_referenced():
+    codes = {(s.code, s.source) for s in A.series}
+    assert {("REVENUE", "CANONICAL"), ("ROE", "CALCULATED"), ("FCF", "CALCULATED")} <= codes
+    ids = {m.metric_id for m in A.all_metrics()}
+    canonical = {cv.canonical_value_id for cv in make(company()).canonical_values}
+    for s in A.series:
+        ends = [p.period.period_end for p in s.points]
+        assert ends == sorted(ends)
+        for p in s.points:
+            assert (p.metric_id in ids) if p.metric_id else (p.canonical_value_id in canonical)
+
+
+def test_statistics():
+    st = A.statistics
+    assert st.calculated_metrics + st.unavailable_calculations == len(A.all_metrics())
+    assert sum(st.metrics_by_status.values()) == len(A.all_metrics())
+    assert st.annual_periods_analysed == 6 and st.series == len(A.series)
+    assert st.forensic_models == {"COMPLETE": 3, "INCOMPLETE": 1}  # Altman 1968 needs market cap
+    assert sum(st.confidence_counts.values()) == st.calculated_metrics
+
+
+def test_resource_bounds():
+    a = analyse(
+        company(),
+        limits=AnalyticsLimits(max_calculated_metrics=50, max_periods=3, max_provenance_refs=8),
+    )
+    assert a.status == "PARTIAL" and len(a.all_metrics()) == 50
+    codes = {w.code for w in a.warnings}
+    assert {"CALCULATED_METRIC_LIMIT_REACHED", "PERIOD_LIMIT_REACHED"} <= codes
+    assert a.statistics.annual_periods_analysed == 3
+    bounded = analyse(company(), limits=AnalyticsLimits(max_provenance_refs=4))
+    cumulative = metric(bounded, "CUMULATIVE_CFO_TO_PAT_3Y")
+    assert (cumulative.status, cumulative.provenance) == (S.INVALID_INPUT, ())
+    assert any(w.code == "PROVENANCE_LIMIT_REACHED" for w in bounded.warnings)
+    short = analyse(company(), limits=AnalyticsLimits(max_warning_chars=20))
+    assert all(len(w.detail or "") <= 20 for w in short.warnings)
+
+
+def test_t_deterministic_serialization():
+    again = analyse(company())
+    encoded = canonical_analytics_json(A)
+    assert encoded == canonical_analytics_json(again)
+    assert FinancialAnalyticsDataset.model_validate_json(encoded) == A
+    assert json.loads(encoded)["schema_version"] == "FINANCIAL_ANALYTICS_DATASET_V2"
+    assert A.source_box4.dataset_id == make(company()).dataset_id
+
+
+def test_trend_rules():
+    cases = [
+        (["10", "11", "12.5"], "LEVEL", True, TrendClass.IMPROVING),
+        (["10", "13", "16"], "LEVEL", True, TrendClass.STRONGLY_IMPROVING),
+        (["10", "13", "16"], "LEVEL", False, TrendClass.STRONGLY_DETERIORATING),
+        (["10", "10.2", "10.4"], "LEVEL", True, TrendClass.STABLE),
+        (["10", "20", "8", "19"], "LEVEL", True, TrendClass.VOLATILE),
+        (["10", "9", "12", "11", "13"], "LEVEL", True, TrendClass.STABLE),  # inconsistent, small
+        (["21", "25", "28", "9.6"], "LEVEL", True, TrendClass.VOLATILE),  # large, one reversal
+        (["100", "110", "125"], "MONEY", True, TrendClass.IMPROVING),
+        (["100", "120"], "LEVEL", True, TrendClass.INSUFFICIENT_HISTORY),
+        (["0", "5", "9"], "MONEY", True, TrendClass.INSUFFICIENT_HISTORY),
+        (["60", "70", "80"], "DAYS", False, TrendClass.STRONGLY_DETERIORATING),
+    ]
+    for values, kind, higher, expected in cases:
+        assert classify_trend([Decimal(v) for v in values], kind, higher)[0] == expected, values
+
+
+# --- provenance and architecture -----------------------------------------------------------------
+
+
+def test_every_calculation_reaches_box4_observations():
+    data = make(company())
+    a = build_financial_analytics(data, generated_at=NOW)
+    canonical = {v.canonical_value_id: v for v in data.canonical_values}
+    observations = {o.observation_id: o for o in data.observations}
+    ids = {m.metric_id for m in a.all_metrics()}
+    for m in a.all_metrics():
+        if m.status == S.CALCULATED:
+            assert m.provenance
+        assert set(m.input_metric_ids) <= ids
+        for i in m.provenance:
+            value = canonical[i.canonical_value_id]
+            observation = observations[value.selected_observation_id]
+            assert (i.value, i.selected_observation_id, i.reconciliation_record_id) == (
+                value.value,
+                value.selected_observation_id,
+                value.reconciliation_record_id,
+            )
+            assert i.source_locator == observation.source.locator
+            assert i.selected_authority == observation.authority
+    for check in a.earnings_quality:
+        assert set(check.canonical_value_ids) <= set(canonical)
+    for anomaly in a.anomalies:
+        assert set(anomaly.canonical_value_ids) <= set(canonical)
+
+
+def test_contract_is_strict():
+    m = metric(A, "ROE")
     with pytest.raises(ValidationError):
-        DerivedMetric.model_validate({**m.model_dump(), "inputs": ()})
+        CalculatedMetric.model_validate({**m.model_dump(), "provenance": (), "input_value_ids": ()})
     with pytest.raises(ValidationError):
-        DerivedMetric.model_validate({**m.model_dump(), "status": "INSUFFICIENT_DATA"})
+        CalculatedMetric.model_validate({**m.model_dump(), "status": "INPUT_MISSING"})
     with pytest.raises(ValidationError):
-        FinancialAnalyticsDataset.model_validate({**BASE.model_dump(), "surprise": 1})
+        CalculatedMetric.model_validate({**m.model_dump(), "input_value_ids": ()})
+    with pytest.raises(ValidationError):
+        FinancialAnalyticsDataset.model_validate({**A.model_dump(), "surprise": 1})
+    misplaced = {**A.model_dump(), "growth": A.model_dump()["profitability"]}
+    with pytest.raises(ValidationError):
+        FinancialAnalyticsDataset.model_validate(misplaced)
 
 
-def test_as_no_ai_or_network_dependencies():
+def test_no_network_ai_or_secret_dependencies():
     forbidden = (
         "httpx",
         "anthropic",
@@ -1029,8 +1128,19 @@ def test_as_no_ai_or_network_dependencies():
         "adapters",
         "urllib",
         "requests",
+        "secret",
+        "keychain",
+        "browser",
+        "config",
     )
-    for module in (financial_analytics, financial_forensics, financial_metrics, analytics_domain):
+    for module in (
+        financial_analytics,
+        financial_forensics,
+        financial_metrics,
+        financial_formulas,
+        financial_rules,
+        analytics_domain,
+    ):
         tree = ast.parse(Path(module.__file__).read_text())
         for node in ast.walk(tree):
             names = (

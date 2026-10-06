@@ -1,0 +1,5 @@
+{
+ "notice":"Hand-specified artificial truth, not real published CPI values or RBI prose.",
+ "publication":{"publisher":"RBI","title":"Sectoral Deployment of Bank Credit – June 2024","date":"2024-07-31","period":"June 2024","passage":"Synthetic banking-sector evidence for June 2024."},
+ "macro":{"base_year":"2012","geography":"All India","population":"Combined","frequency":"MONTHLY","unit":"INDEX_POINTS","January":"100.25","February":"101.50"}
+}

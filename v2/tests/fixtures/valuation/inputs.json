@@ -1,0 +1,7 @@
+{
+  "price": "100", "eps": "5", "bvps": "50",
+  "dcf": {"fcff_1": "110", "fcff_2": "121", "horizon": "2", "wacc": "0.10", "terminal_growth": "0", "net_debt": "200", "diluted_shares": "10"},
+  "reverse": {"starting_fcff": "100", "horizon": "2", "wacc": "0.10", "terminal_growth": "0", "net_debt": "200", "diluted_shares": "10", "lower_growth": "0", "upper_growth": "0.2"},
+  "eps_expectation": {"required_return": "0.10", "horizon": "2", "exit_pe": "20"},
+  "bvps_expectation": {"required_return": "0.10", "horizon": "2", "exit_pb": "2"}
+}

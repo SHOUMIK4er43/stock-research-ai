@@ -1,0 +1,2122 @@
+{
+  "calculated_at": "2026-09-09T07:28:03.130178Z",
+  "id": "25607191-9c1f-4753-87a9-5fec57413404",
+  "request": {
+    "alignment_policy": "EXACT_DATES_ONLY_V1",
+    "benchmark_alignment_policy": "EXACT_SHARED_ENDPOINTS_V1",
+    "benchmark_extraction_id": null,
+    "benchmark_instrument_id": null,
+    "calculations": [
+      {
+        "metric_id": "PRICE_RETURN",
+        "window": 20
+      },
+      {
+        "metric_id": "MAX_DRAWDOWN",
+        "window": 20
+      },
+      {
+        "metric_id": "REALIZED_VOLATILITY",
+        "window": 20
+      },
+      {
+        "metric_id": "SMA",
+        "window": 20
+      }
+    ],
+    "end_date": "2025-01-29",
+    "end_observation_id": null,
+    "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+    "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+    "price_field": "close",
+    "start_date": "2025-01-02",
+    "start_observation_id": null
+  },
+  "results": [
+    {
+      "actual_end": "2025-01-29",
+      "actual_start": "2025-01-02",
+      "adjustment_basis": "UNKNOWN",
+      "alignment_policy": "EXACT_DATES_ONLY_V1",
+      "annualization_factor": null,
+      "annualization_policy": null,
+      "benchmark_price_return": null,
+      "calculated_at": "2026-09-09T07:28:03.130178Z",
+      "classification": "CALCULATION",
+      "company_price_return": null,
+      "corporate_action_coverage": "UNAVAILABLE",
+      "corporate_action_reason": "NOT_PROVIDED_BY_SOURCE",
+      "currency": null,
+      "display_value": "20.00",
+      "elapsed_days": null,
+      "elapsed_years": null,
+      "episode": null,
+      "exact_denominator": 1,
+      "exact_numerator": 20,
+      "formula": {
+        "display_places": 2,
+        "expression": "(end_close / start_close - 1) * 100",
+        "id": "PRICE_RETURN",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1",
+        "working_precision": 70
+      },
+      "inputs": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-02T00:00:00+05:30",
+            "close": "100",
+            "high": "100",
+            "id": "06058cfd-98bb-5d4b-86d4-70c93bbf61ef",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "100",
+            "open": "100",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[0]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-02",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-29T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "cc3a948e-8e85-5ec7-8b99-a2a43bbb08cb",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[19]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-29",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        }
+      ],
+      "issues": [
+        {
+          "code": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "message": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "message": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "UNVERIFIED_ADJUSTMENT",
+          "message": "UNVERIFIED_ADJUSTMENT",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        }
+      ],
+      "metric_id": "PRICE_RETURN",
+      "numerical_method": "EXACT_RATIONAL",
+      "observation_count": 2,
+      "price_field": "close",
+      "requested_end": "2025-01-29",
+      "requested_start": "2025-01-02",
+      "return_count": null,
+      "return_definition": null,
+      "snapshot_id": "25607191-9c1f-4753-87a9-5fec57413404",
+      "sources": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "instrument": {
+            "currency": null,
+            "exchange": "NSE",
+            "exchange_identifier": "800001",
+            "id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "kind": "EQUITY",
+            "name": "SYNTHETIC YESBANK",
+            "price_unit": "PRICE",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "f449f533-2bc9-462f-b8a3-bd9017cb943a",
+              "source_location": {
+                "locator": "csv:data-row[1]",
+                "section": null
+              }
+            },
+            "provider": "kite",
+            "provider_identifier": "900001",
+            "symbol": "YESBANK"
+          },
+          "payload_sha256": "0ec8fa8c255a4daab8be8ace0e099a9ce1152c8644454a0fb3293b28eee1a0c2"
+        }
+      ],
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "20",
+      "variance_definition": null,
+      "window": null
+    },
+    {
+      "actual_end": "2025-01-29",
+      "actual_start": "2025-01-02",
+      "adjustment_basis": "UNKNOWN",
+      "alignment_policy": "EXACT_DATES_ONLY_V1",
+      "annualization_factor": null,
+      "annualization_policy": null,
+      "benchmark_price_return": null,
+      "calculated_at": "2026-09-09T07:28:03.130178Z",
+      "classification": "CALCULATION",
+      "company_price_return": null,
+      "corporate_action_coverage": "UNAVAILABLE",
+      "corporate_action_reason": "NOT_PROVIDED_BY_SOURCE",
+      "currency": null,
+      "display_value": "25.00",
+      "elapsed_days": null,
+      "elapsed_years": null,
+      "episode": {
+        "peak_date": "2025-01-03",
+        "peak_observation_id": "673efe91-2fbb-5871-a0be-185c2c5762a2",
+        "peak_value": "120",
+        "recovery_date": "2025-01-07",
+        "recovery_observation_id": "68b2a774-970e-5b70-a8f3-a991bf403346",
+        "recovery_value": "120",
+        "trough_date": "2025-01-06",
+        "trough_observation_id": "164960b5-31b7-5463-8c79-830fdacfb637",
+        "trough_value": "90"
+      },
+      "exact_denominator": 1,
+      "exact_numerator": 25,
+      "formula": {
+        "display_places": 2,
+        "expression": "max(1 - close / running_peak) * 100; earliest tied episode",
+        "id": "MAX_DRAWDOWN",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1",
+        "working_precision": 70
+      },
+      "inputs": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-02T00:00:00+05:30",
+            "close": "100",
+            "high": "100",
+            "id": "06058cfd-98bb-5d4b-86d4-70c93bbf61ef",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "100",
+            "open": "100",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[0]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-02",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-03T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "673efe91-2fbb-5871-a0be-185c2c5762a2",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[1]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-03",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-06T00:00:00+05:30",
+            "close": "90",
+            "high": "90",
+            "id": "164960b5-31b7-5463-8c79-830fdacfb637",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "90",
+            "open": "90",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[2]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-06",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-07T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "68b2a774-970e-5b70-a8f3-a991bf403346",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[3]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-07",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-08T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "09fa9075-59c6-5200-b1a4-4bdfe0d8177c",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[4]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-08",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-09T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "e47ee4ff-1441-519a-84b8-f6158dd0cf2d",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[5]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-09",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-10T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "be4a57b2-8488-5520-bee6-369a2e6fff0d",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[6]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-10",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-13T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "6860fff7-72bc-521d-8159-36e5f0a5df44",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[7]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-13",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-14T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "534c5fce-ade9-5c84-901f-19ed8a36fb71",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[8]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-14",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-15T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "c6d055bd-b89b-57bb-89f6-5d35e1c27a92",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[9]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-15",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-16T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "be3bff23-bec4-5745-ab8f-f5e58a45be05",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[10]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-16",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-17T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "d0d02638-a08c-5b58-b56c-1c58c519a00b",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[11]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-17",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-20T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "ce04e17d-d88c-5172-8927-5cd5796d6174",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[12]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-20",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-21T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "d8915bd0-241a-54f0-a2e3-b5939ed55adf",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[13]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-21",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-22T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "6b3d84ab-d57c-5f30-85f8-e50750bc29ad",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[14]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-22",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-23T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "0d9b7b16-1aa7-52e8-bf6b-cde515acba36",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[15]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-23",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-24T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "c88a50c7-9ea0-57ce-a821-5d2b136e2385",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[16]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-24",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-27T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "a5bada82-1da2-5763-bcfa-6eac143c5d5e",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[17]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-27",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-28T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "ccd1064f-9d42-5950-adcc-f2a2017080ba",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[18]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-28",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-29T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "cc3a948e-8e85-5ec7-8b99-a2a43bbb08cb",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[19]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-29",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        }
+      ],
+      "issues": [
+        {
+          "code": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "message": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "message": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "UNVERIFIED_ADJUSTMENT",
+          "message": "UNVERIFIED_ADJUSTMENT",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        }
+      ],
+      "metric_id": "MAX_DRAWDOWN",
+      "numerical_method": "EXACT_RATIONAL",
+      "observation_count": 20,
+      "price_field": "close",
+      "requested_end": "2025-01-29",
+      "requested_start": "2025-01-02",
+      "return_count": null,
+      "return_definition": null,
+      "snapshot_id": "25607191-9c1f-4753-87a9-5fec57413404",
+      "sources": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "instrument": {
+            "currency": null,
+            "exchange": "NSE",
+            "exchange_identifier": "800001",
+            "id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "kind": "EQUITY",
+            "name": "SYNTHETIC YESBANK",
+            "price_unit": "PRICE",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "f449f533-2bc9-462f-b8a3-bd9017cb943a",
+              "source_location": {
+                "locator": "csv:data-row[1]",
+                "section": null
+              }
+            },
+            "provider": "kite",
+            "provider_identifier": "900001",
+            "symbol": "YESBANK"
+          },
+          "payload_sha256": "0ec8fa8c255a4daab8be8ace0e099a9ce1152c8644454a0fb3293b28eee1a0c2"
+        }
+      ],
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "25",
+      "variance_definition": null,
+      "window": null
+    },
+    {
+      "actual_end": "2025-01-29",
+      "actual_start": "2025-01-02",
+      "adjustment_basis": "UNKNOWN",
+      "alignment_policy": "EXACT_DATES_ONLY_V1",
+      "annualization_factor": 252,
+      "annualization_policy": "ARITHMETIC_SAMPLE_252_V1",
+      "benchmark_price_return": null,
+      "calculated_at": "2026-09-09T07:28:03.130178Z",
+      "classification": "CALCULATION",
+      "company_price_return": null,
+      "corporate_action_coverage": "UNAVAILABLE",
+      "corporate_action_reason": "NOT_PROVIDED_BY_SOURCE",
+      "currency": null,
+      "display_value": "171.21",
+      "elapsed_days": null,
+      "elapsed_years": null,
+      "episode": null,
+      "exact_denominator": null,
+      "exact_numerator": null,
+      "formula": {
+        "display_places": 2,
+        "expression": "sqrt(sum((r - mean(r))**2)/(n-1)) * sqrt(252) * 100; r=close/prior_close-1",
+        "id": "REALIZED_VOLATILITY",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1",
+        "working_precision": 70
+      },
+      "inputs": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-02T00:00:00+05:30",
+            "close": "100",
+            "high": "100",
+            "id": "06058cfd-98bb-5d4b-86d4-70c93bbf61ef",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "100",
+            "open": "100",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[0]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-02",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-03T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "673efe91-2fbb-5871-a0be-185c2c5762a2",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[1]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-03",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-06T00:00:00+05:30",
+            "close": "90",
+            "high": "90",
+            "id": "164960b5-31b7-5463-8c79-830fdacfb637",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "90",
+            "open": "90",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[2]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-06",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-07T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "68b2a774-970e-5b70-a8f3-a991bf403346",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[3]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-07",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-08T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "09fa9075-59c6-5200-b1a4-4bdfe0d8177c",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[4]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-08",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-09T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "e47ee4ff-1441-519a-84b8-f6158dd0cf2d",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[5]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-09",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-10T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "be4a57b2-8488-5520-bee6-369a2e6fff0d",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[6]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-10",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-13T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "6860fff7-72bc-521d-8159-36e5f0a5df44",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[7]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-13",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-14T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "534c5fce-ade9-5c84-901f-19ed8a36fb71",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[8]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-14",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-15T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "c6d055bd-b89b-57bb-89f6-5d35e1c27a92",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[9]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-15",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-16T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "be3bff23-bec4-5745-ab8f-f5e58a45be05",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[10]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-16",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-17T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "d0d02638-a08c-5b58-b56c-1c58c519a00b",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[11]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-17",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-20T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "ce04e17d-d88c-5172-8927-5cd5796d6174",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[12]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-20",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-21T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "d8915bd0-241a-54f0-a2e3-b5939ed55adf",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[13]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-21",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-22T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "6b3d84ab-d57c-5f30-85f8-e50750bc29ad",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[14]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-22",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-23T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "0d9b7b16-1aa7-52e8-bf6b-cde515acba36",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[15]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-23",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-24T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "c88a50c7-9ea0-57ce-a821-5d2b136e2385",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[16]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-24",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-27T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "a5bada82-1da2-5763-bcfa-6eac143c5d5e",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[17]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-27",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-28T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "ccd1064f-9d42-5950-adcc-f2a2017080ba",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[18]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-28",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-29T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "cc3a948e-8e85-5ec7-8b99-a2a43bbb08cb",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[19]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-29",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        }
+      ],
+      "issues": [
+        {
+          "code": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "message": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "message": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "UNVERIFIED_ADJUSTMENT",
+          "message": "UNVERIFIED_ADJUSTMENT",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        }
+      ],
+      "metric_id": "REALIZED_VOLATILITY",
+      "numerical_method": "DECIMAL_TRANSCENDENTAL",
+      "observation_count": 20,
+      "price_field": "close",
+      "requested_end": "2025-01-29",
+      "requested_start": "2025-01-02",
+      "return_count": 19,
+      "return_definition": "ARITHMETIC_SIMPLE_RETURN",
+      "snapshot_id": "25607191-9c1f-4753-87a9-5fec57413404",
+      "sources": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "instrument": {
+            "currency": null,
+            "exchange": "NSE",
+            "exchange_identifier": "800001",
+            "id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "kind": "EQUITY",
+            "name": "SYNTHETIC YESBANK",
+            "price_unit": "PRICE",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "f449f533-2bc9-462f-b8a3-bd9017cb943a",
+              "source_location": {
+                "locator": "csv:data-row[1]",
+                "section": null
+              }
+            },
+            "provider": "kite",
+            "provider_identifier": "900001",
+            "symbol": "YESBANK"
+          },
+          "payload_sha256": "0ec8fa8c255a4daab8be8ace0e099a9ce1152c8644454a0fb3293b28eee1a0c2"
+        }
+      ],
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "171.21341970686555458002717309205163359201585598647",
+      "variance_definition": "SAMPLE_VARIANCE",
+      "window": null
+    },
+    {
+      "actual_end": "2025-01-29",
+      "actual_start": "2025-01-02",
+      "adjustment_basis": "UNKNOWN",
+      "alignment_policy": "EXACT_DATES_ONLY_V1",
+      "annualization_factor": null,
+      "annualization_policy": null,
+      "benchmark_price_return": null,
+      "calculated_at": "2026-09-09T07:28:03.130178Z",
+      "classification": "CALCULATION",
+      "company_price_return": null,
+      "corporate_action_coverage": "UNAVAILABLE",
+      "corporate_action_reason": "NOT_PROVIDED_BY_SOURCE",
+      "currency": null,
+      "display_value": "117.50",
+      "elapsed_days": null,
+      "elapsed_years": null,
+      "episode": null,
+      "exact_denominator": 2,
+      "exact_numerator": 235,
+      "formula": {
+        "display_places": 2,
+        "expression": "sum(last_N_closes) / N",
+        "id": "SMA",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1",
+        "working_precision": 70
+      },
+      "inputs": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-02T00:00:00+05:30",
+            "close": "100",
+            "high": "100",
+            "id": "06058cfd-98bb-5d4b-86d4-70c93bbf61ef",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "100",
+            "open": "100",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[0]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-02",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-03T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "673efe91-2fbb-5871-a0be-185c2c5762a2",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[1]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-03",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-06T00:00:00+05:30",
+            "close": "90",
+            "high": "90",
+            "id": "164960b5-31b7-5463-8c79-830fdacfb637",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "90",
+            "open": "90",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[2]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-06",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-07T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "68b2a774-970e-5b70-a8f3-a991bf403346",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[3]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-07",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-08T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "09fa9075-59c6-5200-b1a4-4bdfe0d8177c",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[4]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-08",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-09T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "e47ee4ff-1441-519a-84b8-f6158dd0cf2d",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[5]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-09",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-10T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "be4a57b2-8488-5520-bee6-369a2e6fff0d",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[6]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-10",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-13T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "6860fff7-72bc-521d-8159-36e5f0a5df44",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[7]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-13",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-14T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "534c5fce-ade9-5c84-901f-19ed8a36fb71",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[8]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-14",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-15T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "c6d055bd-b89b-57bb-89f6-5d35e1c27a92",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[9]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-15",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-16T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "be3bff23-bec4-5745-ab8f-f5e58a45be05",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[10]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-16",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-17T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "d0d02638-a08c-5b58-b56c-1c58c519a00b",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[11]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-17",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-20T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "ce04e17d-d88c-5172-8927-5cd5796d6174",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[12]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-20",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-21T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "d8915bd0-241a-54f0-a2e3-b5939ed55adf",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[13]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-21",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-22T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "6b3d84ab-d57c-5f30-85f8-e50750bc29ad",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[14]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-22",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-23T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "0d9b7b16-1aa7-52e8-bf6b-cde515acba36",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[15]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-23",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-24T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "c88a50c7-9ea0-57ce-a821-5d2b136e2385",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[16]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-24",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-27T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "a5bada82-1da2-5763-bcfa-6eac143c5d5e",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[17]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-27",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-28T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "ccd1064f-9d42-5950-adcc-f2a2017080ba",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[18]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-28",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        },
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "observation": {
+            "adjusted_close": null,
+            "adjustment_basis": "UNKNOWN",
+            "candle_timestamp": "2025-01-29T00:00:00+05:30",
+            "close": "120",
+            "high": "120",
+            "id": "cc3a948e-8e85-5ec7-8b99-a2a43bbb08cb",
+            "instrument_id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "low": "120",
+            "open": "120",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "aee228ce-efbc-40c1-b831-9106795fd587",
+              "source_location": {
+                "locator": "$.data.candles[19]",
+                "section": null
+              }
+            },
+            "provider_updated_at": null,
+            "session_status": "OBSERVATION_PRESENT",
+            "trading_date": "2025-01-29",
+            "volume": "100",
+            "volume_semantics": "PROVIDER_REPORTED"
+          }
+        }
+      ],
+      "issues": [
+        {
+          "code": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "message": "CORPORATE_ACTIONS_NOT_PROVIDED_BY_SOURCE",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "message": "PINNED_RETRIEVAL_NOT_HISTORICAL_AVAILABILITY_PROOF",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "UNVERIFIED_ADJUSTMENT",
+          "message": "UNVERIFIED_ADJUSTMENT",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        },
+        {
+          "code": "SOURCE_CURRENCY_UNKNOWN",
+          "message": "SOURCE_CURRENCY_UNKNOWN",
+          "observation_ids": [],
+          "severity": "LIMITATION"
+        }
+      ],
+      "metric_id": "SMA",
+      "numerical_method": "EXACT_RATIONAL",
+      "observation_count": 20,
+      "price_field": "close",
+      "requested_end": "2025-01-29",
+      "requested_start": "2025-01-02",
+      "return_count": null,
+      "return_definition": null,
+      "snapshot_id": "25607191-9c1f-4753-87a9-5fec57413404",
+      "sources": [
+        {
+          "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+          "instrument": {
+            "currency": null,
+            "exchange": "NSE",
+            "exchange_identifier": "800001",
+            "id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+            "kind": "EQUITY",
+            "name": "SYNTHETIC YESBANK",
+            "price_unit": "PRICE",
+            "provenance": {
+              "normalizer_version": "kite-daily/1",
+              "raw_artifact_id": "f449f533-2bc9-462f-b8a3-bd9017cb943a",
+              "source_location": {
+                "locator": "csv:data-row[1]",
+                "section": null
+              }
+            },
+            "provider": "kite",
+            "provider_identifier": "900001",
+            "symbol": "YESBANK"
+          },
+          "payload_sha256": "0ec8fa8c255a4daab8be8ace0e099a9ce1152c8644454a0fb3293b28eee1a0c2"
+        }
+      ],
+      "status": "AVAILABLE",
+      "unit": "PRICE",
+      "value": "117.5",
+      "variance_definition": null,
+      "window": 20
+    }
+  ],
+  "schema_version": "4B.1",
+  "sources": [
+    {
+      "extraction_id": "d4bde2f9-4696-4c1d-9e2f-8670a345710b",
+      "instrument": {
+        "currency": null,
+        "exchange": "NSE",
+        "exchange_identifier": "800001",
+        "id": "1c36d9a2-affa-54d0-a681-7e05647ea003",
+        "kind": "EQUITY",
+        "name": "SYNTHETIC YESBANK",
+        "price_unit": "PRICE",
+        "provenance": {
+          "normalizer_version": "kite-daily/1",
+          "raw_artifact_id": "f449f533-2bc9-462f-b8a3-bd9017cb943a",
+          "source_location": {
+            "locator": "csv:data-row[1]",
+            "section": null
+          }
+        },
+        "provider": "kite",
+        "provider_identifier": "900001",
+        "symbol": "YESBANK"
+      },
+      "payload_sha256": "0ec8fa8c255a4daab8be8ace0e099a9ce1152c8644454a0fb3293b28eee1a0c2"
+    }
+  ]
+}

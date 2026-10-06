@@ -1,0 +1,19 @@
+<!--
+  Part 6C-B: source design reference for the Stock Research AI extension icon.
+  An original, restrained mark - a rounded square in the extension's own existing
+  institutional accent color (--accent: #1f4d3a, extension/css/sidepanel.css) with a
+  simple ascending three-bar "research/analytics" glyph in white.
+
+  The shipped PNGs (icon16/32/48/128.png) are generated deterministically by
+  scripts/generate_icons.py using only the Python standard library (no SVG rasterizer
+  dependency is introduced) - that script draws the same shapes directly at each
+  target pixel size rather than parsing this file. This SVG exists as a readable,
+  editable design reference for anyone who wants to view or refine the mark in a
+  vector editor; it is not consumed by the build.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <rect x="0" y="0" width="128" height="128" rx="23" ry="23" fill="#1f4d3a" />
+  <rect x="34" y="66" width="16" height="34" fill="#ffffff" />
+  <rect x="56" y="52" width="16" height="48" fill="#ffffff" />
+  <rect x="78" y="28" width="16" height="72" fill="#ffffff" />
+</svg>

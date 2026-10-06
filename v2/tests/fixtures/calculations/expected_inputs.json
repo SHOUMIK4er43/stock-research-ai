@@ -1,0 +1,12 @@
+{
+  "YESBANK": {
+    "scope":"consolidated",
+    "annual": {"Revenue +":{"Mar 2024":"27606","Mar 2025":"30919"},"Net Profit +":{"Mar 2024":"1285","Mar 2025":"2447"},"EPS in Rs":{"Mar 2024":"0.45","Mar 2025":"0.78"}},
+    "quarterly":{"Net Profit +":{"Jun 2024":"516","Mar 2025":"745","Jun 2025":"809"}},
+    "instant":{"Deposits":{"Mar 2024":"266230","Mar 2025":"284420"},"Total Assets":{"Mar 2024":"406362","Mar 2025":"424116"}}
+  },
+  "INFY": {
+    "scope":"standalone",
+    "annual":{"Sales +":{"Mar 2024":"128933","Mar 2025":"136592"},"Net Profit +":{"Mar 2024":"27234","Mar 2025":"25568"},"Operating Profit":{"Mar 2025":"33499"}}
+  }
+}

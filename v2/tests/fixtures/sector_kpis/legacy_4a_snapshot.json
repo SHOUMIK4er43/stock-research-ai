@@ -1,0 +1,1090 @@
+{
+  "calculated_at": "2026-09-08T13:30:23.009447Z",
+  "id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+  "request": {
+    "alignment": {
+      "basis": "CALLER_DECLARED",
+      "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+      "fiscal_year_end_month": 3,
+      "id": "DECLARED_FISCAL_PERIOD_KEYS",
+      "version": "1"
+    },
+    "calculations": [
+      {
+        "comparison": "ANNUAL_YOY",
+        "current_period": "2025-03",
+        "formula_id": "SOURCE_METRIC_GROWTH",
+        "metric_id": "revenue_growth",
+        "source_metric": "revenue"
+      },
+      {
+        "comparison": "ANNUAL_YOY",
+        "current_period": "2025-03",
+        "formula_id": "SOURCE_METRIC_GROWTH",
+        "metric_id": "pat_growth",
+        "source_metric": "net_profit"
+      },
+      {
+        "comparison": "ANNUAL_YOY",
+        "current_period": "2025-03",
+        "formula_id": "SOURCE_METRIC_GROWTH",
+        "metric_id": "eps_growth",
+        "source_metric": "eps"
+      },
+      {
+        "comparison": "QUARTERLY_YOY",
+        "current_period": "2025-06",
+        "formula_id": "SOURCE_METRIC_GROWTH",
+        "metric_id": "quarter_yoy",
+        "source_metric": "net_profit"
+      },
+      {
+        "comparison": "QUARTERLY_SEQUENTIAL",
+        "current_period": "2025-06",
+        "formula_id": "SOURCE_METRIC_GROWTH",
+        "metric_id": "quarter_seq",
+        "source_metric": "net_profit"
+      },
+      {
+        "comparison": "ANNUAL_YOY",
+        "current_period": "2025-03",
+        "formula_id": "AVERAGE_ASSETS_RETURN",
+        "metric_id": "assets_return",
+        "source_metric": "net_profit"
+      },
+      {
+        "comparison": "ANNUAL_YOY",
+        "current_period": "2025-03",
+        "formula_id": "SOURCE_METRIC_GROWTH",
+        "metric_id": "deposit_growth",
+        "source_metric": "deposits"
+      }
+    ],
+    "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+    "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+    "reporting_scope": "consolidated",
+    "sector": {
+      "basis": "CALLER_DECLARED",
+      "classification": "BANK",
+      "declaration": "Explicit YESBANK proof classification",
+      "provenance": null
+    }
+  },
+  "results": [
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "ANNUAL_YOY",
+      "display_value": "12.00",
+      "exact_denominator": 13803,
+      "exact_numerator": 165650,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "(current - prior) / abs(prior) * 100",
+        "id": "SOURCE_METRIC_GROWTH",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "5c202a93-11bd-5e09-8c47-1aa14b9098ca",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Revenue",
+          "metric_id": "revenue",
+          "original_label": "Revenue +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  30,919\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[1]/td[12]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:Revenue:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "30919",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "35efd987-ee48-5ac4-8082-c1f75377a6ba",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Revenue",
+          "metric_id": "revenue",
+          "original_label": "Revenue +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  27,606\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2024-03-31",
+            "fiscal_label": "Mar 2024",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2024-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[1]/td[11]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:Revenue:Mar 2024",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "27606",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION",
+        "DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1"
+      ],
+      "label": "Growth of source-reported Revenue +",
+      "metric_id": "revenue_growth",
+      "period": "2025-03",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "12.001014272259653698471346808664783018184452655220"
+    },
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "ANNUAL_YOY",
+      "display_value": "90.43",
+      "exact_denominator": 257,
+      "exact_numerator": 23240,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "(current - prior) / abs(prior) * 100",
+        "id": "SOURCE_METRIC_GROWTH",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "f2809fbf-f279-5095-ac3e-f6068c18461a",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  2,447\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[10]/td[12]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:Net Profit:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "2447",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "3d3439ba-a225-5595-949f-606655f22ad1",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  1,285\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2024-03-31",
+            "fiscal_label": "Mar 2024",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2024-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[10]/td[11]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:Net Profit:Mar 2024",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "1285",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION",
+        "DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1"
+      ],
+      "label": "Growth of source-reported Net Profit +",
+      "metric_id": "pat_growth",
+      "period": "2025-03",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "90.428015564202334630350194552529182879377431906615"
+    },
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "ANNUAL_YOY",
+      "display_value": "73.33",
+      "exact_denominator": 3,
+      "exact_numerator": 220,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "(current - prior) / abs(prior) * 100",
+        "id": "SOURCE_METRIC_GROWTH",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "099e40f8-1920-5064-bdf3-d8ca2e75c25c",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:EPS in Rs",
+          "metric_id": "eps",
+          "original_label": "EPS in Rs",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "1"
+          },
+          "original_value": "\n                \n                  0.78\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[11]/td[12]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:EPS in Rs:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "1"
+          },
+          "value": "0.78",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "8dec2344-7e05-5833-996c-2ba98e09130e",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:EPS in Rs",
+          "metric_id": "eps",
+          "original_label": "EPS in Rs",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "1"
+          },
+          "original_value": "\n                \n                  0.45\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2024-03-31",
+            "fiscal_label": "Mar 2024",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2024-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[11]/td[11]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:EPS in Rs:Mar 2024",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "1"
+          },
+          "value": "0.45",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION",
+        "DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1"
+      ],
+      "label": "Growth of source-reported EPS in Rs",
+      "metric_id": "eps_growth",
+      "period": "2025-03",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "73.333333333333333333333333333333333333333333333333"
+    },
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "QUARTERLY_YOY",
+      "display_value": "56.78",
+      "exact_denominator": 129,
+      "exact_numerator": 7325,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "(current - prior) / abs(prior) * 100",
+        "id": "SOURCE_METRIC_GROWTH",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "5dab8fa8-da18-5d9e-ac09-74dafa8a04fe",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  809\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-06-30",
+            "fiscal_label": "Jun 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "quarterly",
+            "kind": "duration",
+            "original_date_key": "2025-06-30",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#quarters/div[3]/table[1]/tbody[1]/tr[10]/td[10]",
+              "section": "QUARTERLY"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:QUARTERLY:consolidated:Net Profit:Jun 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "809",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "c0b27b32-14f9-5dd8-9af0-2e1db62e4495",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  516\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2024-06-30",
+            "fiscal_label": "Jun 2024",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "quarterly",
+            "kind": "duration",
+            "original_date_key": "2024-06-30",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#quarters/div[3]/table[1]/tbody[1]/tr[10]/td[6]",
+              "section": "QUARTERLY"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:QUARTERLY:consolidated:Net Profit:Jun 2024",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "516",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION",
+        "DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1"
+      ],
+      "label": "Growth of source-reported Net Profit +",
+      "metric_id": "quarter_yoy",
+      "period": "2025-06",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "56.782945736434108527131782945736434108527131782946"
+    },
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "QUARTERLY_SEQUENTIAL",
+      "display_value": "8.59",
+      "exact_denominator": 149,
+      "exact_numerator": 1280,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "(current - prior) / abs(prior) * 100",
+        "id": "SOURCE_METRIC_GROWTH",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "5dab8fa8-da18-5d9e-ac09-74dafa8a04fe",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  809\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-06-30",
+            "fiscal_label": "Jun 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "quarterly",
+            "kind": "duration",
+            "original_date_key": "2025-06-30",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#quarters/div[3]/table[1]/tbody[1]/tr[10]/td[10]",
+              "section": "QUARTERLY"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:QUARTERLY:consolidated:Net Profit:Jun 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "809",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "57320c20-2e15-50d2-b8f9-d878c2c7642c",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  745\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "quarterly",
+            "kind": "duration",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#quarters/div[3]/table[1]/tbody[1]/tr[10]/td[9]",
+              "section": "QUARTERLY"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:QUARTERLY:consolidated:Net Profit:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "745",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION",
+        "DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1"
+      ],
+      "label": "Growth of source-reported Net Profit +",
+      "metric_id": "quarter_seq",
+      "period": "2025-06",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "8.5906040268456375838926174496644295302013422818792"
+    },
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "ANNUAL_YOY",
+      "display_value": "0.59",
+      "exact_denominator": 415239,
+      "exact_numerator": 244700,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "annual_net_profit / ((prior_fiscal_end_assets + current_fiscal_end_assets) / 2) * 100",
+        "id": "AVERAGE_ASSETS_RETURN",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "f2809fbf-f279-5095-ac3e-f6068c18461a",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Net Profit",
+          "metric_id": "net_profit",
+          "original_label": "Net Profit +",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  2,447\n                \n              ",
+          "period": {
+            "date_resolution": "partial",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "annual",
+            "kind": "duration",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#profit-loss/div[3]/table[1]/tbody[1]/tr[10]/td[12]",
+              "section": "PROFIT_LOSS"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:PROFIT_LOSS:consolidated:Net Profit:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "2447",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "82cc6fb0-c7ad-58e8-84a2-3e40fb3824d8",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Total Assets",
+          "metric_id": "total_assets",
+          "original_label": "Total Assets",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  406,362\n                \n              ",
+          "period": {
+            "date_resolution": "exact",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2024-03-31",
+            "fiscal_label": "Mar 2024",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "point_in_time",
+            "kind": "instant",
+            "original_date_key": "2024-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#balance-sheet/div[2]/table[1]/tbody[1]/tr[11]/td[11]",
+              "section": "BALANCE_SHEET"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:BALANCE_SHEET:consolidated:Total Assets:Mar 2024",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "406362",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "edc80719-8029-5e2b-96c8-63e943d6ca59",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Total Assets",
+          "metric_id": "total_assets",
+          "original_label": "Total Assets",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  424,116\n                \n              ",
+          "period": {
+            "date_resolution": "exact",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "point_in_time",
+            "kind": "instant",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#balance-sheet/div[2]/table[1]/tbody[1]/tr[11]/td[12]",
+              "section": "BALANCE_SHEET"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:BALANCE_SHEET:consolidated:Total Assets:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "424116",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION",
+        "DURATION_START_UNKNOWN_USING_DECLARED_PERIOD_ALIGNMENT_V1",
+        "AVERAGE_ASSETS_RETURN_NOT_A_VALIDATED_BANK_ROA_CONVENTION"
+      ],
+      "label": "AVERAGE_ASSETS_RETURN",
+      "metric_id": "assets_return",
+      "period": "2025-03",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "0.58929917469216523496107061234614282377137022293185"
+    },
+    {
+      "alignment": {
+        "basis": "CALLER_DECLARED",
+        "declaration": "Caller declares March fiscal year end and three-month quarters; no source start dates invented.",
+        "fiscal_year_end_month": 3,
+        "id": "DECLARED_FISCAL_PERIOD_KEYS",
+        "version": "1"
+      },
+      "calculated_at": "2026-09-08T13:30:23.009447Z",
+      "classification": "CALCULATION",
+      "comparison": "ANNUAL_YOY",
+      "display_value": "6.83",
+      "exact_denominator": 26623,
+      "exact_numerator": 181900,
+      "extraction_id": "dcf95d54-ca7d-4862-bbd8-7a7552c8dceb",
+      "formula": {
+        "display_places": 2,
+        "expression": "(current - prior) / abs(prior) * 100",
+        "id": "SOURCE_METRIC_GROWTH",
+        "precision": 50,
+        "rounding": "ROUND_HALF_EVEN",
+        "version": "1"
+      },
+      "inputs": [
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "911dbc00-9596-5339-8a00-0f010afadafb",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Deposits",
+          "metric_id": "deposits",
+          "original_label": "Deposits",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  284,420\n                \n              ",
+          "period": {
+            "date_resolution": "exact",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2025-03-31",
+            "fiscal_label": "Mar 2025",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "point_in_time",
+            "kind": "instant",
+            "original_date_key": "2025-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#balance-sheet/div[2]/table[1]/tbody[1]/tr[3]/td[12]",
+              "section": "BALANCE_SHEET"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:BALANCE_SHEET:consolidated:Deposits:Mar 2025",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "284420",
+          "value_status": "available"
+        },
+        {
+          "company_id": "2e307908-7aa6-4b75-a81a-587221f2d48b",
+          "id": "b2fdef27-5ef8-5e19-ad19-a078f24fe97c",
+          "layer": "NORMALIZED",
+          "mapping_status": "mapped",
+          "metric": "source:Deposits",
+          "metric_id": "deposits",
+          "original_label": "Deposits",
+          "original_unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "original_value": "\n                \n                  266,230\n                \n              ",
+          "period": {
+            "date_resolution": "exact",
+            "derivation_inputs": [],
+            "derivation_rule": null,
+            "end_date": "2024-03-31",
+            "fiscal_label": "Mar 2024",
+            "fiscal_quarter": null,
+            "fiscal_year": null,
+            "frequency": "point_in_time",
+            "kind": "instant",
+            "original_date_key": "2024-03-31",
+            "start_date": null
+          },
+          "provenance": {
+            "normalizer_version": "1",
+            "raw_artifact_id": "f1e5d398-c56c-463e-82ad-6b7a2ead9e9e",
+            "source_location": {
+              "locator": "#balance-sheet/div[2]/table[1]/tbody[1]/tr[3]/td[11]",
+              "section": "BALANCE_SHEET"
+            }
+          },
+          "publication_at": null,
+          "reporting_scope": "consolidated",
+          "series_key": "2e307908-7aa6-4b75-a81a-587221f2d48b:BALANCE_SHEET:consolidated:Deposits:Mar 2024",
+          "source_revision": null,
+          "unit": {
+            "currency": "INR",
+            "kind": "money",
+            "scale": "10000000"
+          },
+          "value": "266230",
+          "value_status": "available"
+        }
+      ],
+      "issues": [
+        "PINNED_EXTRACTION_NOT_A_LATEST_OR_HISTORICAL_AVAILABILITY_ASSERTION"
+      ],
+      "label": "Growth of source-reported Deposits",
+      "metric_id": "deposit_growth",
+      "period": "2025-03",
+      "reporting_scope": "consolidated",
+      "sector": {
+        "basis": "CALLER_DECLARED",
+        "classification": "BANK",
+        "declaration": "Explicit YESBANK proof classification",
+        "provenance": null
+      },
+      "snapshot_id": "f373714a-07e3-4c9e-83ed-403d32e249dd",
+      "status": "AVAILABLE",
+      "unit": "PERCENT",
+      "value": "6.8324381174172707809037298576418885925703339217969"
+    }
+  ],
+  "schema_version": "4.1",
+  "source_payload_sha256": "292b663718799fcc144006b941113fac7fa5742089e11b532e14b1e3d85be259"
+}

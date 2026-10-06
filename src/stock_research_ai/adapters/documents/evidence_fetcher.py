@@ -9,9 +9,11 @@ cookies are carried between hops. Failures are typed outcomes, never exceptions.
 """
 
 import asyncio
+import hashlib
 import ipaddress
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
@@ -193,3 +195,20 @@ class RawArtifactEvidenceWriter:
             sha256=artifact.content_sha256,
             size_bytes=artifact.size_bytes,
         )
+
+
+class RawArtifactEvidenceReader:
+    """Reads content-addressed bytes back, refusing paths outside the store and any
+    bytes whose size or SHA-256 differ from the retrieval record."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    async def read(self, reference: str, sha256: str, size_bytes: int) -> bytes:
+        path = (self._root / reference).resolve()
+        if not path.is_relative_to(self._root):
+            raise ValueError("ARTIFACT_PATH_ESCAPE")
+        content = path.read_bytes()
+        if len(content) != size_bytes or hashlib.sha256(content).hexdigest() != sha256:
+            raise ValueError("ARTIFACT_INTEGRITY_FAILED")
+        return content

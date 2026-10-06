@@ -13,8 +13,9 @@ sightings kept in `discovered_from`). Documents at different URLs are never merg
 title similarity; once retrieved, identical content hashes are LINKED via
 `duplicate_of` (highest authority is canonical) rather than merged, so IDs stay stable.
 
-Ordering: newest published_date first (undated last), then source authority, then
-document type (enum order), then document_id.
+Ordering: newest published_date first (undated last; among undated documents an explicit
+period label such as '2026' or 'Jun 2026' sorts newest first), then source authority,
+then document type (enum order), then document_id.
 """
 
 import json
@@ -249,11 +250,35 @@ def _link_content_duplicates(documents: list[ResearchDocument]) -> list[Research
     ]
 
 
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1
+    )
+}
+
+
+def _period_rank(label: str | None) -> int:
+    """Sort-only rank from an explicit period label ('2026' or 'Jun 2026'); 0 if neither.
+
+    Never stored and never turned into a date - it only keeps undated documents of the
+    same kind newest-first instead of in identifier order.
+    """
+    if not label:
+        return 0
+    match = re.fullmatch(r"(?:([A-Za-z]{3})[a-z]* )?(\d{4})", label.strip())
+    if not match:
+        return 0
+    month = _MONTHS.get((match.group(1) or "").lower(), 13 if match.group(1) is None else 0)
+    return int(match.group(2)) * 100 + month
+
+
 def _order_key(document: ResearchDocument) -> tuple[object, ...]:
     dated = document.published_date
     return (
         dated is None,
         -dated.toordinal() if dated else 0,
+        -_period_rank(document.period_label) if dated is None else 0,
         AUTHORITY_RANK[document.source_authority],
         _TYPE_ORDER[document.document_type],
         str(document.document_id),

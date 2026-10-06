@@ -407,3 +407,30 @@ def test_catalogue_scales_to_hundreds_of_documents():
     result = catalogue(*items)
     assert len(result.documents) == 600
     assert isinstance(result.documents[0].document_id, UUID)
+
+
+def test_undated_documents_sort_newest_first_by_explicit_period_label():
+    """Box 3 found Box 2 picking an arbitrary annual report: undated documents used to
+    fall back to identifier order. The period label is used for ordering only."""
+    years = [
+        candidate(f"https://www.example.com/ar-{y}.pdf", period=str(y), locator=str(y))
+        for y in (2023, 2026, 2019, 2024)
+    ]
+    quarters = [
+        candidate(
+            f"https://www.example.com/q-{m}.pdf", T.QUARTERLY_RESULT, period=f"{m} 2026", locator=m
+        )
+        for m in ("Mar", "Jun", "Dec")
+    ]
+    odd = candidate("https://www.example.com/x.pdf", period="FY26 interim", locator="x")
+    docs = catalogue(*years, *quarters, odd).documents
+    annual = [d.period_label for d in docs if d.document_type is T.ANNUAL_REPORT]
+    assert annual[:4] == ["2026", "2024", "2023", "2019"]
+    assert annual[-1] == "FY26 interim"  # unparseable labels keep their old position
+    # Months order within a year: Dec > Jun > Mar.
+    assert [d.period_label for d in docs if d.document_type is T.QUARTERLY_RESULT] == [
+        "Dec 2026",
+        "Jun 2026",
+        "Mar 2026",
+    ]
+    assert all(d.published_date is None for d in docs)  # nothing was turned into a date

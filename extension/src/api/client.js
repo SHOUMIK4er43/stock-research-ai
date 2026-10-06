@@ -22,7 +22,7 @@
 /** Closed ArtifactKind enum (Part 6B-A) - the client only ever sends one of these three
  * exact values, never a path or filename, so there is no way to request an arbitrary
  * file from the local service. */
-export const ARTIFACT_KINDS = Object.freeze(["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON"]);
+export const ARTIFACT_KINDS = Object.freeze(["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON", "REPORT_PDF"]);
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1"]);
 
@@ -167,8 +167,8 @@ export class ApiClient {
    * Bearer token exactly like every other authenticated call.
    * @param {string} token
    * @param {string} reportId
-   * @param {"INSTITUTIONAL_REPORT"|"INVESTOR_BRIEF"|"RESEARCH_JSON"} artifactKind
-   * @returns {Promise<{text: string, contentType: string}>}
+   * @param {"INSTITUTIONAL_REPORT"|"INVESTOR_BRIEF"|"RESEARCH_JSON"|"REPORT_PDF"} artifactKind
+   * @returns {Promise<{text: string, blob?: Blob, contentType: string}>}
    */
   async getArtifact(token, reportId, artifactKind) {
     if (!ARTIFACT_KINDS.includes(artifactKind)) {
@@ -197,8 +197,13 @@ export class ApiClient {
       const { code, message } = normalizeDetail(payload && payload.detail);
       throw new ApiError(code, message, response.status);
     }
-    const text = await response.text();
     const contentType = (response.headers && response.headers.get && response.headers.get("content-type")) || "";
+    if (artifactKind === "REPORT_PDF") {
+      // Binary: decoding as text would corrupt the PDF bytes.
+      const blob = new Blob([await response.arrayBuffer()], { type: "application/pdf" });
+      return { text: "", blob, contentType };
+    }
+    const text = await response.text();
     return { text, contentType };
   }
 }

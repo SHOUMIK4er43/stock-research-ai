@@ -61,6 +61,10 @@ def offline_network(monkeypatch: pytest.MonkeyPatch) -> None:
     original_connect = socket.socket.connect
 
     def connect(sock: socket.socket, address: object) -> object:
+        host = address[0] if isinstance(address, tuple) else None
+        if host in {"127.0.0.1", "::1"}:
+            # Loopback only: asyncio's Windows event loop builds its self-pipe this way.
+            return original_connect(sock, address)
         if sock.family in {socket.AF_INET, socket.AF_INET6}:
             return blocked()
         return original_connect(sock, address)

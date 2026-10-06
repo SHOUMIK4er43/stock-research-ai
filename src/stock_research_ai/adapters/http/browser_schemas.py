@@ -13,7 +13,7 @@ from stock_research_ai.domain.report import ResearchReportSnapshot
 
 Portal = Literal["SCREENER"]
 ResearchPlan = Literal["FULL_RESEARCH_V1"]
-ArtifactKind = Literal["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON"]
+ArtifactKind = Literal["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON", "REPORT_PDF"]
 
 API_VERSION = "v1"
 _REPORT_SCHEMA_VERSION: str = ResearchReportSnapshot.model_fields["schema_version"].default

@@ -166,8 +166,8 @@ function textResponse(status, { text = "", contentType = "text/markdown; charset
   };
 }
 
-test("ARTIFACT_KINDS is exactly the closed 3-value backend enum", () => {
-  assert.deepEqual([...ARTIFACT_KINDS].sort(), ["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON"].sort());
+test("ARTIFACT_KINDS is exactly the closed 4-value backend enum", () => {
+  assert.deepEqual([...ARTIFACT_KINDS].sort(), ["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON", "REPORT_PDF"].sort());
 });
 
 test("getArtifact calls exactly GET /v1/reports/{id}/artifacts/{kind} with Bearer auth", async () => {

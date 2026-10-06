@@ -1,0 +1,14 @@
+{
+  "evidence_kind": "SYNTHETIC",
+  "notice": "Hand-authored artificial test truth, not actual historical prices or provider tokens.",
+  "instruments": {
+    "YESBANK": {"kind": "EQUITY", "token": "900001", "unit": "PRICE"},
+    "INFY": {"kind": "EQUITY", "token": "900002", "unit": "PRICE"},
+    "NIFTY 50": {"kind": "INDEX", "token": "900003", "unit": "INDEX_POINTS"},
+    "NIFTY BANK": {"kind": "INDEX", "token": "900004", "unit": "INDEX_POINTS"}
+  },
+  "prices": [
+    {"date": "2025-01-02", "open": "10.10", "high": "12.30", "low": "9.90", "close": "11.20", "volume": "12345"},
+    {"date": "2025-01-03", "open": "11.20", "high": "11.20", "low": "10.00", "close": "10.10", "volume": "0"}
+  ]
+}

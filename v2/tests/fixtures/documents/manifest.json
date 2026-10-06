@@ -1,0 +1,24 @@
+[
+  {
+    "file": "yesbank_presentation.pdf",
+    "type": "investor_presentation",
+    "url": "https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/19072025/188b8c46-9a03-4edb-921c-af9cadb1cd84.pdf",
+    "final_url": "https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/19072025/188b8c46-9a03-4edb-921c-af9cadb1cd84.pdf",
+    "retrieved_at": "2026-09-08T04:47:20.606538+00:00",
+    "sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2",
+    "bytes": 3241186,
+    "kind": "public_company_document_mirror",
+    "sanitization": "None: exact original downloaded bytes; public company filings, no authentication."
+  },
+  {
+    "file": "yesbank_transcript.pdf",
+    "type": "concall_transcript",
+    "url": "https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/22012026/847c7cb1-c4cd-436f-aeae-37a72c9bacb1.pdf",
+    "final_url": "https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/22012026/847c7cb1-c4cd-436f-aeae-37a72c9bacb1.pdf",
+    "retrieved_at": "2026-09-08T04:47:20.407731+00:00",
+    "sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c",
+    "bytes": 414761,
+    "kind": "public_company_document_mirror",
+    "sanitization": "None: exact original downloaded bytes; public company filings, no authentication."
+  }
+]

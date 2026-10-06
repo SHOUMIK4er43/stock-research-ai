@@ -1,0 +1,30 @@
+.venv/
+.env
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.sqlite-wal
+*.sqlite3-wal
+*.sqlite-shm
+*.sqlite3-shm
+dist/
+build/
+*.egg-info/
+
+# Part 6C-B: generated release bundles (scripts/build-release.sh output) - source
+# scripts/templates/docs that produce these stay tracked; the generated output does not.
+/release/
+
+# Local evidence and extraction packages (test fixtures remain tracked).
+/.local/
+/artifacts/
+/output/
+
+.env.save

@@ -1,0 +1,13 @@
+{
+  "YESBANK": {
+    "PRICE_RETURN":{"value":"20","display":"20.00","comparison":"EXACT"},
+    "PRICE_CAGR":{"value":"9.54451150103322269139395656016042679054893899959665084537888994649865542454454","display":"9.54","comparison":"ABSOLUTE_TOLERANCE","tolerance":"1e-40","reason":"Irrational square root; production ln/exp and independent Newton evaluation have finite precision."},
+    "MAX_DRAWDOWN":{"value":"25","display":"25.00","comparison":"EXACT","peak_date":"2025-01-03","peak_value":"120","trough_date":"2025-01-06","trough_value":"90","recovery_date":"2025-01-07","recovery_value":"120"},
+    "REALIZED_VOLATILITY":{"value":"171.21341970686555458002717309205163359201585598647462204757369736756136465022386","display":"171.21","comparison":"ABSOLUTE_TOLERANCE","tolerance":"1e-40","reason":"Irrational sqrt(1670900/57); independent integer-ratio/Newton proof versus finite Decimal sqrt."},
+    "SMA":{"value":"117.5","display":"117.50","comparison":"EXACT"}
+  },
+  "INFY":{"PRICE_RETURN":{"value":"38","display":"38.00","comparison":"EXACT"},"SMA":{"value":"59.5","display":"59.50","comparison":"EXACT"}},
+  "NIFTY 50":{"company_return":"20","benchmark_return":"10","relative_return":"10"},
+  "NIFTY BANK":{"company_return":"20","benchmark_return":"5","relative_return":"15"},
+  "special":{"constant_drawdown":"0","constant_volatility":"0","rising_drawdown":"0","falling_drawdown":"30"}
+}

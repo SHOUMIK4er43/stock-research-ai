@@ -1,0 +1,12 @@
+{
+ "INFY": {
+  "CFO_TO_NET_PROFIT": {"period":"2025-03", "cash_operating":["29409"],"net_profit":["25568"]},
+  "PROFIT_VS_CFO_DIVERGENCE": {"period":"2023-03","net_profit":["23268","21235"],"cash_operating":["19169","22096"]},
+  "REPEATED_NEGATIVE_CFO": {"period":"2025-03","cash_operating":["19169","20787","29409"]},
+  "OPERATING_MARGIN_DETERIORATION": {"period":"2025-03","operating_profit":["33499","31757"],"sales":["136592","128933"]}
+ },
+ "YESBANK": {
+  "DEPOSIT_CONTRACTION": {"period":"2025-03","deposits":["284420","266230"]},
+  "DEPOSIT_GROWTH_DECELERATION": {"period":"2025-03","deposits":["284420","266230","217382"]}
+ }
+}

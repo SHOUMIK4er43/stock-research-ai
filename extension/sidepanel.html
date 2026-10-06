@@ -58,6 +58,16 @@
           </button>
         </div>
         <p id="analyst-warning" class="warning-text" hidden></p>
+        <div class="button-row">
+          <button id="generate-summary-button" type="button">Generate Summary</button>
+        </div>
+        <div id="summary-view" aria-live="polite">
+          <p id="summary-loading" class="muted" hidden>
+            Generating summary… this usually takes 10–30 seconds.
+          </p>
+          <p id="summary-error" class="error-text" role="alert" hidden></p>
+          <div id="summary-result" hidden></div>
+        </div>
       </section>
 
       <section id="panel-running" class="panel" hidden aria-live="polite">

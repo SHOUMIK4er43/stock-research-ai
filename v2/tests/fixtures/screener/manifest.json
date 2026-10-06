@@ -1,0 +1,37 @@
+{
+  "fixtures": [
+    {
+      "file": "yesbank_consolidated.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/YESBANK/consolidated/",
+      "retrieved_at": "2026-09-07T11:21:13.999678+00:00",
+      "headers": {
+        "date": "Mon, 07 Sep 2026 11:21:13 GMT",
+        "content-type": "text/html; charset=utf-8",
+        "content-encoding": "gzip"
+      },
+      "capture_sha256": "35aef8c3577262baa3a74b23017ed3e451b9a1db70d4a0a4700819dc545203a4",
+      "sha256": "3e7818ae35a5e72dec57c9f72e6d58724ce9a4204846df23bcb89242dbf73ffb",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    },
+    {
+      "file": "infy_standalone.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/INFY/",
+      "retrieved_at": "2026-09-07T11:21:14.076044+00:00",
+      "headers": {
+        "date": "Mon, 07 Sep 2026 11:21:14 GMT",
+        "content-type": "text/html; charset=utf-8",
+        "content-encoding": "gzip"
+      },
+      "capture_sha256": "6f9c0b54d6c6821671fb0f05bebd99a9ea10e8db0153add980b425c172bd92a5",
+      "sha256": "d5d98e1b7e9360d48d63320c3f106ae027027745651c22dcc18d5f7b0a0031bf",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    },
+    {
+      "file": "peers_fragment.html",
+      "kind": "synthetic_structural_fixture",
+      "sha256": "90826714003b91efa4684ec4cd53c2f9e2d33de583d4ad52c3b803c622d71298"
+    }
+  ]
+}

@@ -472,3 +472,24 @@ details summary {
   background: var(--surface);
   font-size: 11.5px;
 }
+
+/* SUMMARY_V1 (Box 4): one plain-text summary rendered via textContent only. */
+#summary-view {
+  margin-top: 12px;
+}
+
+.summary-report .summary-company {
+  margin: 0 0 4px;
+  font-size: 1.1em;
+}
+
+.summary-report .summary-text h3 {
+  margin: 14px 0 4px;
+  font-size: 1em;
+}
+
+.summary-report .summary-text p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}

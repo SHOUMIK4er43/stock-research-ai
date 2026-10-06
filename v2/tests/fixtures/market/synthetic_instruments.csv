@@ -1,0 +1,5 @@
+instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
+900001,800001,YESBANK,SYNTHETIC YESBANK,0,,,0.05,1,EQ,NSE,NSE
+900002,800002,INFY,SYNTHETIC INFY,0,,,0.05,1,EQ,NSE,NSE
+900003,800003,NIFTY 50,SYNTHETIC NIFTY 50,0,,,0.05,1,EQ,INDICES,NSE
+900004,800004,NIFTY BANK,SYNTHETIC NIFTY BANK,0,,,0.05,1,EQ,INDICES,NSE

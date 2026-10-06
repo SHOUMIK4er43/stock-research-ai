@@ -1,0 +1,32 @@
+{
+  "yesbank_presentation.pdf": {
+    "type": "investor_presentation",
+    "title": "YES BANK Q1FY26 investor presentation and filing",
+    "page_count": 62,
+    "sha256": "8c2dd559b17b72475bf31f978a3562431e2128697d838f7f8974a597ed514fa2",
+    "url": "https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/19072025/188b8c46-9a03-4edb-921c-af9cadb1cd84.pdf",
+    "coverage": "COMPLETE",
+    "pages": [
+      {"number": 1, "phrases": ["NSE Symbol: YESBANK", "BSE Scrip Code: 532648"]},
+      {"number": 3, "phrases": ["Financial Highlights", "INR 2,371"]},
+      {"number": 6, "phrases": ["INVESTOR PRESENTATION", "July 19, 2025"]},
+      {"number": 62, "phrases": ["Thank You"]}
+    ],
+    "section": {"page": 3, "label": "FINANCIAL_HIGHLIGHTS", "heading": "Financial Highlights"},
+    "query": "Financial Highlights"
+  },
+  "yesbank_transcript.pdf": {
+    "type": "concall_transcript",
+    "title": "YES BANK Q3 FY26 earnings call transcript and filing",
+    "page_count": 16,
+    "sha256": "b65c2d5a40c8d6e04043bf4f3c242c7871d1916d289b072a71cf7199ea89103c",
+    "url": "https://bsmedia.business-standard.com/_media/bs/data/announcements/bse/22012026/847c7cb1-c4cd-436f-aeae-37a72c9bacb1.pdf",
+    "coverage": "COMPLETE",
+    "pages": [
+      {"number": 2, "phrases": ["January 17, 2026", "Page 1 of 15"]},
+      {"number": 3, "phrases": ["INR 952 crores", "Page 2 of 15"]},
+      {"number": 16, "phrases": ["This brings the conference call to an end.", "Page 15 of 15"]}
+    ],
+    "query": "INR 952 crores"
+  }
+}

@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from stock_research_ai.adapters.http.browser_schemas import ArtifactKind
+from stock_research_ai.adapters.http.pdf_render import render_pdf
 from stock_research_ai.adapters.json_export import export_report
 from stock_research_ai.adapters.markdown_export import (
     render_institutional_report,
@@ -22,21 +23,25 @@ _MEDIA_TYPES: dict[ArtifactKind, str] = {
     "INSTITUTIONAL_REPORT": "text/markdown; charset=utf-8",
     "INVESTOR_BRIEF": "text/markdown; charset=utf-8",
     "RESEARCH_JSON": "application/json",
+    "REPORT_PDF": "application/pdf",
 }
 
 
-def media_type_for(artifact_kind: ArtifactKind) -> str:
+def media_type_for(artifact_kind: ArtifactKind) -> str | bytes:
     return _MEDIA_TYPES[artifact_kind]
 
 
-def render_artifact(snapshot: ResearchReportSnapshot, artifact_kind: ArtifactKind) -> str:
-    """Returns the artifact's exact rendered content as text. Never accepts or produces
-    a filesystem path from/for the caller - the HTTP layer serves this returned text
-    directly, keyed only by the already-resolved snapshot and a closed artifact_kind."""
+def render_artifact(snapshot: ResearchReportSnapshot, artifact_kind: ArtifactKind) -> str | bytes:
+    """Returns the artifact's exact rendered content (text; bytes for REPORT_PDF).
+    Never accepts or produces a filesystem path from/for the caller - the HTTP layer serves
+    this returned content directly, keyed only by the already-resolved snapshot and a closed
+    artifact_kind."""
     if artifact_kind == "INSTITUTIONAL_REPORT":
         return render_institutional_report(snapshot)
     if artifact_kind == "INVESTOR_BRIEF":
         return render_investor_brief(snapshot)
+    if artifact_kind == "REPORT_PDF":
+        return render_pdf(render_institutional_report(snapshot))
     if artifact_kind == "RESEARCH_JSON":
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "export"

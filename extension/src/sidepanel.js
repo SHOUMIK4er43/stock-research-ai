@@ -107,6 +107,7 @@ const els = {
   artifactError: document.getElementById("artifact-error"),
   artifactInstitutionalReport: document.getElementById("artifact-institutional-report"),
   artifactInvestorBrief: document.getElementById("artifact-investor-brief"),
+  artifactReportPdf: document.getElementById("artifact-report-pdf"),
   artifactResearchJson: document.getElementById("artifact-research-json"),
   generateSummaryButton: document.getElementById("generate-summary-button"),
   summaryLoading: document.getElementById("summary-loading"),
@@ -645,6 +646,7 @@ const ARTIFACT_FILE_INFO = Object.freeze({
   INSTITUTIONAL_REPORT: { suffix: "institutional_report", ext: "md" },
   INVESTOR_BRIEF: { suffix: "investor_brief", ext: "md" },
   RESEARCH_JSON: { suffix: "research", ext: "json" },
+  REPORT_PDF: { suffix: "report", ext: "pdf" },
 });
 
 async function downloadArtifact(artifactKind) {
@@ -654,10 +656,10 @@ async function downloadArtifact(artifactKind) {
   const client = new ApiClient(baseUrl);
   const token = await storage.getToken();
   try {
-    const { text, contentType } = await client.getArtifact(token, viewingReportId, artifactKind);
+    const { text, blob: body, contentType } = await client.getArtifact(token, viewingReportId, artifactKind);
     const info = ARTIFACT_FILE_INFO[artifactKind];
     const filename = `${sanitizeFilenamePart(viewingReportId)}_${info.suffix}.${info.ext}`;
-    const blob = new Blob([text], { type: contentType || "text/plain" });
+    const blob = body || new Blob([text], { type: contentType || "text/plain" });
     const url = URL.createObjectURL(blob);
     try {
       const link = document.createElement("a");
@@ -705,6 +707,7 @@ els.reportLoadFailedRetry.addEventListener("click", () => {
 });
 els.artifactInstitutionalReport.addEventListener("click", () => downloadArtifact("INSTITUTIONAL_REPORT"));
 els.artifactInvestorBrief.addEventListener("click", () => downloadArtifact("INVESTOR_BRIEF"));
+els.artifactReportPdf.addEventListener("click", () => downloadArtifact("REPORT_PDF"));
 els.artifactResearchJson.addEventListener("click", () => downloadArtifact("RESEARCH_JSON"));
 
 window.addEventListener("pagehide", stopPolling);

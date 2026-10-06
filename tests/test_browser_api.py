@@ -374,6 +374,7 @@ async def test_report_and_all_three_artifacts_are_retrievable(paired):
         ("INSTITUTIONAL_REPORT", "text/markdown"),
         ("INVESTOR_BRIEF", "text/markdown"),
         ("RESEARCH_JSON", "application/json"),
+        ("REPORT_PDF", "application/pdf"),
     ):
         artifact = await client.get(
             f"/v1/reports/{report_id}/artifacts/{kind}", headers=_auth(token)

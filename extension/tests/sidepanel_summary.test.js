@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createMemoryBackend } from "../src/storage.js";
 import { createFakeDocument } from "./fixtures/fake_dom.js";
 
@@ -293,7 +294,7 @@ test("no company-specific logic exists anywhere in the extension source", () => 
   }
 });
 
-function sourceFiles(dir = new URL("../src/", import.meta.url).pathname) {
+function sourceFiles(dir = fileURLToPath(new URL("../src/", import.meta.url))) {
   return readdirSync(dir).flatMap(name => {
     const path = join(dir, name);
     return statSync(path).isDirectory() ? sourceFiles(path) : path.endsWith(".js") ? [path] : [];

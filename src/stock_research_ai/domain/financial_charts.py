@@ -60,6 +60,10 @@ class ChartCategory(StrEnum):
     FORENSIC_MODELS = "FORENSIC_MODELS"
     SIGNALS = "SIGNALS"
     BANKING = "BANKING"
+    # additive: Box 7 segments/1 charts (no Box 4/5 chart uses these)
+    SEGMENTS = "SEGMENTS"
+    GEOGRAPHY = "GEOGRAPHY"
+    OPERATING_KPIS = "OPERATING_KPIS"
 
 
 class AxisKind(StrEnum):
@@ -82,6 +86,7 @@ class ChartStatus(StrEnum):
 class SourceLayer(StrEnum):
     BOX4 = "BOX4"
     BOX5 = "BOX5"
+    BOX7 = "BOX7"  # additive: business intelligence (segments/1 charts)
 
 
 class PointSourceKind(StrEnum):
@@ -92,6 +97,10 @@ class PointSourceKind(StrEnum):
     TREND = "TREND"  # Box 5
     HEALTH_SIGNAL = "HEALTH_SIGNAL"  # Box 5
     ANOMALY = "ANOMALY"  # Box 5
+    SEGMENT_VALUE = "SEGMENT_VALUE"  # Box 7 canonical segment value
+    GEOGRAPHY_VALUE = "GEOGRAPHY_VALUE"  # Box 7 canonical geography value
+    KPI_VALUE = "KPI_VALUE"  # Box 7 canonical operating KPI value
+    SEGMENT_ANALYTIC = "SEGMENT_ANALYTIC"  # Box 7 segment / geography / KPI analytic
 
 
 class SeriesEncoding(StrEnum):

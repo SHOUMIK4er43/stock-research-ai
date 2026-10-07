@@ -35,6 +35,7 @@ from stock_research_ai.application.management_intelligence import (
     canonical_management_json,
     verify_management_provenance,
 )
+from stock_research_ai.application.management_outcomes import Actual, OutcomeEngine
 from stock_research_ai.application.management_registry import (
     CERTAINTY,
     HEDGING,
@@ -477,9 +478,9 @@ async def test_currency_isolation(calls):
     assert (o.result, o.rule) == (R.NOT_COMPARABLE, "CURRENCY_MISMATCH")
 
 
-async def test_partial_and_basis_mismatch(tmp_path):
-    """Growth below the range but positive -> PARTIAL; L standalone guidance vs only
-    consolidated actuals -> NOT_COMPARABLE."""
+async def test_below_range_growth_misses_and_basis_mismatch(tmp_path):
+    """Positive growth below the guided range is MISSED (never 'partial'); L standalone
+    guidance vs only consolidated actuals -> NOT_COMPARABLE."""
     doc = call(
         "Q4 FY25 Earnings Conference Call",
         "April 17, 2025",
@@ -493,9 +494,11 @@ async def test_partial_and_basis_mismatch(tmp_path):
     )
     data, _b, _c = await run(tmp_path, {"/call.pdf": doc})
     assert data.events[0].basis_method == "BOTH_BASES_MENTIONED"
-    partial = outcome(data, guidance(data, "revenue growth of 8% to 10% in reported terms"))
-    assert (partial.result, partial.rule) == (R.PARTIAL, "RANGE/POSITIVE_GROWTH_BELOW_RANGE")
-    assert partial.warnings == ("BASIS_FROM_ONLY_AVAILABLE_ACTUAL",)
+    below = outcome(data, guidance(data, "revenue growth of 8% to 10% in reported terms"))
+    assert (below.result, below.rule) == (R.MISSED, "RANGE")  # actual 7.142857 > 0 but < 8
+    assert below.actual is not None and below.actual.value == Decimal("7.142857")
+    assert below.warnings == ("BASIS_FROM_ONLY_AVAILABLE_ACTUAL",)
+    assert not [o for o in data.outcomes if o.result == R.PARTIAL]
     standalone = guidance(data, "On a standalone basis")
     assert (standalone.reporting_basis, standalone.basis_method) == (
         ReportingBasis.STANDALONE,
@@ -1064,3 +1067,155 @@ def test_period_labels_are_never_read_as_values():
     assert (t.target_type, t.low, t.high) == (TargetType.RANGE, Decimal(21), Decimal(23))
     (q,) = numeric_targets("margin in Q1 at 20.5%")
     assert q.value == Decimal("20.5")
+
+
+# --- range outcome rules (guidance-outcome-rules/1), evaluated through the full rule chain ------
+
+
+def _range_item(
+    subject: str,
+    target: str,
+    low: str,
+    high: str,
+    *,
+    basis: ReportingBasis = ReportingBasis.CONSOLIDATED,
+    unit: GuidanceUnit = GuidanceUnit.PERCENT,
+    equivalence: Equivalence = Equivalence.EXACT,
+    currency: Currency | None = None,
+) -> domain.GuidanceItem:
+    period = domain.ReportingPeriod(
+        period_type=PeriodType.FY,
+        fiscal_year=2026,
+        period_end=FY26,
+        raw_text="FY26",
+        method="EXPLICIT_LABEL",
+    )
+    return domain.GuidanceItem(
+        guidance_id=UUID(int=10),
+        statement_ids=(UUID(int=11),),
+        event_id=UUID(int=12),
+        issued_date=date(2025, 4, 17),
+        issued_period=None,
+        subject=domain.SubjectLink(
+            subject_code=subject,
+            layer=SubjectLayer.BOX5_METRIC,
+            target_code=target,
+            equivalence=equivalence,
+            reason="test",
+        ),
+        measure=domain.Measure.RATIO,
+        qualifier=None,
+        target_type=TargetType.RANGE,
+        low=Decimal(low),
+        high=Decimal(high),
+        direction=domain.Direction.UNKNOWN,
+        unit=unit,
+        currency=currency,
+        scale_to_crore=Decimal(1) if unit == GuidanceUnit.MONEY else None,
+        target_period=period,
+        reporting_basis=basis,
+        basis_method="STATEMENT_TEXT",
+        raw_target_text=f"{low}% to {high}%",
+        stated_change=StatedChange.NONE,
+        lifecycle=Lifecycle.ISSUED,
+        confidence=domain.Confidence.HIGH,
+    )
+
+
+def _evaluate(
+    item: domain.GuidanceItem,
+    value: str,
+    *,
+    unit: str = "PERCENT",
+    period_type: PeriodType = PeriodType.FY,
+    currency: Currency | None = None,
+) -> GuidanceOutcome:
+    actual = Actual(
+        layer=SubjectLayer.BOX5_METRIC,
+        record_id=UUID(int=20),
+        code=str(item.subject.target_code),
+        value=Decimal(value),
+        unit=unit,
+        period_type=period_type,
+        period_end=FY26,
+        basis=ReportingBasis.CONSOLIDATED,
+        currency=currency,
+        upstream=(UUID(int=21),),
+    )
+    engine = OutcomeEngine({(actual.layer, actual.code): [actual]}, None, {})
+    return engine.evaluate(item)
+
+
+GROWTH = ("REVENUE_GROWTH", "REVENUE_GROWTH_YOY")
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        ("9", R.MET),  # A: inside 8-10 %
+        ("8", R.MET),  # bounds are inside
+        ("10", R.MET),
+        ("11", R.BEAT),  # B: above, higher is better
+        ("6", R.MISSED),  # C: positive growth below the range is MISSED, never PARTIAL
+        ("-2", R.MISSED),
+    ],
+)
+def test_range_rule_higher_is_better(actual, expected):
+    o = _evaluate(_range_item(*GROWTH, "8", "10"), actual)
+    assert (o.result, o.rule) == (expected, "RANGE")
+    assert o.actual is not None and o.actual.value == Decimal(actual)
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [("2.5", R.MET), ("1.5", R.BEAT), ("3.5", R.MISSED)],
+)
+def test_range_rule_lower_is_better_is_inverse(actual, expected):
+    """E: gross NPA is explicitly registered lower-is-better."""
+    o = _evaluate(_range_item("GROSS_NPA", "GROSS_NPA_RATIO", "2", "3"), actual)
+    assert (o.result, o.rule) == (expected, "RANGE")
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"), [("29.5", R.MET), ("26", R.AMBIGUOUS), ("33", R.AMBIGUOUS)]
+)
+def test_range_rule_without_registered_direction_is_ambiguous(actual, expected):
+    """D: tax rate has no registered better side: outside the range is never BEAT / MISSED."""
+    o = _evaluate(_range_item("TAX_RATE", "TAX_RATE", "29", "30"), actual)
+    assert o.result == expected
+    if expected == R.AMBIGUOUS:
+        assert o.rule == "RANGE/DIRECTIONALITY_UNREGISTERED"
+
+
+def test_unregistered_subject_never_gets_an_inferred_direction():
+    o = _evaluate(_range_item("UNREGISTERED_SUBJECT", "REVENUE_GROWTH_YOY", "8", "10"), "11")
+    assert o.result == R.AMBIGUOUS
+
+
+def test_mismatches_stop_before_scoring():
+    """F: an actual inside the range is still not scored across basis / period / currency /
+    unit boundaries."""
+    standalone = _range_item(*GROWTH, "8", "10", basis=ReportingBasis.STANDALONE)
+    assert _evaluate(standalone, "9").rule == "BASIS_MISMATCH"
+    quarter = _evaluate(_range_item(*GROWTH, "8", "10"), "9", period_type=PeriodType.QUARTER)
+    assert (quarter.result, quarter.rule) == (R.NOT_COMPARABLE, "PERIOD_MISMATCH")
+    money = _range_item("CAPEX", "CAPEX", "8", "10", unit=GuidanceUnit.MONEY, currency=Currency.USD)
+    usd = _evaluate(money, "9", unit="MONEY", currency=Currency.INR)
+    assert (usd.result, usd.rule) == (R.NOT_COMPARABLE, "CURRENCY_MISMATCH")
+    unit = _evaluate(_range_item(*GROWTH, "8", "10"), "9", unit="MONEY")
+    assert (unit.result, unit.rule) == (R.NOT_COMPARABLE, "UNIT_MISMATCH")
+
+
+def test_proxy_guidance_is_never_scored():
+    """G: even an actual inside the range does not score a PROXY link."""
+    o = _evaluate(_range_item(*GROWTH, "8", "10", equivalence=Equivalence.PROXY), "9")
+    assert (o.result, o.rule, o.actual) == (R.NOT_COMPARABLE, "PROXY_DEFINITION", None)
+
+
+def test_no_positive_growth_partial_rule_remains():
+    root = Path(__file__).resolve().parents[1] / "src" / "stock_research_ai"
+    for path in _box8_modules():
+        text = path.read_text()
+        assert "POSITIVE_GROWTH" not in text, path.name
+        assert "R.PARTIAL," not in text.replace("partial=c[R.PARTIAL]", ""), path.name
+    assert (root / "domain" / "management_intelligence.py").exists()

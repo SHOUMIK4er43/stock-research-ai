@@ -25,9 +25,9 @@ Rules, applied in this order - the first that applies decides:
  12. STRUCTURE_CHANGED      Box 7 segment structure changed between
                             issue and target without restatement      -> NOT_COMPARABLE
  13. compare:
-       RANGE    inside -> MET; beyond the favourable side -> BEAT; beyond the unfavourable
-                side -> MISSED, except growth below the range but still positive -> PARTIAL;
-                directionality not registered -> AMBIGUOUS outside the range
+       RANGE    inside -> MET; beyond the side registered as favourable -> BEAT; beyond the
+                unfavourable side -> MISSED; directionality not explicitly registered ->
+                AMBIGUOUS outside the range (never inferred, never 'partially' met)
        POINT    within half a unit of the printed precision -> MET; otherwise as RANGE
        MINIMUM  actual >= value -> MET, else MISSED;  MAXIMUM  actual <= value -> MET, else MISSED
        DIRECTION growth sign, or the change from the previous period of the same type
@@ -75,6 +75,9 @@ from stock_research_ai.domain.management_intelligence import (
 )
 
 R = OutcomeResult
+#: directionality of subjects outside the management-registry subject table (Box 7 segment
+#: revenue growth); anything not registered here or there has NO directionality
+EXPLICIT_DIRECTIONALITY: dict[str, bool] = {"SEGMENT_REVENUE_GROWTH": True}
 _PERCENT_UNITS = {"PERCENT"}
 _MONEY_UNITS = {"MONEY"}
 
@@ -431,8 +434,11 @@ class OutcomeEngine:
         scale = g.scale_to_crore if g.unit == GuidanceUnit.MONEY else Decimal(1)
         assert scale is not None
         rule_meta = SUBJECT_INDEX.get(g.subject.subject_code)
-        higher = rule_meta.higher_is_better if rule_meta else True
-        growth = g.measure == Measure.GROWTH
+        higher = (
+            rule_meta.higher_is_better
+            if rule_meta
+            else EXPLICIT_DIRECTIONALITY.get(g.subject.subject_code)
+        )
         if g.target_type == TargetType.DIRECTION:
             return self._direction(g, actual, warnings)
         if g.target_type == TargetType.MINIMUM and g.value is not None:
@@ -477,10 +483,6 @@ class OutcomeEngine:
         above = value > high
         if above == higher:
             return self._outcome(g, R.BEAT, rule, reason, actual, warnings)
-        if growth and higher and value > 0:
-            return self._outcome(
-                g, R.PARTIAL, f"{rule}/POSITIVE_GROWTH_BELOW_RANGE", reason, actual, warnings
-            )
         return self._outcome(g, R.MISSED, rule, reason, actual, warnings)
 
     def _direction(self, g: GuidanceItem, actual: Actual, warnings: list[str]) -> GuidanceOutcome:

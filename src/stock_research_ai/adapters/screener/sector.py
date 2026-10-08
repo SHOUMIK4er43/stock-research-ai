@@ -8,7 +8,7 @@ application.sector_resolution can consume it without ever importing adapters.* d
 (the frozen layering rule enforced by tests/test_engine.py's core-import-boundary test).
 """
 
-from stock_research_ai.adapters.screener.html import Page
+from stock_research_ai.adapters.screener.html import HtmlLimitExceeded, Page
 from stock_research_ai.domain.provenance import SourceLocation
 
 _BROAD_INDUSTRY_TITLE = "Broad Industry"
@@ -20,7 +20,7 @@ def extract_broad_industry(content: bytes, encoding: str) -> tuple[str, SourceLo
     page shape without a peers section)."""
     try:
         root = Page(content.decode(encoding, errors="strict")).root
-    except (UnicodeError, LookupError):
+    except (UnicodeError, LookupError, HtmlLimitExceeded):
         return None
     peers = root.by_id("peers")
     if peers is None:

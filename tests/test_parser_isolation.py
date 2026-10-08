@@ -4,8 +4,10 @@ child targets below are deliberately slow, crashing or memory-hungry."""
 
 import asyncio
 import io
+import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from stock_research_ai.adapters.documents.isolation import (
     run_isolated,
 )
 from stock_research_ai.adapters.documents.pdf import PDFNormalizer
+from stock_research_ai.application.cancellation import to_thread_cancellable
 from stock_research_ai.bootstrap import ingest_document
 from stock_research_ai.domain.document_intelligence import ExtractionLimits, ExtractionStatus
 from stock_research_ai.domain.documents import DocumentRequest
@@ -189,31 +192,26 @@ def nested_html(depth: int) -> bytes:
     return b"<html><body>" + b"<div>" * depth + b"x" + b"</div>" * depth + b"</body></html>"
 
 
-def test_deeply_nested_html_fails_typed_inside_the_child():
-    # Deeper than the recursion limit: the tree walk raises inside the child only.
-    document = LocalDocumentParser().parse(nested_html(5_000), D.HTML, LIMITS)
-    assert document.status is ExtractionStatus.FAILED
-    assert [code for code, _, _ in document.warnings] == ["PARSER_ERROR"]
-
-
-@pytest.mark.skipif(MEMORY_ENFORCEMENT == "none", reason="no memory ceiling on this platform")
-def test_memory_pathological_html_hits_the_child_ceiling():
-    # 100k-deep nesting: every node's locator copies its parent's, so the tree needs
-    # O(depth^2) memory (tens of GB). Only the child is stopped, at its 1 GiB ceiling.
-    document = LocalDocumentParser().parse(nested_html(100_000), D.HTML, LIMITS)
+@pytest.mark.parametrize("depth", [5_000, 100_000])
+def test_deeply_nested_html_is_rejected_by_the_structure_bound(depth):
+    # Formerly a RecursionError (5k) or O(depth^2) locator memory (100k) inside the
+    # child; the shared tree now refuses nesting past its depth cap, quickly.
+    started = time.monotonic()
+    document = LocalDocumentParser().parse(nested_html(depth), D.HTML, LIMITS)
+    assert time.monotonic() - started < 10.0
     assert document.status is ExtractionStatus.TOO_LARGE
-    assert [code for code, _, _ in document.warnings] == ["PARSER_MEMORY_LIMIT"]
+    assert [code for code, _, _ in document.warnings] == ["HTML_STRUCTURE_LIMIT_REACHED"]
 
 
-def test_cpu_pathological_html_is_killed_at_the_hard_deadline():
-    # 60k siblings: the tree builder's sibling indexing is quadratic (minutes of CPU).
+def test_many_sibling_html_parses_quickly():
+    # 60k siblings: formerly quadratic sibling indexing (minutes of CPU, killed at the
+    # hard deadline); now linear, well inside the parser's own time limit.
     content = b"<html><body><div>" + b"<span>a</span>" * 60_000 + b"</div></body></html>"
     parser = LocalDocumentParser(grace_seconds=0.0)
     started = time.monotonic()
-    document = parser.parse(content, D.HTML, ExtractionLimits(max_seconds=1.0))
-    assert time.monotonic() - started < 6.0
-    assert document.status is ExtractionStatus.FAILED
-    assert [code for code, _, _ in document.warnings] == ["PARSER_TIMEOUT"]
+    document = parser.parse(content, D.HTML, ExtractionLimits(max_seconds=10.0))
+    assert time.monotonic() - started < 10.0
+    assert document.status is ExtractionStatus.SUCCESS
 
 
 def test_text_stays_in_process(monkeypatch):
@@ -282,3 +280,133 @@ async def test_engine_document_ingestion_does_not_block_the_event_loop(
     assert document.coverage.overall == "COMPLETE"
     gaps = [b - a for a, b in zip(ticks, ticks[1:], strict=False)]
     assert len(ticks) > 50 and max(gaps) < 0.25
+
+
+# --- cancellation (R4) ---------------------------------------------------------------------
+
+
+def alive(process: subprocess.Popen) -> bool:
+    try:
+        os.kill(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+async def test_cancelling_the_caller_kills_and_reaps_the_child(children):
+    ticks: list[float] = []
+
+    async def heartbeat():
+        while True:
+            ticks.append(time.monotonic())
+            await asyncio.sleep(0.01)
+
+    beat = asyncio.create_task(heartbeat())
+    task = asyncio.create_task(
+        to_thread_cancellable(
+            run_isolated, sleep_forever, b"", limits=IsolationLimits(seconds=60.0)
+        )
+    )
+    try:
+        while not children:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.3)
+        assert alive(children[0])
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert time.monotonic() - started < 2.0  # not the 60 s deadline
+    finally:
+        beat.cancel()
+    assert_reaped(children)  # killed and reaped: no process, no zombie
+    gaps = [b - a for a, b in zip(ticks, ticks[1:], strict=False)]
+    assert max(gaps) < 0.25
+
+
+async def test_a_cancelled_scope_starts_no_further_children(children):
+    started_children = []
+
+    def two_parses() -> list:
+        first = run_isolated(sleep_forever, b"", limits=IsolationLimits(seconds=60.0))
+        started_children.append(len(children))
+        second = run_isolated(echo, b"", "x", limits=QUICK)
+        return [first.failure, second.failure]
+
+    task = asyncio.create_task(to_thread_cancellable(two_parses))
+    while not children:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert started_children == [1] and len(children) == 1
+    assert_reaped(children)
+
+
+async def test_cancellable_thread_returns_and_raises_like_to_thread():
+    assert await to_thread_cancellable(lambda a, b=0: a + b, 1, b=2) == 3
+    with pytest.raises(ValueError, match="boom"):
+        await to_thread_cancellable(lambda: (_ for _ in ()).throw(ValueError("boom")))
+    result = await to_thread_cancellable(run_isolated, echo, b"%PDF", "y", limits=QUICK)
+    assert result.failure is None and result.value["label"] == "y"
+
+
+# --- memory-enforcement reporting (R5) -------------------------------------------------------
+
+
+def test_platform_constant_never_claims_a_kernel_limit():
+    assert MEMORY_ENFORCEMENT in {"watchdog", "none"}
+
+
+def test_reported_enforcement_is_what_this_child_actually_had(children):
+    result = run_isolated(echo, b"%PDF", "z", limits=QUICK)
+    expected = "rlimit" if sys.platform.startswith("linux") else MEMORY_ENFORCEMENT
+    assert result.failure is None and result.memory_enforcement == expected
+
+
+def test_rlimit_is_reported_only_when_setrlimit_succeeds(monkeypatch):
+    import resource
+
+    monkeypatch.setattr(isolation.sys, "platform", "linux")
+    calls = []
+    monkeypatch.setattr(resource, "setrlimit", lambda *a: calls.append(a))
+    assert isolation._install_rlimit(123) is True
+    assert calls == [(resource.RLIMIT_AS, (123, 123))]
+
+    def refuse(*args):
+        raise OSError("not permitted")
+
+    monkeypatch.setattr(resource, "setrlimit", refuse)
+    assert isolation._install_rlimit(123) is False
+    monkeypatch.setattr(resource, "setrlimit", lambda *a: (_ for _ in ()).throw(ValueError()))
+    assert isolation._install_rlimit(123) is False
+    monkeypatch.setattr(isolation.sys, "platform", "darwin")
+    assert isolation._install_rlimit(123) is False
+
+
+def _child_reply(monkeypatch, installed: bool) -> bytes:
+    """Run the child entry point in-process with a stubbed rlimit outcome."""
+    header = json.dumps(
+        {
+            "target": f"{echo.__module__}:echo",
+            "args": ["w"],
+            "memory_bytes": 1,
+            "path": list(sys.path),
+        }
+    ).encode()
+    frame = isolation._LENGTH.pack
+    request = frame(len(header)) + header + frame(4) + b"%PDF"
+    stdin, stdout = io.TextIOWrapper(io.BytesIO(request)), io.TextIOWrapper(io.BytesIO())
+    monkeypatch.setattr(isolation.sys, "stdin", stdin)
+    monkeypatch.setattr(isolation.sys, "stdout", stdout)
+    monkeypatch.setattr(isolation.sys, "path", list(sys.path))
+    monkeypatch.setattr(isolation, "_install_rlimit", lambda limit: installed)
+    isolation._child_main()
+    return stdout.buffer.getvalue()
+
+
+def test_child_reports_a_failed_setrlimit(monkeypatch):
+    failed = _child_reply(monkeypatch, installed=False)
+    assert failed.startswith(b"-OK")  # never "R" when the limit was not installed
+    installed = _child_reply(monkeypatch, installed=True)
+    assert installed.startswith(b"ROK")

@@ -3,6 +3,7 @@
 reported; ordinary workbooks are unchanged. Offline, synthetic, in-memory only."""
 
 import io
+import time
 import tracemalloc
 import zipfile
 
@@ -236,5 +237,108 @@ def test_audit_fixture_has_no_memory_amplification():
 @pytest.mark.parametrize("prolog", ["<!DOCTYPE x>", '<!DOCTYPE x [<!ENTITY a "b">]>'])
 def test_streamed_parts_still_reject_dtds(prolog):
     document = parse_spreadsheet(workbook([rows(cell("A1", "x"))], prolog=prolog), LIMITS)
+    assert document.status is ExtractionStatus.MALFORMED
+    assert codes(document) == {"MALFORMED_SPREADSHEET"}
+
+
+# --- P1 re-audit R2: characters are charged before a cell is stored ---------------------
+
+
+def shared_refs(count: int, start: int = 1) -> str:
+    """`count` rows, each one cell referencing shared string 0."""
+    return rows(
+        *(f'<row r="{i}"><c r="A{i}" t="s"><v>0</v></c></row>' for i in range(start, start + count))
+    )
+
+
+BIG = "s" * 1_000  # each reference renders as 1,000 characters plus a newline
+
+
+@pytest.mark.parametrize("references", [1, 5, 10])
+def test_repeated_shared_string_within_budget_is_complete(references):
+    limits = ExtractionLimits(max_characters=10 * 1_001)  # exactly 10 references
+    document = parse_spreadsheet(workbook([shared_refs(references)], shared=[BIG]), limits)
+    assert document.status is ExtractionStatus.SUCCESS and document.warnings == []
+    assert document.pages[0].text == (BIG + "\n") * references
+    assert len(document.pages[0].text) <= limits.max_characters
+
+
+def test_each_reference_is_charged_so_the_next_one_is_cut():
+    limits = ExtractionLimits(max_characters=10 * 1_001)
+    document = parse_spreadsheet(workbook([shared_refs(11)], shared=[BIG]), limits)
+    assert document.status is ExtractionStatus.PARTIAL
+    assert document.warnings == [("CHARACTER_LIMIT_REACHED", 1, None)]
+    assert document.pages == []  # an over-budget sheet is never emitted, as before
+
+
+def test_budget_spans_sheets():
+    limits = ExtractionLimits(max_characters=10 * 1_001)
+    content = workbook([shared_refs(6), shared_refs(5)], shared=[BIG])
+    document = parse_spreadsheet(content, limits)
+    assert [p.number for p in document.pages] == [1]
+    assert document.warnings == [("CHARACTER_LIMIT_REACHED", 2, None)]
+
+
+def test_many_references_to_one_large_string_do_not_amplify_memory():
+    # ~40 KB compressed; previously the grid and joined text reached ~160 MB before the
+    # character check. Now scanning stops at the first reference past the budget.
+    limits = ExtractionLimits(max_characters=100_000)
+    content = workbook([shared_refs(8_000)], shared=["s" * 10_000])
+    tracemalloc.start()
+    try:
+        document = parse_spreadsheet(content, limits)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert document.status is ExtractionStatus.PARTIAL
+    assert ("CHARACTER_LIMIT_REACHED", 1, None) in document.warnings
+    assert peak < 5_000_000
+
+
+def test_inline_and_numeric_values_are_charged_too():
+    limits = ExtractionLimits(max_characters=20)
+    body = rows('<row r="1">' + cell("A1", "abcdefghij") + '<c r="B1"><v>1234567890</v></c></row>')
+    document = parse_spreadsheet(workbook([body]), limits)
+    assert ("CHARACTER_LIMIT_REACHED", 1, None) in document.warnings  # 10+1 + 10+1 > 20
+
+
+# --- P1 re-audit R3: streaming is linear in nesting depth -----------------------------------
+
+
+def test_deep_irrelevant_nesting_streams_linearly():
+    depth = 50_000  # the old per-event stack scan needed tens of seconds here
+    content = workbook(["<x>" * depth + "</x>" * depth + rows(cell("A1", "a"))])
+    started = time.monotonic()
+    document = parse_spreadsheet(content, LIMITS)
+    assert time.monotonic() - started < 5.0
+    assert document.status is ExtractionStatus.SUCCESS
+    assert document.pages[0].text == "a\n"
+    assert parse_spreadsheet(content, LIMITS) == document  # deterministic
+
+
+def test_deep_nesting_inside_a_target_cell_is_kept_with_the_cell():
+    depth = 20_000
+    inner = "<x>" * depth + "<t>deep</t>" + "</x>" * depth
+    target = f'<c r="A1" t="inlineStr"><is>{inner}</is></c>'
+    body = rows(f'<row r="1">{target}{cell("B1", "b")}</row>')
+    started = time.monotonic()
+    document = parse_spreadsheet(workbook([body]), LIMITS)
+    assert time.monotonic() - started < 5.0
+    assert document.pages[0].tables[0].rows == [[("deep", True), ("b", True)]]
+
+
+def test_ordinary_shared_strings_and_nested_targets_stream_as_before():
+    content = workbook(
+        [rows('<row r="1"><c r="A1" t="s"><v>1</v></c><c r="B1" t="s"><v>0</v></c></row>')],
+        shared=["zero", "one"],
+    )
+    document = parse_spreadsheet(content, LIMITS)
+    assert document.status is ExtractionStatus.SUCCESS
+    assert document.pages[0].tables[0].rows == [[("one", True), ("zero", True)]]
+
+
+def test_malformed_sheet_xml_is_still_malformed():
+    content = workbook([rows(cell("A1", "x")) + "<unclosed>"])
+    document = parse_spreadsheet(content, LIMITS)
     assert document.status is ExtractionStatus.MALFORMED
     assert codes(document) == {"MALFORMED_SPREADSHEET"}

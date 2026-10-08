@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.cancellation import to_thread_cancellable
 from stock_research_ai.application.document_structure import (
     STRUCTURE_VERSION,
     DocumentContext,
@@ -138,7 +139,7 @@ async def extract_evidence(
             )
             continue
         try:
-            raw = await asyncio.to_thread(
+            raw = await to_thread_cancellable(
                 parser.parse, content, record.detected_content_type, limits
             )
             extractions.append(await asyncio.to_thread(analyse_document, raw, context, limits))

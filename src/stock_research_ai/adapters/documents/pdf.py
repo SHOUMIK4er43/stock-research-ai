@@ -37,6 +37,7 @@ _ISOLATION_MESSAGES = {
     IsolationFailure.CRASHED: "PDF parser process stopped unexpectedly",
     IsolationFailure.ERROR: "PDF parser failed",
     IsolationFailure.OUTPUT_TOO_LARGE: "PDF text exceeded the extraction output limit",
+    IsolationFailure.CANCELLED: "PDF parsing was cancelled",
 }
 
 

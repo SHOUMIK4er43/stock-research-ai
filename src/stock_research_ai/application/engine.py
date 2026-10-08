@@ -15,6 +15,7 @@ from stock_research_ai.application import technicals, valuation
 from stock_research_ai.application.analysis_validation import validate_response
 from stock_research_ai.application.analyst_model_input import build_model_input
 from stock_research_ai.application.calculations import calculate
+from stock_research_ai.application.cancellation import to_thread_cancellable
 from stock_research_ai.application.challenge_validation import validate_challenger_response
 from stock_research_ai.application.hashing import digest
 from stock_research_ai.application.market_calculations import calculate_market
@@ -607,13 +608,17 @@ class ResearchEngine:
         # Normalize only the verified bytes read back from durable raw storage.
         content = await services.artifacts.read(artifact) if artifact is not None else None
         company_id = uuid4()
+        # HTML tree building and normalization are bounded (linear, capped tree) but still
+        # CPU work on network bytes: run them in a worker thread, off the event loop.
         if artifact is not None and content is not None:
-            identity = services.normalizer.identify(
-                content, artifact, payload.retrieval, company_id
+            identity = await asyncio.to_thread(
+                services.normalizer.identify, content, artifact, payload.retrieval, company_id
             )
             if identity is not None:
                 company_id = await services.repository.bind_company(identity)
-        result = services.normalizer.normalize(content, artifact, payload.retrieval, company_id)
+        result = await asyncio.to_thread(
+            services.normalizer.normalize, content, artifact, payload.retrieval, company_id
+        )
         await services.repository.save_extraction(result)
         return result
 
@@ -629,8 +634,9 @@ class ResearchEngine:
         await services.repository.record_evidence(payload.retrieval, artifact)
         content = await services.artifacts.read(artifact) if artifact else None
         # PDF parsing runs in an isolated child process; this worker thread only waits
-        # on it, so the event loop stays responsive (see adapters.documents.isolation).
-        document = await asyncio.to_thread(
+        # on it, so the event loop stays responsive (see adapters.documents.isolation),
+        # and cancelling this call also kills the child.
+        document = await to_thread_cancellable(
             services.normalizer.normalize, request, identity, payload.retrieval, artifact, content
         )
         await services.repository.save_document(document)

@@ -4,6 +4,7 @@ import { createMemoryBackend } from "../src/storage.js";
 import { createFakeDocument } from "./fixtures/fake_dom.js";
 import { failureLabel } from "../src/state.js";
 import { summaryErrorLabel } from "../src/summary.js";
+import { buildFullReport } from "./fixtures/report_fixtures.js";
 
 // P1 security remediation: an expired, revoked or replaced pairing token (401) on any
 // protected call returns the panel to "pair again" and forgets the token; the server's
@@ -17,7 +18,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 const json = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 let sequence = 0;
 
-async function harness(t, respond) {
+async function harness(t, respond, { respondGet = null, seed = {} } = {}) {
   const doc = createFakeDocument();
   const elements = new Map();
   const get = id => {
@@ -29,7 +30,7 @@ async function harness(t, respond) {
     return elements.get(id);
   };
   const storage = createMemoryBackend();
-  await storage.set({ pairingToken: TOKEN });
+  await storage.set({ pairingToken: TOKEN, ...seed });
   const posts = [];
   const logs = [];
   for (const method of ["log", "warn", "error"]) t.mock.method(console, method, (...a) => logs.push(a));
@@ -39,6 +40,8 @@ async function harness(t, respond) {
       posts.push({ path, headers: init.headers });
       return respond(path);
     }
+    const custom = respondGet && (await respondGet(path, init));
+    if (custom) return custom;
     return json(200, path === "/health" ? { status: "ok" } : path === "/v1/version" ? VERSION : {});
   });
   globalThis.document = { getElementById: get, createElement: tag => doc.createElement(tag) };
@@ -99,4 +102,32 @@ test("429 summary rate limit keeps pairing and shows a clear message", async t =
   assert.equal(h.get("summary-error").textContent, summaryErrorLabel("SUMMARY_RATE_LIMITED"));
   assert.match(h.get("summary-error").textContent, /Too many summaries/);
   assert.equal(await h.storage.get("pairingToken").then(s => s.pairingToken), TOKEN);
+});
+
+test("401 on an artifact download clears the token and returns to pairing", async t => {
+  const reportId = "report-401";
+  const gets = [];
+  const h = await harness(t, async () => json(500, {}), {
+    seed: { lastReport: { reportId, sourceUrl: "https://www.screener.in/company/INFY/" } },
+    respondGet: async (path, init) => {
+      if (path === `/v1/reports/${reportId}`) return json(200, buildFullReport());
+      if (path.startsWith(`/v1/reports/${reportId}/artifacts/`)) {
+        gets.push({ path, headers: init.headers });
+        return json(401, { detail: { code: "UNAUTHORIZED", message: "x" } });
+      }
+      return null;
+    },
+  });
+  await h.click("view-last-research-button");
+  assert.equal(h.get("panel-report-ready").hidden, false);
+  await h.click("artifact-institutional-report");
+  assert.equal(gets.length, 1);
+  assert.equal(gets[0].path, `/v1/reports/${reportId}/artifacts/INSTITUTIONAL_REPORT`);
+  assert.equal(h.get("panel-unpaired").hidden, false);
+  assert.equal(h.get("panel-report-ready").hidden, true);
+  assert.equal(h.get("artifact-error").hidden, true); // not the generic artifact failure
+  assert.equal(await h.storage.get("pairingToken").then(s => s.pairingToken), undefined);
+  assert.match(h.get("pairing-error").textContent, /Pair again/);
+  assert.doesNotMatch(h.renderedText(), new RegExp(TOKEN));
+  assert.deepEqual(h.logs, []);
 });

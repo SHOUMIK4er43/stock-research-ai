@@ -675,6 +675,12 @@ async function downloadArtifact(artifactKind) {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
   } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      viewingReportId = null;
+      activeReport = null;
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     els.artifactError.textContent =
       error instanceof ApiError ? "Could not retrieve this artifact." : "The local service is not reachable.";
     els.artifactError.hidden = false;

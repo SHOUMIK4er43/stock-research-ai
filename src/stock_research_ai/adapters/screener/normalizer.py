@@ -5,7 +5,13 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from stock_research_ai.adapters.screener.documents import parse_documents
-from stock_research_ai.adapters.screener.html import Node, Page, data_tables, rows
+from stock_research_ai.adapters.screener.html import (
+    HtmlLimitExceeded,
+    Node,
+    Page,
+    data_tables,
+    rows,
+)
 from stock_research_ai.adapters.screener.identity import parse_identity
 from stock_research_ai.adapters.screener.metrics import ParseContext, parse_top
 from stock_research_ai.adapters.screener.peers import parse_peers
@@ -48,7 +54,7 @@ class ScreenerNormalizer:
             return None
         try:
             root = Page(content.decode(artifact.encoding, errors="strict")).root
-        except (UnicodeError, LookupError):
+        except (UnicodeError, LookupError, HtmlLimitExceeded):
             return None
         return parse_identity(root, artifact, retrieval, company_id)
 
@@ -72,6 +78,9 @@ class ScreenerNormalizer:
                 identity = parse_identity(root, artifact, retrieval, company_id)
             except (UnicodeError, LookupError) as exc:
                 failure = f"HTML decoding failed: {exc}"
+            except HtmlLimitExceeded as exc:
+                # Fail closed: no section is read from a page past the structural bounds.
+                root, identity, failure = Node("document"), None, str(exc)
         else:
             failure = failure or "No usable acquired HTML"
         statements: dict[Section, tuple[FinancialObservation, ...]] = {}

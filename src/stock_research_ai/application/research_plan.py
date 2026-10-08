@@ -15,6 +15,7 @@ Both remain reachable by hand today (existing CLI commands) exactly as before; a
 milestone may wire them into FULL_RESEARCH_V1 once specifically audited.
 """
 
+import asyncio
 from typing import Literal, Protocol
 from uuid import UUID
 
@@ -375,7 +376,7 @@ async def run_full_research(
     artifact_id = extraction.company.provenance.raw_artifact_id
     company_artifact: RawArtifact = next(a for a in extraction.raw_artifacts if a.id == artifact_id)
     content = await artifacts.read(company_artifact)
-    sector = resolve_sector(broad_industry, company_artifact, content)
+    sector = await asyncio.to_thread(resolve_sector, broad_industry, company_artifact, content)
 
     _notify(progress, "EVIDENCE")
     to_ingest, ordering_warnings = _select_documents_for_ingestion(extraction.documents)

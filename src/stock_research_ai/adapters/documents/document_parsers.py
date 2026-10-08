@@ -29,7 +29,7 @@ from stock_research_ai.adapters.documents.isolation import (
     IsolationLimits,
     run_isolated,
 )
-from stock_research_ai.adapters.screener.html import Node, Page
+from stock_research_ai.adapters.screener.html import HtmlLimitExceeded, Node, Page
 from stock_research_ai.application.document_structure import (
     RawDocument,
     RawPage,
@@ -189,7 +189,10 @@ def parse_html(content: bytes, limits: ExtractionLimits) -> RawDocument:
     except UnicodeDecodeError:
         decoded = content.decode("cp1252", errors="replace")
         warnings.append(("HTML_NOT_UTF8", 1, "decoded as cp1252"))
-    root = Page(decoded).root
+    try:
+        root = Page(decoded).root
+    except HtmlLimitExceeded:
+        return _failed(fmt, parser, ExtractionStatus.TOO_LARGE, "HTML_STRUCTURE_LIMIT_REACHED")
     parts: list[str] = []
     spans: list[RawSpan] = []
     tables: list[RawTable] = []
@@ -222,10 +225,9 @@ def parse_html(content: bytes, limits: ExtractionLimits) -> RawDocument:
                 tables.append(RawTable(caption, rows, row_spans, "html-table"))
             return
         block = _BLOCK_TAGS.get(node.tag)
-        has_block_children = any(
-            isinstance(c, Node) and (c.tag in _BLOCK_TAGS or c.tag == "table") for c in node.all()
-        )
-        if block is not None and not has_block_children:
+        if block is not None and not any(
+            c.tag in _BLOCK_TAGS or c.tag == "table" for c in node.descendants()
+        ):
             text = node.text
             if text:
                 start, end = append(text)
@@ -302,6 +304,7 @@ def _stream(archive: zipfile.ZipFile, name: str, tag: str) -> Iterator[ElementTr
         events=("start", "end")
     )
     stack: list[ElementTree.Element] = []
+    open_targets = 0  # `tag` elements on `stack`: O(1) per event, never a stack scan
     with archive.open(name) as handle:
         chunk = handle.read(2048)
         _reject_dtd(chunk)
@@ -311,11 +314,13 @@ def _stream(archive: zipfile.ZipFile, name: str, tag: str) -> Iterator[ElementTr
                 assert isinstance(element, ElementTree.Element)  # start/end events only
                 if event == "start":
                     stack.append(element)
+                    open_targets += element.tag == tag
                     continue
                 stack.pop()
                 if element.tag == tag:
+                    open_targets -= 1
                     yield element
-                elif any(open_.tag == tag for open_ in stack):
+                elif open_targets:
                     continue  # still part of an unfinished target element
                 if stack:
                     stack[-1].remove(element)
@@ -382,6 +387,10 @@ def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
                     continue
                 grid: dict[int, dict[int, str]] = {}
                 column_cut = False
+                # Output characters this sheet will add, charged per stored cell (its text
+                # plus one separator) BEFORE storing it: a shared string costs its full
+                # length every time a cell references it.
+                pending, over_budget = 0, False
                 for cell in _stream(archive, path, f"{_MAIN_NS}c"):
                     scanned += 1
                     if scanned > limits.max_cells:
@@ -413,7 +422,14 @@ def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
                             cut("SPREADSHEET_COLUMN_LIMIT_REACHED", number, None)
                             column_cut = True
                         continue
+                    pending += len(text) + 1
+                    if characters + pending > limits.max_characters:
+                        over_budget = True
+                        break
                     grid.setdefault(row, {})[column] = text
+                if over_budget:  # like an over-budget sheet below: not emitted, stop here
+                    cut("CHARACTER_LIMIT_REACHED", number, None)
+                    break
                 rows_out: list[list[tuple[str, bool]]] = []
                 header = min(grid) if grid else None
                 for row in sorted(grid):

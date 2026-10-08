@@ -10,13 +10,18 @@ a separate process instead:
 - Time: the parent enforces a wall-clock deadline covering the whole child (start-up,
   parsing and result transfer) and kills it when the deadline passes, however the
   parser is stuck.
-- Memory: Linux sets a kernel RLIMIT_AS in the child, so allocation past the ceiling
-  fails inside it. macOS refuses lowering RLIMIT_AS/RLIMIT_DATA/RLIMIT_RSS, so there the
-  parent samples the child's physical footprint (libproc) every `_SAMPLE_SECONDS` and
-  kills it once over the ceiling - a watchdog, not a kernel limit: a child can briefly
-  overshoot by what it allocates within one sample interval. On any other platform
+- Memory: the parent samples the child's memory footprint (libproc on macOS,
+  /proc on Linux) every `_SAMPLE_SECONDS` and kills it once over the ceiling - a
+  watchdog, not a kernel limit: a child can briefly overshoot by what it allocates
+  within one sample interval. On Linux the child also tries to install a kernel
+  RLIMIT_AS, so allocation past the ceiling fails inside it; it reports whether that
+  succeeded, and `IsolatedResult.memory_enforcement` says "rlimit" only when it did.
+  (macOS refuses lowering RLIMIT_AS/RLIMIT_DATA/RLIMIT_RSS.) On any other platform
   (e.g. Windows) no memory ceiling is enforced; `MEMORY_ENFORCEMENT` says so and the
   time limit still applies.
+- Cancellation: when the caller runs under `application.cancellation`'s
+  `to_thread_cancellable` and its task is cancelled, the child is killed and reaped
+  within one sample interval instead of running on to its deadline.
 - Data: no pickle in either direction. The parent sends a JSON header (target name,
   JSON arguments, limits) and the raw document bytes; the child replies with JSON,
   capped at `output_bytes`.
@@ -39,7 +44,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import IO, Any
+from typing import IO, Any, Literal
+
+from stock_research_ai.application.cancellation import cancel_scope
 
 #: Ceiling for one parser child. Real annual reports (350-383 pages, 7-11 MB, ~1.3M
 #: characters) peak near 100 MB in-process; 1 GiB leaves ~10x headroom (and ~2.5x over a
@@ -62,6 +69,10 @@ class IsolationFailure(StrEnum):
     CRASHED = "PARSER_CRASHED"
     ERROR = "PARSER_ERROR"
     OUTPUT_TOO_LARGE = "PARSER_OUTPUT_TOO_LARGE"
+    CANCELLED = "PARSER_CANCELLED"
+
+
+MemoryEnforcement = Literal["rlimit", "watchdog", "none"]
 
 
 @dataclass(frozen=True)
@@ -75,6 +86,9 @@ class IsolationLimits:
 class IsolatedResult:
     value: Any = None  # the target's JSON-decoded return value
     failure: IsolationFailure | None = None
+    #: What actually bounded this child's memory: "rlimit" only when the child confirmed
+    #: its kernel limit was installed, else the platform's `MEMORY_ENFORCEMENT`.
+    memory_enforcement: MemoryEnforcement = "none"
 
 
 class _RUsageInfoV2(ctypes.Structure):
@@ -108,12 +122,15 @@ def _libproc() -> Any:
 
 
 _LIBPROC = _libproc()
-#: How the memory ceiling is enforced on this platform: "rlimit" (kernel, plus the
-#: watchdog), "watchdog" (parent samples and kills) or "none" (not enforced; the time
-#: limit still applies).
-MEMORY_ENFORCEMENT = (
-    "rlimit" if sys.platform.startswith("linux") else "watchdog" if _LIBPROC else "none"
+#: The memory ceiling this platform guarantees for every child: "watchdog" (parent
+#: samples and kills) or "none" (not enforced; the time limit still applies). A kernel
+#: RLIMIT_AS is never assumed here - it is reported per child, once confirmed
+#: (`IsolatedResult.memory_enforcement`).
+MEMORY_ENFORCEMENT: MemoryEnforcement = (
+    "watchdog" if _LIBPROC or sys.platform.startswith("linux") else "none"
 )
+#: First reply byte: whether the child installed its kernel memory limit.
+_RLIMIT_INSTALLED, _RLIMIT_ABSENT = b"R", b"-"
 
 
 def _footprint(pid: int) -> int | None:
@@ -144,20 +161,28 @@ def _read_frame(stream: IO[bytes]) -> bytes:
     return _read_exact(stream, size)
 
 
+def _install_rlimit(limit: int) -> bool:
+    """Install the kernel address-space limit (Linux only); True only if it took effect."""
+    if not sys.platform.startswith("linux"):
+        return False
+    import resource
+
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        return False  # the parent's footprint watchdog still applies
+    return True
+
+
 def _child_main() -> None:
     """Child entry point: read one request from stdin, write one reply to stdout."""
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     header = json.loads(_read_frame(stdin))
     content = _read_frame(stdin)
     sys.path[:] = header["path"]
-    if sys.platform.startswith("linux"):
-        import resource
-
-        try:
-            limit = header["memory_bytes"]
-            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-        except (ValueError, OSError):
-            pass  # the parent's footprint watchdog still applies
+    installed = _install_rlimit(header["memory_bytes"])
+    stdout.write(_RLIMIT_INSTALLED if installed else _RLIMIT_ABSENT)
+    stdout.flush()
     try:
         module_name, _, name = header["target"].partition(":")
         target = getattr(importlib.import_module(module_name), name)
@@ -177,8 +202,12 @@ def run_isolated(
     """Run module-level `target(content, *args)` in a child process and return its
     JSON-able result. `args` must be JSON values.
 
-    Blocking: async callers run this in a worker thread (`asyncio.to_thread`), which
-    only waits on the child - the parsing itself never runs in the server process."""
+    Blocking: async callers run this in a worker thread (preferably
+    `to_thread_cancellable`, so cancelling them also stops the child), which only waits
+    on the child - the parsing itself never runs in the server process."""
+    cancel = cancel_scope() or threading.Event()
+    if cancel.is_set():
+        return IsolatedResult(failure=IsolationFailure.CANCELLED)
     header = json.dumps(
         {
             "target": f"{target.__module__}:{target.__qualname__}",
@@ -233,7 +262,9 @@ def run_isolated(
             if used is not None and used > limits.memory_bytes:
                 failure = IsolationFailure.MEMORY_LIMIT
                 break
-            time.sleep(_SAMPLE_SECONDS)
+            if cancel.wait(_SAMPLE_SECONDS):
+                failure = IsolationFailure.CANCELLED
+                break
     finally:
         if process.poll() is None:
             process.kill()
@@ -241,14 +272,18 @@ def run_isolated(
         for worker in workers:
             worker.join(_REAP_SECONDS)
         stdout.close()
+    enforcement: MemoryEnforcement = (
+        "rlimit" if reply[:1] == _RLIMIT_INSTALLED else MEMORY_ENFORCEMENT
+    )
+    body = bytes(reply[1:])
+    if failure is None and overflow.is_set():
+        failure = IsolationFailure.OUTPUT_TOO_LARGE
+    elif failure is None and body == b"MEM":
+        failure = IsolationFailure.MEMORY_LIMIT
+    elif failure is None and body == b"ERR":
+        failure = IsolationFailure.ERROR
+    elif failure is None and (process.returncode != 0 or not body.startswith(b"OK")):
+        failure = IsolationFailure.CRASHED
     if failure is not None:
-        return IsolatedResult(failure=failure)
-    if overflow.is_set():
-        return IsolatedResult(failure=IsolationFailure.OUTPUT_TOO_LARGE)
-    if reply == b"MEM":
-        return IsolatedResult(failure=IsolationFailure.MEMORY_LIMIT)
-    if reply == b"ERR":
-        return IsolatedResult(failure=IsolationFailure.ERROR)
-    if process.returncode != 0 or not reply.startswith(b"OK"):
-        return IsolatedResult(failure=IsolationFailure.CRASHED)
-    return IsolatedResult(value=json.loads(bytes(reply[2:])))
+        return IsolatedResult(failure=failure, memory_enforcement=enforcement)
+    return IsolatedResult(value=json.loads(body[2:]), memory_enforcement=enforcement)

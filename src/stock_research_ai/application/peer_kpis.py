@@ -126,6 +126,9 @@ def _pick(anchor: CanonicalKPIValue, values: list[CanonicalKPIValue]) -> _Pick |
                 status, detail = OS.BASIS_MISMATCH, f"{k.reporting_basis.value} basis"
             elif k.currency != anchor.currency:
                 status, detail = OS.CURRENCY_MISMATCH, f"{k.currency} vs {anchor.currency}"
+            elif k.period.period_end is None or anchor.period.period_end is None:
+                # an unknown period end is never evidence of the same period
+                status, detail = OS.PERIOD_MISMATCH, "period end unknown"
             elif k.period.period_end != anchor.period.period_end:
                 status, detail = OS.PERIOD_MISMATCH, f"period end {k.period.period_end}"
             else:
@@ -172,6 +175,8 @@ def kpi_benchmarks(
         ]
         directionality = KPI_DIRECTIONALITY.get(code, Directionality.NOT_REGISTERED)
         ranking, withheld = rank(anchor.value, exact, directionality, min_peers)
+        if anchor.period.period_end is None and directionality != Directionality.NOT_REGISTERED:
+            ranking, withheld = None, "target KPI period end is unknown: no rank"
         warnings = []
         if any(o.equivalence == KPIEquivalence.PROXY for o in observations):
             warnings.append("PROXY_KPI_DISPLAYED_NOT_RANKED")

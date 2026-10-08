@@ -303,7 +303,7 @@ async def test_http_startup_retains_migration_and_future_refusal(tmp_path, versi
     else:
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://offline.test"
+                transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
             ) as client:
                 assert (await client.get("/health")).json() == {"status": "ok"}
         assert snapshot(settings.database_path)[0] == CURRENT_SCHEMA_VERSION

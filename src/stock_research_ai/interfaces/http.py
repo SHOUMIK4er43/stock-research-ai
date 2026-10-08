@@ -5,6 +5,7 @@ sole execution authority - this module owns no research/financial/valuation/sect
 semantics; it only translates HTTP <-> the existing application layer.
 """
 
+import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from pydantic import ValidationError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from stock_research_ai import __version__
 from stock_research_ai.adapters.aicredits.summary import AICreditsSummaryModel
@@ -58,6 +60,14 @@ from stock_research_ai.domain.summary import (
 
 _PAIRING_PATH = "/v1/pair"
 
+#: The server binds IPv4 loopback only; any other Host (e.g. a DNS-rebinding name) is refused.
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+
+#: Every request body here is a small JSON control message (pairing code, page URL, company
+#: registration - at most ~85 KB even with every field at its limit and fully \u-escaped).
+#: Responses (reports, artifacts) are not bounded by this.
+MAX_REQUEST_BODY_BYTES = 128 * 1024
+
 # SUMMARY_V1 error code -> HTTP status. Bodies carry only the fixed code/message.
 _SUMMARY_ERROR_STATUS: dict[SummaryErrorCode, int] = {
     SummaryErrorCode.PROVIDER_NOT_CONFIGURED: status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -81,6 +91,81 @@ def _summary_http_error(error: SummaryGenerationError) -> HTTPException:
 
 
 _READINESS_PATHS = frozenset({"/health", "/v1/version"})
+
+
+class _RequestBodyLimitMiddleware:
+    """Refuse a request body over `max_bytes` with 413, counting the bytes actually
+    received - a missing, false or chunked Content-Length cannot bypass the bound. The
+    bounded body is buffered and replayed so the application never sees a partial one."""
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self.app = app
+        self._max_bytes = max_bytes
+
+    async def _reject(self, send: Any, status_code: int, code: str, message: str) -> None:
+        body = json.dumps({"detail": {"code": code, "message": message}}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                    (b"connection", b"close"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    async def _too_large(self, send: Any) -> None:
+        await self._reject(
+            send,
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            "REQUEST_TOO_LARGE",
+            f"Request body exceeds {self._max_bytes} bytes",
+        )
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = [v for k, v in scope.get("headers", []) if k.lower() == b"content-length"]
+        if declared:
+            if len(declared) > 1 or not declared[0].isdigit():
+                await self._reject(
+                    send,
+                    status.HTTP_400_BAD_REQUEST,
+                    "INVALID_CONTENT_LENGTH",
+                    "Invalid Content-Length",
+                )
+                return
+            if int(declared[0]) > self._max_bytes:
+                await self._too_large(send)
+                return
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                return  # client disconnected before sending the whole body
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > self._max_bytes:
+                await self._too_large(send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        replayed = False
+
+        async def replay() -> Any:
+            nonlocal replayed
+            if replayed:
+                return await receive()
+            replayed = True
+            return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
+
+        await self.app(scope, replay, send)
 
 
 class _BrowserCORSMiddleware:
@@ -242,10 +327,15 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
+    # Added last = outermost: Host check, then body bound, then CORS/origin.
     app.add_middleware(
         _BrowserCORSMiddleware,
         pairing_store=active_pairing_store,
         approved_origin=runtime_settings.browser_extension_origin,
+    )
+    app.add_middleware(_RequestBodyLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=list(LOOPBACK_HOSTS), www_redirect=False
     )
 
     def current_engine() -> ResearchEngine:
@@ -291,7 +381,12 @@ def create_app(
     async def get_capabilities() -> Capabilities:
         return await current_job_manager().engine.get_capabilities()
 
-    @app.post("/v1/companies", response_model=Company, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/v1/companies",
+        response_model=Company,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=protected,
+    )
     async def register_company(registration: CompanyRegistration) -> Company:
         return await current_engine().register_company(registration)
 

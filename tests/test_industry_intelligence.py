@@ -537,6 +537,77 @@ async def test_o_l_m_n_bank_kpis(tmp_path):
     assert problems == [], problems
 
 
+_KNOWN = "known"
+_SHIFTED = "shifted"
+BANK_PEERS = [("4001", "Alpha Bank"), ("4002", "Beta Bank"), ("4003", "Gamma Bank")]
+
+
+@pytest.mark.parametrize(
+    ("target_end", "peer_ends", "ranked"),
+    [
+        (_KNOWN, (_KNOWN, _KNOWN, _KNOWN), True),  # same known period: normal comparison
+        (_KNOWN, (_SHIFTED, _KNOWN, _KNOWN), False),  # different known period: blocked
+        (_KNOWN, (None, _KNOWN, _KNOWN), False),  # undated peer: blocked
+        (None, (_KNOWN, _KNOWN, _KNOWN), False),  # undated target: no formal rank
+        (None, (None, None, None), False),  # audit repro: four undated values, no rank
+    ],
+)
+async def test_undated_kpi_periods_are_never_aligned(tmp_path, target_end, peer_ends, ranked):
+    box7, box4_7, _bundle = await business(
+        tmp_path, {"/ar.pdf": ar(BANK_KPI)}, industry=Industry.BANK
+    )
+    anchor_end = next(
+        k.period.period_end for k in box7.canonical_kpi_values if k.canonical_kpi == "GROSS_NPA"
+    )
+    assert anchor_end is not None
+
+    def dated(cid: str, end: str | None, npa: str | None = None) -> CompanyLayers:
+        values = []
+        for k in box7.canonical_kpi_values:
+            if k.canonical_kpi == "GROSS_NPA":
+                new_end = {_KNOWN: anchor_end, _SHIFTED: anchor_end.replace(anchor_end.year - 1)}
+                period = k.period.model_copy(update={"period_end": new_end.get(end or "")})
+                k = k.model_copy(update={"period": period})
+                if npa is not None:
+                    k = k.model_copy(update={"value": Decimal(npa)})
+            values.append(k)
+        rows = [(c, n, "X" + c) for c, n in BANK_PEERS] if cid == "3783" else []
+        return CompanyLayers(
+            f"screener:{cid}",
+            screener(cid, dict(BANK_PEERS + [("3783", "Yes Bank")])[cid], "X" + cid, BANK, rows),
+            box4_7.model_copy(update={"company_key": f"screener:{cid}"}),
+            None,
+            box7.model_copy(
+                update={
+                    "company_key": f"screener:{cid}",
+                    "dataset_id": uuid5(NS, cid),
+                    "canonical_kpi_values": tuple(values),
+                }
+            ),
+        )
+
+    t = dated("3783", target_end)
+    peers = [
+        dated(cid, end, npa)
+        for (cid, _), end, npa in zip(BANK_PEERS, peer_ends, ("2.0", "1.2", "3.0"), strict=True)
+    ]
+    npa = next(k for k in build(t, peers).kpi_benchmarks if k.kpi_code == "GROSS_NPA")
+    assert npa.directionality == Directionality.LOWER_IS_BETTER  # unchanged
+    for observation, end in zip(npa.peers, peer_ends, strict=True):
+        aligned = target_end == _KNOWN and end == _KNOWN
+        assert observation.equivalence == KPIEquivalence.EXACT
+        assert observation.status == (OS.COMPARABLE if aligned else OS.PERIOD_MISMATCH)
+    if ranked:
+        assert npa.statistics.peer_count == 3
+        assert npa.ranking is not None and (npa.ranking.rank, npa.ranking.of) == (2, 4)
+    else:
+        assert npa.ranking is None and npa.rank_withheld_reason is not None
+    if target_end is None:
+        assert npa.statistics.peer_count == 0
+        assert npa.rank_withheld_reason == "target KPI period end is unknown: no rank"
+
+
+
 # --- Q: segments -------------------------------------------------------------------------------
 
 

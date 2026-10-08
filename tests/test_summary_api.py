@@ -139,7 +139,7 @@ async def post_summary(app, token, body, origin=EXTENSION_ORIGIN):
         headers["Authorization"] = f"Bearer {token}"
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
         ) as client:
             return await client.post("/v1/summaries", json=body, headers=headers)
 

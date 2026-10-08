@@ -121,7 +121,7 @@ async def test_unconfigured_pairing_fails_closed(engine, tmp_path):
     store = PairingStore(settings.browser_auth_path)
     app = create_app(engine=engine, settings=settings)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
     ) as client:
         response = await client.post(
             "/v1/pair",

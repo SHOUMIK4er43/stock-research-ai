@@ -10,14 +10,23 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from stock_research_ai.domain.financial import ReportingScope
 from stock_research_ai.domain.provenance import ObservationProvenance, SourceLink
 
+# Caller-supplied identity bounds: far above real company names, exchange codes, tickers and
+# provider identifiers, but small enough that a request cannot persist unbounded text.
+MAX_COMPANY_NAME_LENGTH = 300
+MAX_EXCHANGE_LENGTH = 32
+MAX_SYMBOL_LENGTH = 64
+MAX_PROVIDER_LENGTH = 64
+MAX_IDENTIFIER_LENGTH = 256
+MAX_REGISTRATION_ITEMS = 32
+
 
 class ExchangeListing(BaseModel):
     """An exchange listing; an unknown exchange stays unknown."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
 
-    exchange: str | None = Field(default=None, min_length=1)
-    symbol: str = Field(min_length=1)
+    exchange: str | None = Field(default=None, min_length=1, max_length=MAX_EXCHANGE_LENGTH)
+    symbol: str = Field(min_length=1, max_length=MAX_SYMBOL_LENGTH)
 
 
 class ProviderIdentifier(BaseModel):
@@ -25,8 +34,8 @@ class ProviderIdentifier(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
 
-    provider: str = Field(min_length=1)
-    identifier: str = Field(min_length=1)
+    provider: str = Field(min_length=1, max_length=MAX_PROVIDER_LENGTH)
+    identifier: str = Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
 
 
 class CompanyRegistration(BaseModel):
@@ -34,9 +43,11 @@ class CompanyRegistration(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
 
-    name: str = Field(min_length=1)
-    listings: tuple[ExchangeListing, ...] = ()
-    provider_identifiers: tuple[ProviderIdentifier, ...] = ()
+    name: str = Field(min_length=1, max_length=MAX_COMPANY_NAME_LENGTH)
+    listings: tuple[ExchangeListing, ...] = Field(default=(), max_length=MAX_REGISTRATION_ITEMS)
+    provider_identifiers: tuple[ProviderIdentifier, ...] = Field(
+        default=(), max_length=MAX_REGISTRATION_ITEMS
+    )
 
 
 class Company(CompanyRegistration):

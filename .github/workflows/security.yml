@@ -1,0 +1,95 @@
+# Dependency audit (pip-audit over uv.lock) and secret scanning (gitleaks over full git
+# history). Read-only token, no secrets, every action pinned to a full commit SHA, every
+# downloaded tool verified (hash-locked in uv.lock, or a pinned SHA-256).
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, astra-development]
+  schedule:
+    - cron: "17 4 * * 1" # weekly: new advisories appear without any code change
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Export the locked environment (all groups, with hashes)
+        run: >-
+          uv export --locked --no-emit-project --all-groups --format requirements-txt
+          -o "$RUNNER_TEMP/requirements-audit.txt"
+
+      # Every advisory, including the accepted ones below, is printed here - nothing is
+      # hidden. This step reports only; the next one enforces.
+      - name: Full advisory report (informational)
+        continue-on-error: true
+        run: >-
+          uv run --locked --isolated --only-group audit pip-audit
+          -r "$RUNNER_TEMP/requirements-audit.txt"
+          --require-hashes --no-deps --disable-pip --progress-spinner off
+
+      # Fails on ANY advisory except these exact IDs: PyJWT 2.13.0, a transitive dependency
+      # of mcp[crypto]. This project never imports PyJWT and serves MCP over stdio only,
+      # so the JWT code paths are unreachable here. Upgrading PyJWT is tracked as a P2
+      # audit item; remove these IDs when it lands. A new PyJWT advisory still fails.
+      - name: Enforced audit
+        env:
+          ACCEPTED_ADVISORIES: >-
+            PYSEC-2026-4140 PYSEC-2026-4141 PYSEC-2026-4142 PYSEC-2026-4143
+            PYSEC-2026-4144 PYSEC-2026-4145 PYSEC-2026-4146 PYSEC-2026-4147
+            PYSEC-2026-4148 PYSEC-2026-4149 PYSEC-2026-4150 PYSEC-2026-4151
+            PYSEC-2026-4152 PYSEC-2026-4183
+        run: |
+          ignores=()
+          for id in $ACCEPTED_ADVISORIES; do ignores+=(--ignore-vuln "$id"); done
+          uv run --locked --isolated --only-group audit pip-audit \
+            -r "$RUNNER_TEMP/requirements-audit.txt" \
+            --require-hashes --no-deps --disable-pip --progress-spinner off \
+            "${ignores[@]}"
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      # SHA-256 of gitleaks_8.30.1_linux_x64.tar.gz, matching both the release's
+      # checksums.txt and GitHub's recorded asset digest.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # scan the whole history, not only the tip
+          persist-credentials: false
+
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+
+      # --redact: findings name the rule, file, line and commit, never the secret value.
+      # No report artifact is uploaded.
+      - name: Scan git history
+        run: >-
+          "$RUNNER_TEMP/gitleaks" git . --config .gitleaks.toml
+          --redact --no-banner --exit-code 1

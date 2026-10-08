@@ -323,6 +323,13 @@ class ExtractionLimits(BaseModel):
     max_evidence_items: PositiveInt = 20_000
     max_seconds: float = Field(default=180.0, gt=0, le=3600)
     max_spreadsheet_sheets: PositiveInt = 20
+    # Spreadsheet coordinates are attacker-controlled: rows/columns bound the highest
+    # coordinate read (Excel allows 1,048,576 x 16,384), never allocate a declared range.
+    # Financial workbooks and data books sit far below 100k rows / 1,024 columns. Cells
+    # scanned and cells materialised (with blank padding) are both bounded by max_cells.
+    max_spreadsheet_rows: PositiveInt = 100_000
+    max_spreadsheet_columns: PositiveInt = 1_024
+    max_spreadsheet_shared_strings: PositiveInt = 200_000
 
 
 class ExtractionStatistics(BaseModel):

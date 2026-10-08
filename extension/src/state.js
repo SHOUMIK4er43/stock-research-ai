@@ -104,6 +104,7 @@ export const FAILURE_LABELS = Object.freeze({
   REPORT_GENERATION_FAILED: "Final report generation failed.",
   INTEGRITY_FAILURE: "Stored research failed an integrity check.",
   INTERNAL_ERROR: "An internal error occurred.",
+  RESEARCH_JOB_LIMIT_REACHED: "Other research is already running. Try again when it finishes.",
   JOB_LOST_AFTER_SERVER_RESTART: "The local service restarted before this research finished.",
 });
 

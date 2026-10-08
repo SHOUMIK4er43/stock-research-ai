@@ -1,5 +1,6 @@
 """Central application operations, independent of transport and persistence technology."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID, uuid4
@@ -627,8 +628,10 @@ class ResearchEngine:
         artifact = await services.artifacts.put(payload) if payload.content is not None else None
         await services.repository.record_evidence(payload.retrieval, artifact)
         content = await services.artifacts.read(artifact) if artifact else None
-        document = services.normalizer.normalize(
-            request, identity, payload.retrieval, artifact, content
+        # PDF parsing runs in an isolated child process; this worker thread only waits
+        # on it, so the event loop stays responsive (see adapters.documents.isolation).
+        document = await asyncio.to_thread(
+            services.normalizer.normalize, request, identity, payload.retrieval, artifact, content
         )
         await services.repository.save_document(document)
         return document
@@ -698,8 +701,8 @@ class ResearchEngine:
         artifact = await services.artifacts.put(payload) if payload.content is not None else None
         await services.repository.record_evidence(payload.retrieval, artifact)
         content = await services.artifacts.read(artifact) if artifact else None
-        result = services.publication_parser.normalize(
-            request, payload.retrieval, artifact, content
+        result = await asyncio.to_thread(
+            services.publication_parser.normalize, request, payload.retrieval, artifact, content
         )
         await services.repository.save_publication(result)
         return result

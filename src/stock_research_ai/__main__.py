@@ -27,6 +27,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Issue a one-time browser-extension pairing code (Part 6B-A); printed once, "
         "used with POST /v1/pair",
     )
+    commands.add_parser(
+        "revoke-pairing",
+        help="Revoke the paired browser extension and any pending pairing code; its token "
+        "stops working immediately (pair again with `pair-code`)",
+    )
     configure_analyst_cmd = commands.add_parser(
         "configure-analyst",
         help="Store an analyst API key in the macOS Keychain (Part 6C-A); prompted "
@@ -516,6 +521,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         code = PairingStore(settings.browser_auth_path).issue_pairing_code()
         print(code)
+    elif args.command == "revoke-pairing":
+        from stock_research_ai.adapters.http.browser_auth import PairingStore
+
+        PairingStore(settings.browser_auth_path).revoke()
+        print("Browser extension pairing revoked. Run `stock-research-ai pair-code` to pair again.")
     elif args.command == "configure-analyst":
         import getpass
 

@@ -4,7 +4,9 @@ PDF uses pypdf (already a project dependency) in its plain text mode: page-by-pa
 1-based pages, the document's own page-label table as printed labels, per-page failure
 isolation, and pypdf's font-warning logging suppressed while parsing. HTML reuses the
 standard-library HTML tree already used for Screener. XLSX is read with zipfile + XML
-(no DTDs accepted, bounded sizes). Legacy binary XLS is reported as unsupported.
+(no DTDs accepted, streamed, every coordinate/cell/string count bounded). Legacy binary XLS
+is reported as unsupported. `LocalDocumentParser` runs PDF/HTML/XLSX parsing in a
+killable child process with hard time and memory bounds (`isolation`).
 No OCR, no network, no AI. Warnings carry codes, never local paths or exception text.
 """
 
@@ -15,11 +17,18 @@ import time
 import zipfile
 from collections.abc import Iterator
 from io import BytesIO
+from typing import Any, cast
 from xml.etree import ElementTree
 
 import pypdf
 from pypdf import PdfReader
 
+from stock_research_ai.adapters.documents.isolation import (
+    DEFAULT_MEMORY_LIMIT_BYTES,
+    IsolationFailure,
+    IsolationLimits,
+    run_isolated,
+)
 from stock_research_ai.adapters.screener.html import Node, Page
 from stock_research_ai.application.document_structure import (
     RawDocument,
@@ -40,6 +49,8 @@ HTML_PARSER = "stdlib-html/1"
 TEXT_PARSER = "utf8-text/1"
 XLSX_PARSER = "stdlib-xlsx/1"
 _MAX_XLSX_UNCOMPRESSED = 200_000_000
+_MAX_XLSX_INDEX_PART = 10_000_000  # workbook.xml / relationships, read whole
+_XML_CHUNK = 65_536
 _MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -264,11 +275,52 @@ def parse_text(content: bytes, limits: ExtractionLimits) -> RawDocument:
     )
 
 
-def _xml(archive: zipfile.ZipFile, name: str) -> ElementTree.Element:
-    data = archive.read(name)
-    if b"<!DOCTYPE" in data[:2048].upper() or b"<!ENTITY" in data[:2048].upper():
+class _SpreadsheetTooLarge(ValueError):
+    """A workbook index part exceeds its size bound."""
+
+
+def _reject_dtd(head: bytes) -> None:
+    upper = head[:2048].upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
         raise ValueError("DTD not allowed")
+
+
+def _xml(archive: zipfile.ZipFile, name: str) -> ElementTree.Element:
+    """Read one small index part (workbook, relationships) whole."""
+    if archive.getinfo(name).file_size > _MAX_XLSX_INDEX_PART:
+        raise _SpreadsheetTooLarge(name)
+    data = archive.read(name)
+    _reject_dtd(data)
     return ElementTree.fromstring(data)
+
+
+def _stream(archive: zipfile.ZipFile, name: str, tag: str) -> Iterator[ElementTree.Element]:
+    """Yield each completed `tag` element of one part while streaming it. Every finished
+    element is detached from its parent, so memory follows one element at a time - never
+    the part size, and never a declared sheet dimension. Stopping early stops reading."""
+    parser: ElementTree.XMLPullParser[ElementTree.Element] = ElementTree.XMLPullParser(
+        events=("start", "end")
+    )
+    stack: list[ElementTree.Element] = []
+    with archive.open(name) as handle:
+        chunk = handle.read(2048)
+        _reject_dtd(chunk)
+        while chunk:
+            parser.feed(chunk)
+            for event, element in cast(Iterator[tuple[str, Any]], parser.read_events()):
+                assert isinstance(element, ElementTree.Element)  # start/end events only
+                if event == "start":
+                    stack.append(element)
+                    continue
+                stack.pop()
+                if element.tag == tag:
+                    yield element
+                elif any(open_.tag == tag for open_ in stack):
+                    continue  # still part of an unfinished target element
+                if stack:
+                    stack[-1].remove(element)
+            chunk = handle.read(_XML_CHUNK)
+        parser.close()
 
 
 def _column(reference: str) -> int:
@@ -280,6 +332,10 @@ def _column(reference: str) -> int:
 
 
 def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
+    """Bounded XLSX reading. Only cells actually present are read (streamed), and every
+    attacker-controlled dimension is capped by `limits`: sheets, highest row and column
+    coordinate, cells scanned, cells materialised (blank padding included), shared
+    strings, and characters. Anything cut is a warning and the status becomes PARTIAL."""
     fmt, parser = DocumentFormat.SPREADSHEET, XLSX_PARSER
     if not content.startswith(b"PK"):
         return _failed(fmt, parser, ExtractionStatus.UNSUPPORTED, "UNSUPPORTED_SPREADSHEET")
@@ -288,20 +344,36 @@ def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
             if sum(i.file_size for i in archive.infolist()) > _MAX_XLSX_UNCOMPRESSED:
                 return _failed(fmt, parser, ExtractionStatus.TOO_LARGE, "SPREADSHEET_TOO_LARGE")
             names = set(archive.namelist())
+            document = RawDocument(
+                format=fmt, status=ExtractionStatus.SUCCESS, parser=parser, parser_version=parser
+            )
+
+            def cut(code: str, page: int | None, detail: str | None = None) -> None:
+                document.status = ExtractionStatus.PARTIAL
+                document.warnings.append((code, page, detail))
+
             shared: list[str] = []
             if "xl/sharedStrings.xml" in names:
-                for item in _xml(archive, "xl/sharedStrings.xml").iter(f"{_MAIN_NS}si"):
-                    shared.append("".join(t.text or "" for t in item.iter(f"{_MAIN_NS}t")))
+                shared_characters = 0
+                for item in _stream(archive, "xl/sharedStrings.xml", f"{_MAIN_NS}si"):
+                    if len(shared) >= limits.max_spreadsheet_shared_strings:
+                        cut("SHARED_STRING_LIMIT_REACHED", None, "entries")
+                        break
+                    text = "".join(t.text or "" for t in item.iter(f"{_MAIN_NS}t"))
+                    shared_characters += len(text)
+                    if shared_characters > limits.max_characters:
+                        cut("SHARED_STRING_LIMIT_REACHED", None, "characters")
+                        break
+                    shared.append(text)
             workbook = _xml(archive, "xl/workbook.xml")
             relations = {
                 r.get("Id"): r.get("Target", "")
                 for r in _xml(archive, "xl/_rels/workbook.xml.rels")
             }
-            document = RawDocument(
-                format=fmt, status=ExtractionStatus.SUCCESS, parser=parser, parser_version=parser
-            )
             sheets = list(workbook.iter(f"{_MAIN_NS}sheet"))
             document.page_count = len(sheets)
+            scanned = materialised = characters = 0
+            exhausted = False  # a workbook-wide budget ran out: read no further sheets
             for number, sheet in enumerate(sheets[: limits.max_spreadsheet_sheets], start=1):
                 target = relations.get(sheet.get(f"{_REL_NS}id"), "")
                 path = "xl/" + target.lstrip("/").removeprefix("xl/")
@@ -309,7 +381,13 @@ def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
                     document.warnings.append(("MISSING_SHEET", number, None))
                     continue
                 grid: dict[int, dict[int, str]] = {}
-                for cell in _xml(archive, path).iter(f"{_MAIN_NS}c"):
+                column_cut = False
+                for cell in _stream(archive, path, f"{_MAIN_NS}c"):
+                    scanned += 1
+                    if scanned > limits.max_cells:
+                        cut("SPREADSHEET_CELL_LIMIT_REACHED", number, "cells scanned")
+                        exhausted = True
+                        break
                     value = cell.find(f"{_MAIN_NS}v")
                     kind = cell.get("t")
                     if kind == "inlineStr":
@@ -326,15 +404,32 @@ def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
                         text = value.text  # the stored value, exactly as written
                     reference = cell.get("r", "A1")
                     row = int(re.sub(r"[A-Z]+", "", reference) or "1") - 1
-                    grid.setdefault(row, {})[_column(reference)] = text
+                    if row >= limits.max_spreadsheet_rows:
+                        cut("SPREADSHEET_ROW_LIMIT_REACHED", number, None)
+                        break
+                    column = _column(reference)
+                    if column >= limits.max_spreadsheet_columns:
+                        if not column_cut:
+                            cut("SPREADSHEET_COLUMN_LIMIT_REACHED", number, None)
+                            column_cut = True
+                        continue
+                    grid.setdefault(row, {})[column] = text
                 rows_out: list[list[tuple[str, bool]]] = []
+                header = min(grid) if grid else None
                 for row in sorted(grid):
                     width = max(grid[row]) + 1
-                    rows_out.append(
-                        [(grid[row].get(c, ""), row == min(grid)) for c in range(width)]
-                    )
+                    if materialised + width > limits.max_cells:
+                        cut("SPREADSHEET_CELL_LIMIT_REACHED", number, "cells materialised")
+                        exhausted = True
+                        break
+                    materialised += width
+                    rows_out.append([(grid[row].get(c, ""), row == header) for c in range(width)])
                 lines = ["\t".join(t for t, _ in r) for r in rows_out]
                 text = "\n".join(lines) + ("\n" if lines else "")
+                if characters + len(text) > limits.max_characters:
+                    cut("CHARACTER_LIMIT_REACHED", number, None)
+                    break
+                characters += len(text)
                 spans, offset = [], 0
                 for line in lines:
                     spans.append((offset, offset + len(line)))
@@ -350,18 +445,141 @@ def parse_spreadsheet(content: bytes, limits: ExtractionLimits) -> RawDocument:
                         else [],
                     )
                 )
+                if exhausted:
+                    break
             if len(sheets) > limits.max_spreadsheet_sheets:
-                document.status = ExtractionStatus.PARTIAL
-                document.warnings.append(("SHEET_LIMIT_REACHED", None, f"{len(sheets)} sheets"))
+                cut("SHEET_LIMIT_REACHED", None, f"{len(sheets)} sheets")
             return document
+    except _SpreadsheetTooLarge:
+        return _failed(fmt, parser, ExtractionStatus.TOO_LARGE, "SPREADSHEET_TOO_LARGE")
     except (zipfile.BadZipFile, KeyError, ValueError, ElementTree.ParseError):
         return _failed(fmt, parser, ExtractionStatus.MALFORMED, "MALFORMED_SPREADSHEET")
 
 
+def raw_document_to_json(document: RawDocument) -> dict[str, Any]:
+    """Plain JSON for the parser child's reply - the parent never unpickles child data."""
+    return {
+        "format": document.format.value if document.format else None,
+        "status": document.status.value,
+        "parser": document.parser,
+        "parser_version": document.parser_version,
+        "page_count": document.page_count,
+        "warnings": [list(w) for w in document.warnings],
+        "pages": [
+            {
+                "number": page.number,
+                "text": page.text,
+                "printed_label": page.printed_label,
+                "spans": None
+                if page.spans is None
+                else [[s.block_type.value, s.start, s.end] for s in page.spans],
+                "tables": [
+                    {
+                        "title": t.title,
+                        "rows": [[[text, header] for text, header in row] for row in t.rows],
+                        "row_spans": [list(span) for span in t.row_spans],
+                        "method": t.method,
+                    }
+                    for t in page.tables
+                ],
+                "warnings": [list(w) for w in page.warnings],
+            }
+            for page in document.pages
+        ],
+    }
+
+
+def raw_document_from_json(data: dict[str, Any]) -> RawDocument:
+    """Exact inverse of `raw_document_to_json` (tuples restored), so isolated parsing
+    yields the same RawDocument as in-process parsing."""
+    return RawDocument(
+        format=DocumentFormat(data["format"]) if data["format"] else None,
+        status=ExtractionStatus(data["status"]),
+        parser=data["parser"],
+        parser_version=data["parser_version"],
+        page_count=data["page_count"],
+        warnings=[(code, page, detail) for code, page, detail in data["warnings"]],
+        pages=[
+            RawPage(
+                number=page["number"],
+                text=page["text"],
+                printed_label=page["printed_label"],
+                spans=None
+                if page["spans"] is None
+                else [RawSpan(BlockType(kind), start, end) for kind, start, end in page["spans"]],
+                tables=[
+                    RawTable(
+                        t["title"],
+                        [[(text, header) for text, header in row] for row in t["rows"]],
+                        [(start, end) for start, end in t["row_spans"]],
+                        t["method"],
+                    )
+                    for t in page["tables"]
+                ],
+                warnings=[(code, detail) for code, detail in page["warnings"]],
+            )
+            for page in data["pages"]
+        ],
+    )
+
+
+def _parse_in_child(content: bytes, detected: str, limits: dict[str, Any]) -> dict[str, Any]:
+    """Runs inside the isolated child; arguments arrive as JSON."""
+    return raw_document_to_json(
+        parse_document(
+            content, DetectedContentType(detected), ExtractionLimits.model_validate(limits)
+        )
+    )
+
+
+#: Formats whose parsers face untrusted structure (and pypdf / tree building) and so
+#: always run isolated. Plain text is a bounded decode and stays in-process.
+_ISOLATED: dict[DetectedContentType, tuple[DocumentFormat, str]] = {
+    DetectedContentType.PDF: (DocumentFormat.PDF, PDF_PARSER),
+    DetectedContentType.HTML: (DocumentFormat.HTML, HTML_PARSER),
+    DetectedContentType.SPREADSHEET: (DocumentFormat.SPREADSHEET, XLSX_PARSER),
+}
+#: Hard kill this long after `limits.max_seconds`, so the parser's own soft time check
+#: can still return a PARTIAL document first.
+HARD_DEADLINE_GRACE_SECONDS = 15.0
+_RESOURCE_FAILURES = {IsolationFailure.MEMORY_LIMIT, IsolationFailure.OUTPUT_TOO_LARGE}
+
+
 class LocalDocumentParser:
-    """DocumentParser over the local, dependency-light parsers above."""
+    """DocumentParser over the local, dependency-light parsers above. PDF, HTML and XLSX
+    are parsed in a killable child process (see `isolation`)."""
+
+    def __init__(
+        self,
+        *,
+        memory_bytes: int = DEFAULT_MEMORY_LIMIT_BYTES,
+        grace_seconds: float = HARD_DEADLINE_GRACE_SECONDS,
+    ) -> None:
+        self._memory_bytes = memory_bytes
+        self._grace_seconds = grace_seconds
 
     def parse(
         self, content: bytes, detected: DetectedContentType, limits: ExtractionLimits
     ) -> RawDocument:
-        return parse_document(content, detected, limits)
+        isolated = _ISOLATED.get(detected)
+        if isolated is None:
+            return parse_document(content, detected, limits)
+        result = run_isolated(
+            _parse_in_child,
+            content,
+            detected.value,
+            limits.model_dump(mode="json"),
+            limits=IsolationLimits(
+                seconds=limits.max_seconds + self._grace_seconds,
+                memory_bytes=self._memory_bytes,
+            ),
+        )
+        if result.failure is not None:
+            fmt, parser = isolated
+            status = (
+                ExtractionStatus.TOO_LARGE
+                if result.failure in _RESOURCE_FAILURES
+                else ExtractionStatus.FAILED
+            )
+            return _failed(fmt, parser, status, result.failure.value)
+        return raw_document_from_json(result.value)

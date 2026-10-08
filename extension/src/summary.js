@@ -55,6 +55,7 @@ export const SUMMARY_ERROR_LABELS = Object.freeze({
   UNSAFE_REQUEST: "The summary request failed a safety check.",
   SUMMARY_INPUT_TOO_LARGE: "This company's data is too large to summarise.",
   SUMMARY_REQUEST_TOO_LARGE: "This company's data is too large to summarise.",
+  SUMMARY_RATE_LIMITED: "Too many summaries were requested recently. Wait a few minutes and try again.",
   NETWORK_ERROR: "The local service is not reachable.",
   MALFORMED_RESPONSE: "The local service returned an unexpected summary.",
 });

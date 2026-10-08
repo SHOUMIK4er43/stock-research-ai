@@ -421,6 +421,11 @@ async function onResearchClick() {
     });
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      // Expired, revoked or replaced pairing: drop the stale token and ask to pair again.
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     renderState(States.FAILED, {
       job: {
         failure: {

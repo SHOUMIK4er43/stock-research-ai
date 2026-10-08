@@ -32,12 +32,14 @@ from stock_research_ai.adapters.http.browser_schemas import (
     PairingCompleteResponse,
     VersionResponse,
 )
+from stock_research_ai.adapters.http.rate_limit import RateLimited, SummaryRateLimiter
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
 from stock_research_ai.adapters.screener.source import validate_url
 from stock_research_ai.application.browser_jobs import (
     BrowserJobManager,
     BrowserResearchJob,
+    ResearchJobLimitError,
     UnsupportedPortalError,
     UnsupportedResearchPlanError,
 )
@@ -235,6 +237,7 @@ def create_app(
     pairing_store: PairingStore | None = None,
     report_repository: ReportRepository | None = None,
     summary_model_factory: Callable[[], SummaryModel] | None = None,
+    summary_rate_limiter: SummaryRateLimiter | None = None,
 ) -> FastAPI:
     """Create an HTTP adapter, owning resources only when none are supplied.
 
@@ -250,6 +253,7 @@ def create_app(
         active_report_repository = report_services.repository if report_services else None
     runtime_settings = settings if settings is not None else Settings()
     active_pairing_store = pairing_store or PairingStore(runtime_settings.browser_auth_path)
+    summary_limiter = summary_rate_limiter or SummaryRateLimiter()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -456,6 +460,11 @@ def create_app(
             return current_job_manager().launch(
                 payload.portal, payload.source_url, payload.research_plan
             )
+        except ResearchJobLimitError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": "RESEARCH_JOB_LIMIT_REACHED", "message": str(exc)},
+            ) from exc
         except UnsupportedPortalError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -528,6 +537,30 @@ def create_app(
             model = new_summary_model()
         except SummaryGenerationError as exc:
             raise _summary_http_error(exc) from None
+        # Rate limit only past auth (the route dependency), URL validation and provider
+        # configuration - none of those spend anything. From here on every request
+        # counts, whatever its outcome: the provider may have been charged.
+        try:
+            summary_limiter.acquire()
+        except RateLimited as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "code": "SUMMARY_RATE_LIMITED",
+                    "message": exc.message,
+                    "retryable": True,
+                    "ambiguous": False,
+                },
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from None
+        try:
+            return await _generate_summary(payload, model)
+        finally:
+            summary_limiter.release()
+
+    async def _generate_summary(
+        payload: BrowserSummaryRequest, model: SummaryModel
+    ) -> SummaryResult:
         extraction = await current_job_manager().engine.extract_company(
             ExtractionRequest(provider="screener", url=payload.source_url)
         )

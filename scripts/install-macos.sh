@@ -132,8 +132,12 @@ fi
 
 # --- Install/upgrade the application via uv (never touches the source repository) ---
 
-echo "Installing Stock Research AI from ${WHEEL} ..."
-uv tool install --force "$WHEEL"
+# The supported runtime: the same patched CPython 3.12 release as the repository's
+# .python-version (uv downloads it if it is not installed yet).
+PYTHON_VERSION="3.12.14"
+
+echo "Installing Stock Research AI from ${WHEEL} (Python ${PYTHON_VERSION}) ..."
+uv tool install --force --python "$PYTHON_VERSION" "$WHEEL"
 
 BINARY="$(command -v stock-research-ai || true)"
 if [[ -z "$BINARY" ]]; then

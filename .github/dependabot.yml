@@ -1,0 +1,24 @@
+# Weekly update PRs. The extension has no npm dependencies (no package-lock.json), so
+# there is no npm ecosystem to watch. Pinned tools outside these ecosystems (gitleaks in
+# security.yml, the uv version in the workflows, .python-version) are updated by hand.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # Development and audit tooling only; runtime dependencies stay one PR each so a
+      # behaviour change is reviewed on its own.
+      tooling:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5

@@ -83,7 +83,11 @@ def canonical_url(url: str) -> str:
     if parts.username or parts.password:
         raise ValueError("URL embeds credentials")
     host = parts.hostname.lower().rstrip(".")
-    port = parts.port
+    try:
+        port = parts.port
+    except ValueError:
+        # the stdlib message quotes the raw port text: replace it with a fixed one (P2-6)
+        raise ValueError("Unsupported URL") from None
     netloc = host if port in (None, 80 if scheme == "http" else 443) else f"{host}:{port}"
     path = quote(unquote(parts.path), safe=_PATH_SAFE) or "/"
     query = sorted(

@@ -15,12 +15,18 @@ MAX_BYTES = 5_000_000
 
 def validate_url(url: str) -> str:
     parts = urlsplit(url)
+    # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
+    # it reach an error message (P2-6). -1 is refused below like any other port.
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
     if (
         parts.scheme != "https"
         or parts.hostname != "www.screener.in"
         or parts.username
         or parts.password
-        or parts.port not in {None, 443}
+        or port not in {None, 443}
         or parts.query
         or parts.fragment
         or not re.fullmatch(r"/company/[A-Za-z0-9_-]+/(?:consolidated/)?", parts.path)

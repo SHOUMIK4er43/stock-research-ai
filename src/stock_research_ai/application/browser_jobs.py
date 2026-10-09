@@ -144,10 +144,16 @@ def _canonical_url(source_url: str) -> str:
     URL) keeps the previous scheme/host-lowercased, slash-trimmed form, never merged."""
     parts = urlsplit(source_url.strip())
     match = _SCREENER_PATH.fullmatch(parts.path)
+    # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
+    # it reach an error message (P2-6). -1 never matches the Screener form below.
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
     if (
         parts.scheme.lower() == "https"
         and parts.hostname == "www.screener.in"
-        and parts.port in (None, 443)
+        and port in (None, 443)
         and not (parts.username or parts.password or parts.query or parts.fragment)
         and match
     ):

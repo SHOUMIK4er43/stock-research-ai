@@ -412,6 +412,46 @@ async def test_unsupported_source_url_responses_do_not_echo_the_url(p2_client, v
         assert not _reflects(response, value)
 
 
+# The URL's port is parsed by the standard library, whose ValueError quotes the raw port
+# text ("Port could not be cast to integer value as '<text>'"): it must never reach a
+# response. (Only characters a URL port can carry: no '/', '?', '#' or '@'.)
+PORT_VALUES = [FAKE_SECRET.replace("-", "_"), "A" * 50_000, "C%3A%5CUsers%5Calice"]
+PORT_IDS = ["fake-secret", "50k-chars", "encoded-path"]
+
+
+@pytest.mark.parametrize("value", PORT_VALUES, ids=PORT_IDS)
+async def test_malformed_port_is_never_echoed(p2_client, value):
+    client, headers = p2_client
+    url = f"https://www.screener.in:{value}/company/INFY/"
+    for path in ("/v1/research-jobs", "/v1/summaries"):
+        response = await client.post(
+            path, json={"portal": "SCREENER", "source_url": url}, headers=headers
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "UNSUPPORTED_SOURCE_URL"
+        assert not _reflects(response, value)
+
+
+@pytest.mark.parametrize("value", PORT_VALUES, ids=PORT_IDS)
+def test_url_validators_refuse_a_malformed_port_with_fixed_text(value):
+    from stock_research_ai.adapters.documents.source import validate_url as validate_document
+    from stock_research_ai.adapters.screener.source import validate_url as validate_screener
+    from stock_research_ai.application.browser_jobs import _canonical_key
+    from stock_research_ai.application.evidence_catalogue import canonical_url
+
+    for validate, host in ((validate_document, "example.com"),
+                           (validate_screener, "www.screener.in")):  # fmt: skip
+        with pytest.raises(ValueError) as caught:
+            validate(f"https://{host}:{value}/company/INFY/")
+        assert value[:40] not in str(caught.value)
+    with pytest.raises(ValueError) as caught:
+        canonical_url(f"https://example.com:{value}/report.pdf")
+    assert value[:40] not in str(caught.value)
+    key = _canonical_key("SCREENER", f"https://www.screener.in:{value}/company/INFY/",
+                         "FULL_RESEARCH_V1")  # fmt: skip
+    assert key[1] != "https://www.screener.in/company/INFY/"  # never folded into INFY
+
+
 async def test_failed_job_shows_a_stable_message_and_logs_the_detail(
     p2_client, monkeypatch, tmp_path
 ):

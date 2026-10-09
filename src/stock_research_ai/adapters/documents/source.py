@@ -18,12 +18,18 @@ from stock_research_ai.domain.provenance import AcquiredPayload, RetrievalStatus
 
 def validate_url(url: str) -> str:
     parts = urlsplit(url)
+    # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
+    # it reach an error message (P2-6). -1 is refused below like any other port.
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
     if (
         parts.scheme != "https"
         or not parts.hostname
         or parts.username
         or parts.password
-        or parts.port not in {None, 443}
+        or port not in {None, 443}
         or "\\" in url
         or any(ord(c) < 32 for c in url)
     ):

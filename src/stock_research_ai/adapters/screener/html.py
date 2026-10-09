@@ -37,6 +37,14 @@ MAX_ATTRIBUTES = 64
 #: longest id-based locator base 43 ("#" + id). The caps leave ~5x and ~6x headroom.
 MAX_TAG_NAME_LENGTH = 64
 MAX_LOCATOR_LENGTH = 1024
+#: The ids of the Screener page sections that are parsed into records. Real pages hold
+#: each once (sibling <section>s, apart from #top-ratios inside #top), but nothing stops
+#: a page nesting them: an element belongs to its nearest enclosing section only, so a
+#: walk scoped to one section never enters another (one table is never read twice).
+SCREENER_SECTION_IDS = frozenset(
+    "top top-ratios quarters profit-loss balance-sheet cash-flow ratios shareholding peers "
+    "documents".split()
+)
 
 
 class HtmlLimitExceeded(ValueError):
@@ -99,12 +107,15 @@ class Node:
                 stack.pop()
         return "".join(parts)
 
-    def descendants(self) -> Iterator["Node"]:
-        """Every element below this one, in document order."""
+    def descendants(self, boundary: frozenset[str] = frozenset()) -> Iterator["Node"]:
+        """Every element below this one, in document order, skipping the subtree of any
+        element whose id is in `boundary`."""
         stack = [iter(self.children)]
         while stack:
             for child in stack[-1]:
                 if isinstance(child, Node):
+                    if child.attrs.get("id") in boundary:
+                        continue
                     yield child
                     stack.append(iter(child.children))
                     break
@@ -200,5 +211,10 @@ def rows(table: Node) -> list[list[Node]]:
     ]
 
 
+def owned(section: Node, tag: str | None = None) -> list[Node]:
+    """The elements of `section` that belong to it: none inside another Screener section."""
+    return [n for n in section.descendants(SCREENER_SECTION_IDS) if tag is None or n.tag == tag]
+
+
 def data_tables(section: Node) -> list[Node]:
-    return [t for t in section.all("table") if "data-table" in t.attrs.get("class", "").split()]
+    return [t for t in owned(section, "table") if "data-table" in t.attrs.get("class", "").split()]

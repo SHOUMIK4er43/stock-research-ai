@@ -19,6 +19,7 @@ from stock_research_ai.adapters.screener.html import (
     Node,
     Page,
     data_tables,
+    owned,
     rows,
 )
 from stock_research_ai.adapters.screener.metrics import clean_label
@@ -187,7 +188,7 @@ class ScreenerEvidenceSource:
             # silently skipped); a concall row's period label applies to its own links.
             heading = None
             row_periods: dict[int, str] = {}
-            for node in documents.all():
+            for node in owned(documents):
                 if node.tag == "h3":
                     heading = node.text or None
                 elif node.tag == "li" and (heading or "").lower() == "concalls":

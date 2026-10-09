@@ -21,9 +21,10 @@ from stock_research_ai.adapters.screener.html import (
     Node,
     Page,
     data_tables,
+    owned,
     rows,
 )
-from stock_research_ai.adapters.screener.metrics import clean_label
+from stock_research_ai.adapters.screener.metrics import OutputBudget, clean_label
 from stock_research_ai.adapters.screener.peers_api import PeerFetch, ScreenerPeerClient
 from stock_research_ai.adapters.screener.values import parse_value
 from stock_research_ai.domain.extraction import CompanyExtractionResult
@@ -133,14 +134,23 @@ class _Builder:
             content.decode(artifact.encoding, errors="strict"), MAX_SCREENER_NODES
         ).root
         self.issues: list[DatasetIssue] = []
+        # The extraction's output budget, charged per kept record (with the source text it
+        # copies) before it is built: past it, the whole dataset fails closed.
+        self.budget = OutputBudget()
+
+    def charged(self, *texts: str | None) -> bool:
+        self.budget.charge(*texts)
+        return True
 
     def issue(self, code: str, section: str, node: Node | None = None, text: str = "") -> None:
+        displayed = " ".join(text.split())[:300]
+        self.budget.charge(displayed)
         self.issues.append(
             DatasetIssue(
                 code=code,
                 section=section,
                 locator=node.locator if node is not None else None,
-                displayed=" ".join(text.split())[:300] or None,
+                displayed=displayed or None,
             )
         )
 
@@ -167,13 +177,15 @@ class _Builder:
         classification = tuple(
             ClassificationLevel(level=a.attrs["title"], name=a.text, url=self.url(a))
             for a in (peers.all("a") if peers else [])
-            if a.attrs.get("title") in _CLASSIFICATION_LEVELS and "href" in a.attrs
+            if a.attrs.get("title") in _CLASSIFICATION_LEVELS
+            and "href" in a.attrs
+            and self.charged(a.text, a.attrs["href"])
         )
         benchmarks = self.root.by_id("benchmarks")
         memberships = tuple(
             NamedLink(name=a.text, url=self.url(a))
             for a in (benchmarks.all("a") if benchmarks else [])
-            if a.text and "href" in a.attrs
+            if a.text and "href" in a.attrs and self.charged(a.text, a.attrs["href"])
         )
         return ScreenerCompanyProfile(
             name=self.identity.name,
@@ -217,12 +229,15 @@ class _Builder:
             self.issue("SECTION_MISSING", "top-ratios")
             return ()
         metrics: list[SnapshotMetric] = []
-        for item in ratios.all("li"):
+        for item in owned(ratios, "li"):
             name, value = item.by_class("name"), item.by_class("value")
             if name is None or value is None:
                 self.issue("MALFORMED_METRIC", "top-ratios", item, item.text)
                 continue
             numbers = [n for n in value.all("span") if "number" in _classes(n)]
+            self.budget.charge(name.text, value.raw_text)
+            for number in numbers if len(numbers) > 1 else ():
+                self.budget.charge(number.text)
             components: tuple[SnapshotComponent, ...] = ()
             main = _displayed(value.raw_text)
             if len(numbers) > 1:
@@ -267,7 +282,10 @@ class _Builder:
                 result.append(table)
         holding = self.root.by_id("shareholding")
         for kind, holder_id in _SHAREHOLDING_TABLES.items():
-            container = holding.by_id(holder_id) if holding else None
+            container = next(
+                (n for n in (owned(holding) if holding else []) if n.attrs.get("id") == holder_id),
+                None,
+            )
             found = data_tables(container) if container else []
             if not found or holding is None:
                 self.issue("SECTION_MISSING", holder_id)
@@ -306,14 +324,18 @@ class _Builder:
                 self.issue("MALFORMED_ROW", section_id, row[0], row[0].text)
                 continue
             displayed_label = row[0].text
+            self.budget.charge(displayed_label)
             label = clean_label(displayed_label)
             unit = _row_unit(kind, label, caption)
             cells: list[TableCell] = []
             for period, cell in zip(periods, row[1:], strict=True):
+                links = [a for a in cell.all("a") if "href" in a.attrs]
+                self.budget.charge(
+                    period.label, cell.raw_text, links[0].attrs["href"] if links else None
+                )
                 value = _displayed(cell.raw_text, unit)
                 if value.status == ValueStatus.PARSE_ERROR:
                     self.issue("PARSE_ERROR", section_id, cell, cell.text)
-                links = [a for a in cell.all("a") if "href" in a.attrs]
                 cells.append(
                     TableCell(
                         period=period.label,
@@ -346,7 +368,7 @@ class _Builder:
     def growth(self) -> tuple[GrowthTable, ...]:
         section = self.root.by_id("profit-loss")
         found = [
-            t for t in (section.all("table") if section else []) if "ranges-table" in _classes(t)
+            t for t in (owned(section, "table") if section else []) if "ranges-table" in _classes(t)
         ]
         result: list[GrowthTable] = []
         for table in found:
@@ -354,6 +376,7 @@ class _Builder:
             if not contents or len(contents[0]) != 1 or not contents[0][0].text:
                 self.issue("MALFORMED_GROWTH_TABLE", "profit-loss", table)
                 continue
+            self.budget.charge(contents[0][0].text)
             entries: list[GrowthEntry] = []
             for row in contents[1:]:
                 if len(row) != 2 or not row[0].text:
@@ -361,6 +384,7 @@ class _Builder:
                         "MALFORMED_GROWTH_ROW", "profit-loss", table, row[0].text if row else ""
                     )
                     continue
+                self.budget.charge(row[0].text, row[1].raw_text)
                 value = _displayed(row[1].raw_text)
                 if value.status == ValueStatus.PARSE_ERROR:
                     self.issue("PARSE_ERROR", "profit-loss", row[1], row[1].text)
@@ -386,8 +410,12 @@ class _Builder:
             return None
         pros, cons = analysis.by_class("pros"), analysis.by_class("cons")
         return MachineGeneratedNotes(
-            pros=tuple(li.text for li in pros.all("li") if li.text) if pros else (),
-            cons=tuple(li.text for li in cons.all("li") if li.text) if cons else (),
+            pros=tuple(li.text for li in pros.all("li") if li.text and self.charged(li.text))
+            if pros
+            else (),
+            cons=tuple(li.text for li in cons.all("li") if li.text and self.charged(li.text))
+            if cons
+            else (),
         )
 
     def gated_sections(self) -> None:
@@ -408,6 +436,7 @@ def parse_peer_fragment(fetch: PeerFetch, subject_company_key: str) -> PeerCompa
     contents = rows(tables[0])
     if not contents or len(contents[0]) < 3:
         return None
+    budget = OutputBudget()  # a separate fetch: its own budget, as large as a page's
     columns = tuple(h.text for h in contents[0])
     peers: list[PeerRow] = []
     summaries: list[PeerRow] = []
@@ -417,17 +446,20 @@ def parse_peer_fragment(fetch: PeerFetch, subject_company_key: str) -> PeerCompa
             continue
         links = [a for a in row[1].all("a") if "href" in a.attrs]
         company_id = tr.attrs.get("data-row-company-id")
-        cells = tuple(
-            PeerCell(column=column, value=_displayed(cell.raw_text, _peer_unit(column)))
-            for column, cell in zip(columns[2:], row[2:], strict=True)
-        )
+        budget.charge(row[0].text, row[1].text, links[0].attrs["href"] if links else None)
+        cells: list[PeerCell] = []
+        for column, cell in zip(columns[2:], row[2:], strict=True):
+            budget.charge(column, cell.raw_text)
+            cells.append(
+                PeerCell(column=column, value=_displayed(cell.raw_text, _peer_unit(column)))
+            )
         entry = PeerRow(
             rank=row[0].text,
             name=row[1].text,
             company_url=urljoin(fetch.url, links[0].attrs["href"]) if links else None,
             screener_company_id=company_id if company_id and company_id.isdigit() else None,
             is_subject_company=company_id == subject_company_key,
-            cells=cells,
+            cells=tuple(cells),
         )
         (peers if company_id else summaries).append(entry)
     content = fetch.content

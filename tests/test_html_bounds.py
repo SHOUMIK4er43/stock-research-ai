@@ -242,9 +242,11 @@ def _with_cells(html: str, table_rows: int) -> str:
 
 
 async def test_event_loop_stays_responsive_on_the_worst_accepted_page(fixture_dir, tmp_path):
-    # Observations, not markup, dominate cost: fill the Screener cap with data cells.
+    # Observations, not markup, dominate cost: the extraction record budget, not the node
+    # cap, now bounds them (test_screener_output_bounds.py), so fill that budget instead -
+    # 1,500 unmapped cells (an observation and an issue each) on top of the real page.
     html = (fixture_dir / "yesbank_consolidated.html").read_text()
-    hostile = _with_cells(html, 1_200)  # ~18,800 nodes, just under MAX_SCREENER_NODES
+    hostile = _with_cells(html, 125)
     ticks: list[float] = []
 
     async def heartbeat():
@@ -275,7 +277,7 @@ async def test_event_loop_stays_responsive_on_the_worst_accepted_page(fixture_di
         beat.cancel()
         await database.close()
     assert result.company is not None  # accepted: the bound is not hit
-    assert len(result.quarterly) > 14_000
+    assert len(result.quarterly) == 169 + 125 * 12
     gaps = [b - a for a, b in zip(ticks, ticks[1:], strict=False)]
     assert max(gaps) < 0.5  # the old in-loop parse stalled for seconds
 

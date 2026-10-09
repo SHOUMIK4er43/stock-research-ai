@@ -126,7 +126,7 @@ def _flat(raw: str) -> str:
 # --- line classification -----------------------------------------------------------------------
 
 _NUMBER = r"\(?[-–−]?\d[\d,]*(?:\.\d+)?\)?%?|[-–—]"
-_TRAILING = re.compile(rf"(?:\s+|^)({_NUMBER})\s*$")
+_NUMBER_TOKEN = re.compile(_NUMBER)
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
 _HEADER_HINT = re.compile(
     r"particulars|as at|year ended|quarter ended|note|months ended|audited|unaudited", re.I
@@ -137,16 +137,25 @@ _FOOTNOTE = re.compile(r"^\s*(?:\*|#|†|notes?\s*:)", re.I)
 
 
 def trailing_numbers(line: str) -> tuple[str, list[str]]:
-    """(label, number-like tokens) peeled from the right of a line."""
+    """(label, number-like tokens) peeled from the right of a line.
+
+    A token is a whole whitespace-delimited word that fully matches _NUMBER. The scan
+    walks right to left once (linear in the line), instead of re-searching the whole
+    remaining line per token, which was quadratic on long hostile lines."""
     tokens: list[str] = []
-    rest = line.rstrip()
-    while True:
-        match = _TRAILING.search(rest)
-        if not match:
+    end = len(line.rstrip())
+    while end:
+        start = end
+        while start and not line[start - 1].isspace():
+            start -= 1
+        if not _NUMBER_TOKEN.fullmatch(line, start, end):
             break
-        tokens.insert(0, match.group(1))
-        rest = rest[: match.start()].rstrip()
-    return rest.strip(), tokens
+        tokens.append(line[start:end])
+        end = start
+        while end and line[end - 1].isspace():
+            end -= 1
+    tokens.reverse()
+    return line[:end].strip(), tokens
 
 
 def _is_heading(line: str) -> bool:

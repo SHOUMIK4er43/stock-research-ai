@@ -37,8 +37,15 @@ _NUMBER = re.compile(
     r"|(?:₹|rs\.?|inr|us\$|\$|usd)\s*\d",
     re.I,
 )
-_TRAILING_WORD = re.compile(r"(\w+)\W*$")
+# Matched against the REVERSED text: anchored and linear. The equivalent forward search
+# `(\w+)\W*$` retries every start position and is quadratic on long words.
+_LAST_WORD_REVERSED = re.compile(r"\W*(\w+)")
 _MIN_WORDS = 5
+
+
+def _last_word(text: str) -> str | None:
+    match = _LAST_WORD_REVERSED.match(text[::-1])
+    return match.group(1)[::-1] if match else None
 
 
 def sentences(text: str) -> list[tuple[int, int]]:
@@ -48,11 +55,8 @@ def sentences(text: str) -> list[tuple[int, int]]:
     start = 0
     for m in SENTENCE_END.finditer(text):
         end = m.start() + len(m.group().rstrip())
-        word = _TRAILING_WORD.search(text[start : m.start()])
-        if word and (
-            word.group(1).lower() in ABBREVIATIONS
-            or (len(word.group(1)) == 1 and word.group(1).isupper())
-        ):
+        word = _last_word(text[start : m.start()])
+        if word and (word.lower() in ABBREVIATIONS or (len(word) == 1 and word.isupper())):
             continue
         spans.append((start, end))
         start = m.end()

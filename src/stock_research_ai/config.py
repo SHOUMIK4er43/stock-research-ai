@@ -5,6 +5,13 @@ from pathlib import Path
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The only bind hosts `serve-http` accepts, and the only Host headers its TrustedHost
+#: middleware serves (interfaces/http.py). The service is local-first with no LAN mode:
+#: 0.0.0.0, ::, a LAN or public address, or any other name would expose the paired
+#: browser API beyond this machine, and is refused at startup rather than silently bound.
+#: ::1 is loopback, but the HTTP layer serves IPv4 loopback only, so it is refused too.
+LOOPBACK_BIND_HOSTS = ("127.0.0.1", "localhost")
+
 
 class Settings(BaseSettings):
     """Environment settings; construction never creates directories or files."""
@@ -61,6 +68,17 @@ class Settings(BaseSettings):
     log_path: Path = Field(
         default_factory=lambda: Path.home() / ".stock-research-ai" / "logs" / "service.log"
     )
+
+    @field_validator("http_host")
+    @classmethod
+    def loopback_http_host(cls, value: str) -> str:
+        host = value.strip().lower()
+        if host not in LOOPBACK_BIND_HOSTS:
+            raise ValueError(
+                "http_host must be 127.0.0.1 or localhost: the local service is never "
+                "exposed on another interface"
+            )
+        return host
 
     @field_validator("database_path")
     @classmethod

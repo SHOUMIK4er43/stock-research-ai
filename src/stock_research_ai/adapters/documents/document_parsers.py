@@ -17,7 +17,7 @@ import time
 import zipfile
 from collections.abc import Iterator
 from io import BytesIO
-from typing import Any, cast
+from typing import Any
 from xml.etree import ElementTree
 
 import pypdf
@@ -281,28 +281,71 @@ class _SpreadsheetTooLarge(ValueError):
     """A workbook index part exceeds its size bound."""
 
 
+class XmlForbidden(ValueError):
+    """The XML declares a DTD (and so could declare entities): never parsed further."""
+
+
 def _reject_dtd(head: bytes) -> None:
+    """Cheap early refusal of an obvious prolog DTD. Not the guard: a long prolog
+    comment or a UTF-16 part slips past a byte sniff - `_GuardedBuilder` is the guard."""
     upper = head[:2048].upper()
     if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
-        raise ValueError("DTD not allowed")
+        raise XmlForbidden("DTD not allowed")
+
+
+class _GuardedBuilder(ElementTree.TreeBuilder):
+    """A TreeBuilder that refuses any DTD and records start/end events.
+
+    expat reports `<!DOCTYPE` to `doctype()` before it reads the internal subset, so no
+    entity is ever declared - internal expansion (billion laughs) and external
+    file/network entities are impossible; an undeclared `&name;` is a ParseError. This is
+    defusedxml's `forbid_dtd`, in the standard library, independent of encoding and of
+    where in the prolog the DTD appears."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[tuple[str, ElementTree.Element]] = []
+
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        raise XmlForbidden("DTD not allowed")
+
+    def start(self, tag: str, attrs: dict[str, str]) -> ElementTree.Element:
+        element = super().start(tag, attrs)
+        self.events.append(("start", element))
+        return element
+
+    def end(self, tag: str) -> ElementTree.Element:
+        element = super().end(tag)
+        self.events.append(("end", element))
+        return element
+
+
+def _guarded_parser() -> tuple[ElementTree.XMLParser, _GuardedBuilder]:
+    builder = _GuardedBuilder()
+    return ElementTree.XMLParser(target=builder), builder
+
+
+def parse_untrusted_xml(data: bytes) -> ElementTree.Element:
+    """Parse one whole untrusted XML document with DTDs (and so entities) forbidden."""
+    _reject_dtd(data)
+    parser, _ = _guarded_parser()
+    parser.feed(data)
+    root: ElementTree.Element = parser.close()
+    return root
 
 
 def _xml(archive: zipfile.ZipFile, name: str) -> ElementTree.Element:
     """Read one small index part (workbook, relationships) whole."""
     if archive.getinfo(name).file_size > _MAX_XLSX_INDEX_PART:
         raise _SpreadsheetTooLarge(name)
-    data = archive.read(name)
-    _reject_dtd(data)
-    return ElementTree.fromstring(data)
+    return parse_untrusted_xml(archive.read(name))
 
 
 def _stream(archive: zipfile.ZipFile, name: str, tag: str) -> Iterator[ElementTree.Element]:
     """Yield each completed `tag` element of one part while streaming it. Every finished
     element is detached from its parent, so memory follows one element at a time - never
     the part size, and never a declared sheet dimension. Stopping early stops reading."""
-    parser: ElementTree.XMLPullParser[ElementTree.Element] = ElementTree.XMLPullParser(
-        events=("start", "end")
-    )
+    parser, builder = _guarded_parser()
     stack: list[ElementTree.Element] = []
     open_targets = 0  # `tag` elements on `stack`: O(1) per event, never a stack scan
     with archive.open(name) as handle:
@@ -310,8 +353,8 @@ def _stream(archive: zipfile.ZipFile, name: str, tag: str) -> Iterator[ElementTr
         _reject_dtd(chunk)
         while chunk:
             parser.feed(chunk)
-            for event, element in cast(Iterator[tuple[str, Any]], parser.read_events()):
-                assert isinstance(element, ElementTree.Element)  # start/end events only
+            events, builder.events = builder.events, []
+            for event, element in events:
                 if event == "start":
                     stack.append(element)
                     open_targets += element.tag == tag

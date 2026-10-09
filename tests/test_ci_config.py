@@ -62,9 +62,15 @@ def test_downloaded_tools_are_verified():
     assert re.search(r'audit = \[\n    "pip-audit==[\d.]+",\n\]', pyproject)
 
 
-def test_audit_ignores_are_exact_ids_not_packages():
+def test_dependency_audit_ignores_no_advisory():
+    """P2-8: the PyJWT upgrade closed every accepted advisory; any advisory now fails."""
     security = (ROOT / ".github" / "workflows" / "security.yml").read_text()
-    block = security.split("ACCEPTED_ADVISORIES: >-", 1)[1].split("run:", 1)[0]
-    ids = block.split()
-    assert ids and all(re.fullmatch(r"PYSEC-\d{4}-\d+", i) for i in ids)
-    assert "--ignore-vuln" in security and "--skip" not in security
+    assert "--ignore-vuln" not in security and "--skip" not in security
+    assert "ACCEPTED_ADVISORIES" not in security and "continue-on-error" not in security
+    assert "--only-group audit pip-audit" in security and "--require-hashes" in security
+
+
+def test_locked_pyjwt_is_the_patched_release():
+    lock = (ROOT / "uv.lock").read_text()
+    version = re.search(r'name = "pyjwt"\nversion = "([\d.]+)"', lock)
+    assert version and tuple(map(int, version.group(1).split("."))) >= (2, 15, 1)

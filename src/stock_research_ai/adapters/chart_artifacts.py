@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from stock_research_ai.domain.financial_charts import FinancialChartBundle
+from stock_research_ai.private_files import ensure_private_dir
 
 
 def write_chart_artifacts(bundle: FinancialChartBundle, root: Path) -> list[Path]:
@@ -17,7 +18,7 @@ def write_chart_artifacts(bundle: FinancialChartBundle, root: Path) -> list[Path
         if hashlib.sha256(data).hexdigest() != artifact.sha256:
             raise ValueError(f"artifact {artifact.name} does not match its hash")
         destination = root / artifact.content_reference
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(destination.parent)
         if destination.exists():
             if destination.read_bytes() != data:
                 raise ValueError(f"{destination} exists with different content")

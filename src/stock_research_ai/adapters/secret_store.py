@@ -8,10 +8,10 @@ No plaintext-file fallback or cross-provider credential lookup is performed.
 
 import shutil
 import subprocess
-from collections.abc import Callable
 from typing import Literal, Protocol
 
 from stock_research_ai.config import Settings
+from stock_research_ai.logging_setup import register_secret
 
 #: The exact (account, service) pair the Keychain item is filed under. `service` is
 #: namespaced to this application so it can never collide with, or be confused for,
@@ -30,6 +30,20 @@ def _account(provider: str) -> str:
 
 
 CredentialSource = Literal["environment", "keychain", "none"]
+
+
+class KeychainRunner(Protocol):
+    """Runs `security` with an argv list and optional stdin text (never a shell)."""
+
+    def __call__(
+        self, argv: list[str], stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+def _interactive_quote(value: str) -> str:
+    """Quotes one word for `security -i`, whose tokenizer honours double quotes and
+    backslash escapes (verified against macOS `security`)."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 class SecretStoreUnavailableError(RuntimeError):
@@ -73,23 +87,25 @@ class EnvironmentSecretStore:
 
 class MacOSKeychainSecretStore:
     """Stores secrets in the current user's macOS login Keychain via the platform's
-    own built-in `/usr/bin/security` CLI - no third-party dependency. Every value
-    round-trips through a subprocess argv list, never a shell string, so no value is
-    ever exposed to shell interpretation.
+    own built-in `/usr/bin/security` CLI - no third-party dependency. Subprocesses
+    take an argv list, never a shell string. A secret being stored never appears in
+    argv (which other local processes can read via `ps`): `set` runs `security -i`
+    and writes the quoted command to its stdin instead.
 
     `runner` is injectable so tests can prove behavior (including "Keychain
     unavailable") without touching a real Keychain or requiring macOS at all.
     """
 
-    def __init__(
-        self,
-        runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
-    ) -> None:
+    def __init__(self, runner: KeychainRunner | None = None) -> None:
         self._run = runner or self._default_runner
 
     @staticmethod
-    def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
+    def _default_runner(
+        argv: list[str], stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            argv, input=stdin, capture_output=True, text=True, timeout=10, check=False
+        )
 
     def _security_path(self) -> str:
         path = shutil.which("security") or "/usr/bin/security"
@@ -120,19 +136,24 @@ class MacOSKeychainSecretStore:
         return value or None
 
     def set(self, name: str, value: str) -> None:
-        argv = [
-            self._security_path(),
-            "add-generic-password",
-            "-a",
-            name,
-            "-s",
-            _KEYCHAIN_SERVICE,
-            "-w",
-            value,
-            "-U",  # update in place if an item already exists, rather than erroring
-        ]
+        if any(ord(c) < 32 or ord(c) == 127 for c in value + name):
+            # `security -i` reads one command per line; a control character could end
+            # the command early. Never echo the value itself.
+            raise ValueError("The credential must not contain control characters.")
+        command = " ".join(
+            [
+                "add-generic-password",
+                "-a",
+                _interactive_quote(name),
+                "-s",
+                _interactive_quote(_KEYCHAIN_SERVICE),
+                "-U",  # update in place if an item already exists, rather than erroring
+                "-w",
+                _interactive_quote(value),
+            ]
+        )
         try:
-            result = self._run(argv)
+            result = self._run([self._security_path(), "-i"], command + "\n")
         except (OSError, subprocess.SubprocessError):
             raise SecretStoreUnavailableError(
                 "macOS Keychain is unavailable (`/usr/bin/security` could not be run)."
@@ -176,6 +197,7 @@ def resolve_analyst_api_key(
     environment = EnvironmentSecretStore(settings)
     value = environment.get(account)
     if value:
+        register_secret(value)
         return value, "environment"
     store = keychain if keychain is not None else MacOSKeychainSecretStore()
     try:
@@ -183,6 +205,7 @@ def resolve_analyst_api_key(
     except SecretStoreUnavailableError:
         return None, "none"
     if value:
+        register_secret(value)
         return value, "keychain"
     return None, "none"
 

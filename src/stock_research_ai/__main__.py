@@ -486,7 +486,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         from stock_research_ai.interfaces.http import create_app
         from stock_research_ai.logging_setup import configure_logging
 
-        service_logger = configure_logging(settings.log_path)
+        service_logger = configure_logging(
+            settings.log_path,
+            known_secrets=[
+                secret.get_secret_value()
+                for secret in (settings.analyst_api_key, settings.aicredits_api_key)
+                if secret is not None
+            ],
+        )
         # Part 6C-A single-process/single-worker invariant: BrowserJobManager holds
         # in-flight research jobs in memory, so a second worker process would never
         # see (and could never resolve) jobs launched against the first - there is
@@ -540,7 +547,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("No API key entered.")
         try:
             store_analyst_api_key_in_keychain(api_key, provider=args.provider)
-        except SecretStoreUnavailableError as exc:
+        except (SecretStoreUnavailableError, ValueError) as exc:
             parser.error(f"Could not store the key in Keychain: {exc}")
         variable = (
             "STOCK_RESEARCH_AI_AICREDITS_API_KEY" if args.provider == "aicredits"

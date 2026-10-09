@@ -10,7 +10,6 @@ cookies are carried between hops. Failures are typed outcomes, never exceptions.
 
 import asyncio
 import hashlib
-import ipaddress
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +19,7 @@ from uuid import uuid4
 
 import httpx
 
+from stock_research_ai.adapters.documents.pinned import PinnedTransport, is_public_address, pin_key
 from stock_research_ai.adapters.documents.source import public_addresses, validate_url
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.domain.evidence_retrieval import FetchResult, RedirectHop, StoredArtifact
@@ -41,10 +41,7 @@ def unsupported_code(url: str) -> str:
 
 
 def _public(addresses: list[str]) -> bool:
-    try:
-        return bool(addresses) and all(ipaddress.ip_address(a).is_global for a in addresses)
-    except ValueError:
-        return False
+    return bool(addresses) and all(is_public_address(a) for a in addresses)
 
 
 class SafeEvidenceFetcher:
@@ -84,8 +81,11 @@ class SafeEvidenceFetcher:
         except ValueError:
             return result("UNSUPPORTED", unsupported_code(url))
         seen = {current}
+        # Without an injected transport, each hop connects only to the addresses
+        # validated for it below (resolved-IP pinning, no second DNS lookup).
+        pins: dict[str, tuple[str, ...]] = {}
         async with httpx.AsyncClient(
-            transport=self._transport,
+            transport=self._transport or PinnedTransport(pins),
             timeout=httpx.Timeout(timeout_seconds),
             trust_env=False,
             follow_redirects=False,
@@ -93,12 +93,18 @@ class SafeEvidenceFetcher:
         ) as client:
             while True:
                 try:
-                    addresses = await self._lookup(urlsplit(current).hostname or "")
+                    host = pin_key(current)
+                except ValueError:
+                    return result("BLOCKED" if hops else "UNSUPPORTED", "PRIVATE_DESTINATION")
+                try:
+                    addresses = await self._lookup(host)
                 except OSError:
                     return result("FAILED", "DNS_FAILED", final_url=current)
                 if not _public(addresses):
                     outcome = "BLOCKED" if hops else "UNSUPPORTED"
                     return result(outcome, "PRIVATE_DESTINATION", final_url=current)
+                pins.clear()
+                pins[host] = tuple(addresses)
                 client.cookies.clear()  # nothing is carried from one hop to the next
                 try:
                     async with client.stream("GET", current) as response:

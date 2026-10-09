@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -51,6 +50,7 @@ from stock_research_ai.domain.report import ResearchReportSnapshot
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 from stock_research_ai.domain.technicals import TechnicalSnapshot
 from stock_research_ai.domain.valuation import ValuationSnapshot
+from stock_research_ai.private_files import create_private_file, ensure_private_dir
 
 
 class DatabaseNotReadyError(RuntimeError):
@@ -232,15 +232,8 @@ class SQLiteDatabase:
         """Create the data directory and initial schema only on explicit request."""
         if self._read_only:
             raise DatabaseNotReadyError("Cannot initialize through a read-only connection.")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self.path.touch(exist_ok=False)
-        except FileExistsError:
-            pass
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass  # best-effort: not every filesystem/OS supports POSIX permission bits
+        ensure_private_dir(self.path.parent)
+        create_private_file(self.path)  # 0600 from creation; SQLite copies it to -wal/-shm
         async with self._engine.begin() as connection:
             # Guard before create_all: an unknown future schema must never be
             # normalized to this build's tables or version.

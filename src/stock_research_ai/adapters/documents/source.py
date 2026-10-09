@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import httpx
 
+from stock_research_ai.adapters.documents.pinned import PinnedTransport, is_public_address, pin_key
 from stock_research_ai.domain.documents import DocumentRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, RetrievalStatus, SourceRetrieval
 
@@ -35,7 +36,7 @@ def validate_url(url: str) -> str:
     except ValueError:
         pass
     else:
-        if not address.is_global:
+        if not is_public_address(str(address)):
             raise ValueError("Document URL must not address a private network")
     return url
 
@@ -80,22 +81,27 @@ class DocumentSource:
                         "Document exceeds maximum file size; stored bytes are incomplete"
                     )
             else:
+                # Without an injected transport, each hop connects only to the addresses
+                # validated for it below (resolved-IP pinning, no second DNS lookup).
+                pins: dict[str, tuple[str, ...]] = {}
+                transport = self.transport or PinnedTransport(pins)
                 async with asyncio.timeout(self.timeout):
                     async with httpx.AsyncClient(
-                        transport=self.transport,
+                        transport=transport,
                         timeout=self.timeout,
                         trust_env=False,
                         follow_redirects=False,
                         headers={"User-Agent": "StockResearchAI/0.1 (public document evidence)"},
                     ) as client:
                         for _ in range(5):
-                            addresses = await self.lookup(urlsplit(final).hostname or "")
-                            if not addresses or any(
-                                not ipaddress.ip_address(a).is_global for a in addresses
-                            ):
+                            host = pin_key(final)
+                            addresses = await self.lookup(host)
+                            if not addresses or not all(is_public_address(a) for a in addresses):
                                 raise ValueError(
                                     "Document host does not resolve exclusively to public addresses"
                                 )
+                            pins.clear()
+                            pins[host] = tuple(addresses)
                             content = b""
                             async with client.stream("GET", final) as response:
                                 retrieval = retrieval.model_copy(

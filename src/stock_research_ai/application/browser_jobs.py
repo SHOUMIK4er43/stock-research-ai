@@ -22,6 +22,7 @@ Resource bounds (single local user, single worker process):
 """
 
 import asyncio
+import logging
 import re
 from collections import deque
 from collections.abc import Callable
@@ -64,6 +65,28 @@ class JobFailureCode(StrEnum):
     REPORT_GENERATION_FAILED = "REPORT_GENERATION_FAILED"
     INTEGRITY_FAILURE = "INTEGRITY_FAILURE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+#: P2-6: what a browser sees for a failed job. Fixed text per code - never the raw
+#: exception, which can carry local paths, SQL, provider responses or input echoes. The
+#: exception itself is logged (redacted) to the local service log under the job id.
+_PUBLIC_FAILURE_MESSAGES: dict[JobFailureCode, str] = {
+    JobFailureCode.UNSUPPORTED_PORTAL: "This portal is not supported",
+    JobFailureCode.UNSUPPORTED_SOURCE_URL: "This page is not a supported company page",
+    JobFailureCode.LOCAL_CONFIGURATION_ERROR: "The local service is not configured correctly",
+    JobFailureCode.ANALYST_UNAVAILABLE: "Analyst services are not configured",
+    JobFailureCode.EVIDENCE_ACQUISITION_FAILED: "Company evidence could not be acquired",
+    JobFailureCode.ANALYSIS_FAILED: "The analysis stage failed",
+    JobFailureCode.CHALLENGE_FAILED: "The challenge stage failed",
+    JobFailureCode.REPORT_GENERATION_FAILED: "The report could not be generated",
+    JobFailureCode.INTEGRITY_FAILURE: "A research integrity check failed",
+    JobFailureCode.INTERNAL_ERROR: "An internal error occurred",
+}
+_logger = logging.getLogger("stock_research_ai.jobs")
+
+
+def public_failure_message(code: JobFailureCode, job_id: UUID) -> str:
+    return f"{_PUBLIC_FAILURE_MESSAGES[code]}. Details are in the local service log (job {job_id})."
 
 
 class UnsupportedPortalError(ValueError):
@@ -207,9 +230,9 @@ class BrowserJobManager:
 
     def launch(self, portal: str, source_url: str, research_plan: str) -> BrowserResearchJob:
         if portal != "SCREENER":
-            raise UnsupportedPortalError(portal)
+            raise UnsupportedPortalError("Unsupported portal")
         if research_plan != "FULL_RESEARCH_V1":
-            raise UnsupportedResearchPlanError(research_plan)
+            raise UnsupportedResearchPlanError("Unsupported research plan")
         key = _canonical_key(portal, source_url, research_plan)
         existing_id = self._running_by_key.get(key)
         if existing_id is not None:
@@ -307,10 +330,14 @@ class BrowserJobManager:
         except Exception as exc:  # classified into a typed failure immediately below
             current_stage = self._jobs[job_id].current_stage
             code = _classify_failure(current_stage, exc)
+            _logger.warning(
+                "research job %s failed: %s at stage %s", job_id, code, current_stage,
+                exc_info=exc,
+            )
             self._update(
                 job_id,
                 status=JobStatus.FAILED,
-                failure=JobFailure(code=code, message=str(exc)),
+                failure=JobFailure(code=code, message=public_failure_message(code, job_id)),
                 completed_at=datetime.now(UTC),
             )
         else:

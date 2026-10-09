@@ -101,8 +101,8 @@ def test_keychain_separate_slot_and_env_precedence():
 def test_platform_keychain_slot_roundtrip_with_fake_runner():
     calls = []
 
-    def runner(argv):
-        calls.append(argv)
+    def runner(argv, stdin=None):
+        calls.append(argv + ([stdin] if stdin else []))
         return subprocess.CompletedProcess(argv, 0, "ai-key\n", "")
 
     keychain = MacOSKeychainSecretStore(runner=runner)
@@ -110,7 +110,8 @@ def test_platform_keychain_slot_roundtrip_with_fake_runner():
     assert resolve_analyst_api_key(
         Settings(_env_file=None, analyst_provider="aicredits"), keychain
     ) == ("ai-key", "keychain")
-    assert all(c[c.index("-a") + 1] == "aicredits-api-key" for c in calls)
+    assert '-a "aicredits-api-key"' in calls[0][-1]
+    assert calls[1][calls[1].index("-a") + 1] == "aicredits-api-key"
 
 
 def test_cli_provider_configuration_is_hidden_and_separate(monkeypatch, capsys):
@@ -155,7 +156,7 @@ def test_keychain_failure_traceback_does_not_disclose_value():
 
     secret = "p1-sensitive-keychain-value"
 
-    def runner(argv):
+    def runner(argv, stdin=None):
         raise subprocess.TimeoutExpired(argv, 10, stderr=secret)
 
     with pytest.raises(SecretStoreUnavailableError) as exc:

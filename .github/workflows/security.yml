@@ -35,33 +35,13 @@ jobs:
           uv export --locked --no-emit-project --all-groups --format requirements-txt
           -o "$RUNNER_TEMP/requirements-audit.txt"
 
-      # Every advisory, including the accepted ones below, is printed here - nothing is
-      # hidden. This step reports only; the next one enforces.
-      - name: Full advisory report (informational)
-        continue-on-error: true
+      # Fails on ANY advisory: no advisory is ignored. (PyJWT, a transitive dependency of
+      # mcp[crypto], was upgraded to 2.15.1, which closed the 14 previously accepted IDs.)
+      - name: Enforced audit
         run: >-
           uv run --locked --isolated --only-group audit pip-audit
           -r "$RUNNER_TEMP/requirements-audit.txt"
           --require-hashes --no-deps --disable-pip --progress-spinner off
-
-      # Fails on ANY advisory except these exact IDs: PyJWT 2.13.0, a transitive dependency
-      # of mcp[crypto]. This project never imports PyJWT and serves MCP over stdio only,
-      # so the JWT code paths are unreachable here. Upgrading PyJWT is tracked as a P2
-      # audit item; remove these IDs when it lands. A new PyJWT advisory still fails.
-      - name: Enforced audit
-        env:
-          ACCEPTED_ADVISORIES: >-
-            PYSEC-2026-4140 PYSEC-2026-4141 PYSEC-2026-4142 PYSEC-2026-4143
-            PYSEC-2026-4144 PYSEC-2026-4145 PYSEC-2026-4146 PYSEC-2026-4147
-            PYSEC-2026-4148 PYSEC-2026-4149 PYSEC-2026-4150 PYSEC-2026-4151
-            PYSEC-2026-4152 PYSEC-2026-4183
-        run: |
-          ignores=()
-          for id in $ACCEPTED_ADVISORIES; do ignores+=(--ignore-vuln "$id"); done
-          uv run --locked --isolated --only-group audit pip-audit \
-            -r "$RUNNER_TEMP/requirements-audit.txt" \
-            --require-hashes --no-deps --disable-pip --progress-spinner off \
-            "${ignores[@]}"
 
   secret-scan:
     name: Secret scan (gitleaks)

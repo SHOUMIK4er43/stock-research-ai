@@ -6,6 +6,7 @@ semantics; it only translates HTTP <-> the existing application layer.
 """
 
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -13,6 +14,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -48,7 +51,7 @@ from stock_research_ai.application.ports import ReportRepository
 from stock_research_ai.application.summary import project_summary_input
 from stock_research_ai.application.summary_generation import SummaryModel, generate_summary
 from stock_research_ai.bootstrap import browser_engine, browser_execution_spec, research_engine
-from stock_research_ai.config import Settings
+from stock_research_ai.config import LOOPBACK_BIND_HOSTS, Settings
 from stock_research_ai.domain.company import Company, CompanyRegistration
 from stock_research_ai.domain.extraction import ExtractionRequest
 from stock_research_ai.domain.report import ResearchReportSnapshot
@@ -62,8 +65,9 @@ from stock_research_ai.domain.summary import (
 
 _PAIRING_PATH = "/v1/pair"
 
-#: The server binds IPv4 loopback only; any other Host (e.g. a DNS-rebinding name) is refused.
-LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+#: The server binds IPv4 loopback only (Settings refuses any other http_host); any other
+#: Host (e.g. a DNS-rebinding name) is refused.
+LOOPBACK_HOSTS = LOOPBACK_BIND_HOSTS
 
 #: Every request body here is a small JSON control message (pairing code, page URL, company
 #: registration - at most ~85 KB even with every field at its limit and fully \u-escaped).
@@ -78,6 +82,44 @@ _SUMMARY_ERROR_STATUS: dict[SummaryErrorCode, int] = {
     SummaryErrorCode.SUMMARY_INPUT_TOO_LARGE: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SummaryErrorCode.SUMMARY_REQUEST_TOO_LARGE: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
+
+
+#: P2-6: a 422 keeps each error's location, message and type (the extension shows the
+#: first `msg`), but never `input`, `ctx` or `url` - those echo the submitted value (a
+#: pairing code, a pasted token, 100 KB of text) back. A `loc` part is shown only when it
+#: is a plain field name: a client-chosen key (an unexpected extra field could itself be
+#: a path or a token) is replaced. Messages are bounded and stripped of control characters.
+_MAX_VALIDATION_ERRORS = 10
+_MAX_VALIDATION_TEXT = 120
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _bounded_text(value: object) -> str:
+    text = str(value)
+    bounded = "".join(c if c.isprintable() else "?" for c in text[:_MAX_VALIDATION_TEXT])
+    return bounded + ("..." if len(text) > _MAX_VALIDATION_TEXT else "")
+
+
+def _public_loc(error: Any) -> list[int | str]:
+    loc = list(error.get("loc", ()))
+    if error.get("type") == "extra_forbidden" and loc:
+        loc[-1] = "(unexpected field)"
+    return [
+        part if isinstance(part, int) or part == "(unexpected field)"
+        or (isinstance(part, str) and _FIELD_NAME.fullmatch(part)) else "(field)"
+        for part in loc
+    ]
+
+
+def public_validation_errors(errors: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "loc": _public_loc(error),
+            "msg": _bounded_text(error.get("msg", "Invalid value")),
+            "type": _bounded_text(error.get("type", "value_error")),
+        }
+        for error in list(errors)[:_MAX_VALIDATION_ERRORS]
+    ]
 
 
 def _summary_http_error(error: SummaryGenerationError) -> HTTPException:
@@ -331,6 +373,13 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": public_validation_errors(exc.errors())},
+        )
+
     # Added last = outermost: Host check, then body bound, then CORS/origin.
     app.add_middleware(
         _BrowserCORSMiddleware,

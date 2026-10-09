@@ -22,6 +22,14 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def isolated_log_redaction_registry() -> None:
+    """Secrets registered for log redaction are process-global; never share them."""
+    from stock_research_ai import logging_setup
+
+    logging_setup._registered_secrets.clear()
+
+
 @pytest.fixture
 async def database(tmp_path: Path) -> AsyncIterator[SQLiteDatabase]:
     registry = SQLiteDatabase(tmp_path / "registry.sqlite3")

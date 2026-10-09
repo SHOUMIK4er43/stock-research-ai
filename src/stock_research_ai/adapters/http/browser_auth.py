@@ -18,7 +18,6 @@ granted a fresh lifetime.
 
 import hashlib
 import hmac
-import os
 import secrets
 import time
 from collections.abc import Callable
@@ -27,6 +26,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
+
+from stock_research_ai.logging_setup import register_secret
+from stock_research_ai.private_files import write_private_file
 
 DEFAULT_PAIRING_CODE_TTL_SECONDS = 300
 #: Bearer lifetime. Long enough that a single local user re-runs `pair-code` about once
@@ -130,12 +132,8 @@ class PairingStore:
         return data if data.version == _FILE_VERSION else _PairingFile()
 
     def _write(self, data: _PairingFile) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(data.model_dump_json())
-        try:
-            os.chmod(self._path, 0o600)
-        except OSError:
-            pass  # best-effort: not every filesystem/OS supports POSIX permission bits
+        # Token hashes are never on disk wider than 0600, and never half-written.
+        write_private_file(self._path, data.model_dump_json())
 
     def issue_pairing_code(self, ttl_seconds: int = DEFAULT_PAIRING_CODE_TTL_SECONDS) -> str:
         """Generates a cryptographically random, short-lived, single-use pairing code
@@ -144,6 +142,7 @@ class PairingStore:
         must receive this initial code through some out-of-band channel, e.g. a future
         CLI command)."""
         code = secrets.token_urlsafe(16)
+        register_secret(code)
         data = self._read()
         self._write(
             data.model_copy(
@@ -216,6 +215,7 @@ class PairingStore:
             self._record_failed_attempt(bucket_key)
             raise
         token = secrets.token_urlsafe(32)
+        register_secret(token)
         issued_at = self._now()
         self._write(
             _PairingFile(
@@ -253,7 +253,10 @@ class PairingStore:
             return False
         if self._now() >= paired.expires_at:
             return False
-        return hmac.compare_digest(paired.token_hash, _hash(token))
+        if not hmac.compare_digest(paired.token_hash, _hash(token)):
+            return False
+        register_secret(token)  # only a valid bearer: callers cannot grow the registry
+        return True
 
     def paired_origin(self) -> str | None:
         paired = self._read().paired

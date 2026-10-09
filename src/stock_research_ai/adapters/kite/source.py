@@ -12,6 +12,7 @@ from dotenv import dotenv_values
 
 from stock_research_ai.domain.market import MarketInstrument, MarketRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, SourceRetrieval
+from stock_research_ai.logging_setup import register_secret
 
 MASTER_URL = "https://api.kite.trade/instruments/NSE"
 
@@ -28,6 +29,8 @@ class KiteSource:
     ) -> None:
         self._key = api_key
         self._token = access_token
+        register_secret(api_key)
+        register_secret(access_token)
         self._transport = transport
         self._max_bytes = max_bytes
         self._timeout = timeout

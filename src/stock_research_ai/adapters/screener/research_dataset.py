@@ -16,7 +16,13 @@ from datetime import date
 from decimal import Decimal
 from urllib.parse import urljoin, urlsplit
 
-from stock_research_ai.adapters.screener.html import Node, Page, data_tables, rows
+from stock_research_ai.adapters.screener.html import (
+    MAX_SCREENER_NODES,
+    Node,
+    Page,
+    data_tables,
+    rows,
+)
 from stock_research_ai.adapters.screener.metrics import clean_label
 from stock_research_ai.adapters.screener.peers_api import PeerFetch, ScreenerPeerClient
 from stock_research_ai.adapters.screener.values import parse_value
@@ -123,7 +129,9 @@ class _Builder:
             content_sha256=artifact.content_sha256,
             size_bytes=artifact.size_bytes,
         )
-        self.root = Page(content.decode(artifact.encoding, errors="strict")).root
+        self.root = Page(
+            content.decode(artifact.encoding, errors="strict"), MAX_SCREENER_NODES
+        ).root
         self.issues: list[DatasetIssue] = []
 
     def issue(self, code: str, section: str, node: Node | None = None, text: str = "") -> None:
@@ -393,7 +401,7 @@ def parse_peer_fragment(fetch: PeerFetch, subject_company_key: str) -> PeerCompa
     """The peer table from a retrieved fragment; None when no table is present."""
     if fetch.content is None:
         return None
-    root = Page(fetch.content.decode("utf-8", errors="strict")).root
+    root = Page(fetch.content.decode("utf-8", errors="strict"), MAX_SCREENER_NODES).root
     tables = data_tables(root)
     if not tables:
         return None

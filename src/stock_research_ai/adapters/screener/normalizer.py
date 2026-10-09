@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from stock_research_ai.adapters.screener.documents import parse_documents
 from stock_research_ai.adapters.screener.html import (
+    MAX_SCREENER_NODES,
     HtmlLimitExceeded,
     Node,
     Page,
@@ -53,7 +54,7 @@ class ScreenerNormalizer:
         if retrieval.status != RetrievalStatus.SUCCESS:
             return None
         try:
-            root = Page(content.decode(artifact.encoding, errors="strict")).root
+            root = Page(content.decode(artifact.encoding, errors="strict"), MAX_SCREENER_NODES).root
         except (UnicodeError, LookupError, HtmlLimitExceeded):
             return None
         return parse_identity(root, artifact, retrieval, company_id)
@@ -74,7 +75,9 @@ class ScreenerNormalizer:
             and retrieval.status == RetrievalStatus.SUCCESS
         ):
             try:
-                root = Page(content.decode(artifact.encoding, errors="strict")).root
+                root = Page(
+                    content.decode(artifact.encoding, errors="strict"), MAX_SCREENER_NODES
+                ).root
                 identity = parse_identity(root, artifact, retrieval, company_id)
             except (UnicodeError, LookupError) as exc:
                 failure = f"HTML decoding failed: {exc}"

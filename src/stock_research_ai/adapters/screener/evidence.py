@@ -14,7 +14,13 @@ from datetime import date, datetime
 from urllib.parse import urlsplit
 
 from stock_research_ai.adapters.documents.source import validate_url
-from stock_research_ai.adapters.screener.html import Node, Page, data_tables, rows
+from stock_research_ai.adapters.screener.html import (
+    MAX_SCREENER_NODES,
+    Node,
+    Page,
+    data_tables,
+    rows,
+)
 from stock_research_ai.adapters.screener.metrics import clean_label
 from stock_research_ai.domain.evidence import (
     CatalogueIssue,
@@ -148,7 +154,9 @@ class ScreenerEvidenceSource:
         self._identity = identity
         self._artifact: RawArtifact = artifact
         self._retrieval: SourceRetrieval = retrieval
-        self._root = Page(content.decode(artifact.encoding, errors="strict")).root
+        self._root = Page(
+            content.decode(artifact.encoding, errors="strict"), MAX_SCREENER_NODES
+        ).root
 
     def company(self) -> EvidenceCompany:
         website = next(

@@ -5,8 +5,11 @@ and the tree itself is bounded: building keeps per-parent sibling counters (no s
 rescans) and an open-tag tally (no stack rescans for stray end tags), walks are
 iterative (no recursion proportional to nesting), locators are derived on demand from
 the parent chain (no per-node copy of every ancestor's path), and node count, nesting
-depth and attributes per element are capped. Exceeding a cap raises
-`HtmlLimitExceeded` - callers fail closed instead of reading a truncated tree."""
+depth, attributes per element, tag-name length and locator length are capped. The
+locator cap is checked from a per-node length integer (an id resets it, like the
+locator itself), so no locator string is built while parsing. Exceeding a cap raises
+`HtmlLimitExceeded` - callers fail closed instead of reading a truncated tree, and a
+provenance locator is never truncated."""
 
 from collections import Counter
 from collections.abc import Iterator
@@ -22,8 +25,18 @@ VOID = frozenset("area base br col embed hr img input link meta param source tra
 #: (fixtures and every replayed artifact). The caps leave ~45x, ~8x and ~9x headroom
 #: while keeping the worst accepted tree to tens of MB and a bounded walk cost.
 MAX_NODES = 100_000
+#: Screener pages become one observation per table cell, each far larger than its markup,
+#: so a page near MAX_NODES would cost ~1 GB of observations. Screener callers pass this
+#: tighter cap (~9x the largest real page); document HTML keeps MAX_NODES.
+MAX_SCREENER_NODES = 20_000
 MAX_DEPTH = 128
 MAX_ATTRIBUTES = 64
+#: Every observation copies its cell's locator, so one long tag name or id would be
+#: repeated per observation. The longest tag name in the fixtures, replayed artifacts and
+#: stored documents is 12 characters (a custom element), the longest locator 160 and the
+#: longest id-based locator base 43 ("#" + id). The caps leave ~5x and ~6x headroom.
+MAX_TAG_NAME_LENGTH = 64
+MAX_LOCATOR_LENGTH = 1024
 
 
 class HtmlLimitExceeded(ValueError):
@@ -41,22 +54,30 @@ class Node:
     children: list["Node | str"] = field(default_factory=list)
     _parent: "Node | None" = field(default=None, repr=False, compare=False)
     _step: str = field(default="", repr=False, compare=False)  # "/tag[n]" under _parent
+    _length: int = field(default=len("document"), repr=False, compare=False)  # of locator
 
     @property
     def locator(self) -> str:
         """The root is "document"; an element with an id is "#id"; any other element is
-        its parent's locator followed by one "/tag[n]" step."""
+        its parent's locator followed by one "/tag[n]" step. Never longer than
+        MAX_LOCATOR_LENGTH: a longer one raises instead of being built or truncated."""
         steps: list[str] = []
+        length = 0
         node: Node | None = self
         while node is not None:
             if "id" in node.attrs:
-                steps.append(f"#{node.attrs['id']}")
-                break
-            if node._parent is None:
-                steps.append("document")
-                break
-            steps.append(node._step)
-            node = node._parent
+                identifier = node.attrs["id"]
+                if len(identifier) >= MAX_LOCATOR_LENGTH:  # never copied, even once
+                    raise HtmlLimitExceeded("locator")
+                step, node = "#" + identifier, None
+            elif node._parent is None:
+                step, node = "document", None
+            else:
+                step, node = node._step, node._parent
+            length += len(step)
+            if length > MAX_LOCATOR_LENGTH:
+                raise HtmlLimitExceeded("locator")
+            steps.append(step)
         return "".join(reversed(steps))
 
     @property
@@ -114,8 +135,9 @@ class Node:
 
 
 class Page(HTMLParser):
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, max_nodes: int = MAX_NODES) -> None:
         super().__init__(convert_charrefs=True)
+        self._max_nodes = max_nodes
         self.root = Node("document")
         self.stack = [self.root]
         # Parallel to `stack`: per open element, how many children of each tag it has.
@@ -127,15 +149,22 @@ class Page(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._nodes += 1
-        if self._nodes > MAX_NODES:
+        if self._nodes > self._max_nodes:
             raise HtmlLimitExceeded("nodes")
+        if len(tag) > MAX_TAG_NAME_LENGTH:
+            raise HtmlLimitExceeded("tag_name")
         if len(attrs) > MAX_ATTRIBUTES:
             raise HtmlLimitExceeded("attributes")
         parent = self.stack[-1]
         counts = self._counts[-1]
-        counts[tag] += 1
         attributes = {k: v or "" for k, v in attrs}
-        node = Node(tag, attributes, _parent=parent, _step=f"/{tag}[{counts[tag]}]")
+        step = f"/{tag}[{counts[tag] + 1}]"
+        # Same rule as Node.locator, as one integer: an id restarts the locator.
+        length = 1 + len(attributes["id"]) if "id" in attributes else parent._length + len(step)
+        if length > MAX_LOCATOR_LENGTH:
+            raise HtmlLimitExceeded("locator")
+        counts[tag] += 1
+        node = Node(tag, attributes, _parent=parent, _step=step, _length=length)
         parent.children.append(node)
         if tag not in VOID:
             if len(self.stack) > MAX_DEPTH:

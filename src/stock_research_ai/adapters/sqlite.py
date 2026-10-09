@@ -1,5 +1,6 @@
 """Explicitly initialized SQLite persistence for the company registry."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -401,6 +402,9 @@ class SQLiteExtractionRepository:
             return company_id
 
     async def save_extraction(self, result: CompanyExtractionResult) -> None:
+        # A page at the HTML bounds yields tens of thousands of observations: dump the
+        # payload in a worker thread rather than on the event loop.
+        payload = await asyncio.to_thread(result.model_dump, mode="json")
         async with self._sessions() as session, session.begin():
             session.add(
                 _ExtractionRow(
@@ -413,7 +417,7 @@ class SQLiteExtractionRepository:
                     status=result.coverage.overall,
                     schema_version=result.schema_version,
                     created_at=result.metadata.created_at.isoformat(),
-                    payload=result.model_dump(mode="json"),
+                    payload=payload,
                 )
             )
 

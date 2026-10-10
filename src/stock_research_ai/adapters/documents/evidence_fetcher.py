@@ -30,7 +30,10 @@ _BLOCKED_STATUSES = frozenset({401, 403, 406, 429, 451})
 
 
 def unsupported_code(url: str) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # e.g. a netloc invalid under NFKC normalization
+        return "MALFORMED_URL"
     if parts.scheme == "http":
         return "NOT_HTTPS"
     if parts.scheme != "https":

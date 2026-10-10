@@ -500,11 +500,16 @@ def create_app(
         if payload.portal == "SCREENER":
             try:
                 validate_url(payload.source_url)
-            except ValueError as exc:
+            except ValueError:
+                # Fixed text, never str(exc): a parser ValueError can quote the submitted
+                # URL (e.g. urlsplit's NFKC netloc check) (P2-6).
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={"code": "UNSUPPORTED_SOURCE_URL", "message": str(exc)},
-                ) from exc
+                    detail={
+                        "code": "UNSUPPORTED_SOURCE_URL",
+                        "message": "Not a supported Screener company page",
+                    },
+                ) from None
         try:
             return current_job_manager().launch(
                 payload.portal, payload.source_url, payload.research_plan

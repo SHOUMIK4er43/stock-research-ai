@@ -350,7 +350,10 @@ class ScreenerEvidenceSource:
             return RetrievalState()
         except ValueError:
             pass
-        parts = urlsplit(url)
+        try:
+            parts = urlsplit(url)
+        except ValueError:  # e.g. a netloc invalid under NFKC normalization
+            return None
         if parts.scheme == "http":
             try:
                 validate_url(parts._replace(scheme="https").geturl())

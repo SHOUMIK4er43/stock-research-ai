@@ -142,7 +142,12 @@ def _canonical_url(source_url: str) -> str:
     (its rel=canonical is /company/INFY/...). The consolidated/standalone view stays
     distinct: they are different financial bases. Anything else (not a Screener company
     URL) keeps the previous scheme/host-lowercased, slash-trimmed form, never merged."""
-    parts = urlsplit(source_url.strip())
+    try:
+        parts = urlsplit(source_url.strip())
+    except ValueError:
+        # urlsplit's ValueError quotes the raw netloc (P2-6). An unparseable URL keeps its
+        # own key: it can never equal a canonical Screener form, which always parses.
+        return source_url.strip()
     match = _SCREENER_PATH.fullmatch(parts.path)
     # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
     # it reach an error message (P2-6). -1 never matches the Screener form below.

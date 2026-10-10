@@ -452,6 +452,89 @@ def test_url_validators_refuse_a_malformed_port_with_fixed_text(value):
     assert key[1] != "https://www.screener.in/company/INFY/"  # never folded into INFY
 
 
+# urlsplit() itself raises a ValueError quoting the raw netloc when NFKC normalization turns
+# a character into one of '/?#@:' ("netloc '<text>' contains invalid characters under NFKC
+# normalization"). Every source-URL rejection must use fixed text instead. Each case is
+# (url, markers that must never appear in the response).
+NFKC_MARKER = "sk-ant-api03-FAKE-nfkc-0000"
+URL_REJECTIONS = [
+    (f"https://{NFKC_MARKER}\uff0f.www.screener.in/company/YESBANK/", [NFKC_MARKER]),
+    ("https://www.screener.in:FAKEPORT_marker/company/INFY/", ["FAKEPORT_marker"]),
+    ("https://FAKEUSER:FAKEPASS@www.screener.in/company/INFY/", ["FAKEUSER", "FAKEPASS"]),
+    ("https://www.screener.in/company/INFY/\x00\x1bFAKECTRL/", ["FAKECTRL"]),
+    ("https://www.scr\x07FAKECTRLHOST.in/company/INFY/", ["FAKECTRLHOST"]),
+    ("https://" + "h" * 5_000 + "\uff03FAKELONGHOST.screener.in/company/X/", ["h" * 40]),
+    ("https://www.screener.in/company/\"FAKEQUOTE'/", ["FAKEQUOTE"]),
+    ("https://www.screener.in\\FAKEBACKSLASH\\company\\INFY\\", ["FAKEBACKSLASH"]),
+    ("https://www.screener.in/FAKEBADPATH/../etc/", ["FAKEBADPATH"]),
+    (f"https://{FAKE_SECRET}.www.screener.in/company/INFY/", [FAKE_SECRET]),
+    ("https://www.screener.in/company/INFY/C:/Users/alice/.ssh/FAKEPATH", ["/Users/alice"]),
+]
+URL_REJECTION_IDS = [
+    "nfkc-netloc", "malformed-port", "credentials", "control-chars-path",
+    "control-chars-host", "long-nfkc-host", "quotes", "backslashes", "invalid-path",
+    "token-in-netloc", "filesystem-path",
+]  # fmt: skip
+_STDLIB_TEXT = ("NFKC", "netloc", "invalid characters", "Port could not be cast", "ValueError",
+                "Traceback", "/Users/", "site-packages")  # fmt: skip
+
+
+@pytest.mark.parametrize(("url", "markers"), URL_REJECTIONS, ids=URL_REJECTION_IDS)
+async def test_rejected_source_urls_get_a_fixed_non_reflective_error(p2_client, url, markers):
+    client, headers = p2_client
+    for path in ("/v1/research-jobs", "/v1/summaries"):
+        response = await client.post(
+            path, json={"portal": "SCREENER", "source_url": url}, headers=headers
+        )
+        assert response.status_code == 422, (path, response.status_code)
+        assert response.json()["detail"] == {
+            "code": "UNSUPPORTED_SOURCE_URL",
+            "message": "Not a supported Screener company page",
+        }
+        assert url not in response.text
+        for marker in markers:
+            assert not _reflects(response, marker), (path, response.text[:300])
+        for text in _STDLIB_TEXT:
+            assert text not in response.text, (path, text)
+
+
+def test_every_url_parser_refuses_an_nfkc_invalid_netloc_with_fixed_text():
+    from stock_research_ai.adapters.documents.evidence_fetcher import unsupported_code
+    from stock_research_ai.adapters.documents.source import validate_url as validate_document
+    from stock_research_ai.adapters.screener.evidence import ScreenerEvidenceSource
+    from stock_research_ai.adapters.screener.source import validate_url as validate_screener
+    from stock_research_ai.application.browser_jobs import _canonical_key
+    from stock_research_ai.application.evidence_catalogue import canonical_url
+    from stock_research_ai.domain.evidence import _http_url
+
+    for host in ("www.screener.in", "example.com"):
+        for scheme in ("https", "http"):
+            url = f"{scheme}://{NFKC_MARKER}\uff0f.{host}/company/INFY/"
+            for parse in (validate_document, validate_screener, canonical_url, _http_url):
+                with pytest.raises(ValueError) as caught:
+                    parse(url)
+                assert NFKC_MARKER not in str(caught.value)
+                assert "NFKC" not in str(caught.value)
+                assert caught.value.__cause__ is None and caught.value.__suppress_context__
+            assert unsupported_code(url) == "MALFORMED_URL"
+            assert ScreenerEvidenceSource._retrieval_state(url) is None
+    key = _canonical_key("SCREENER", f"https://{NFKC_MARKER}\uff0f.www.screener.in/company/INFY/",
+                         "FULL_RESEARCH_V1")  # fmt: skip
+    assert key[1] != "https://www.screener.in/company/INFY/"  # never folded into INFY
+
+
+def test_supported_source_urls_are_unchanged_by_the_parser_guards():
+    from stock_research_ai.adapters.screener.source import validate_url as validate_screener
+    from stock_research_ai.application.browser_jobs import _canonical_key
+
+    for url in (YESBANK_URL, "https://www.screener.in/company/INFY/",
+                "https://www.screener.in:443/company/infy/consolidated/"):  # fmt: skip
+        assert validate_screener(url) == url
+    key = _canonical_key("SCREENER", "https://WWW.screener.in:443/company/infy/",
+                         "FULL_RESEARCH_V1")  # fmt: skip
+    assert key[1] == "https://www.screener.in/company/INFY/"
+
+
 async def test_failed_job_shows_a_stable_message_and_logs_the_detail(
     p2_client, monkeypatch, tmp_path
 ):

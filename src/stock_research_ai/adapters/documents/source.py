@@ -17,7 +17,12 @@ from stock_research_ai.domain.provenance import AcquiredPayload, RetrievalStatus
 
 
 def validate_url(url: str) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # urlsplit's own ValueError (e.g. a netloc invalid under NFKC normalization) quotes
+        # the raw netloc: replace it with fixed text (P2-6).
+        raise ValueError("Documents require a public HTTPS URL without credentials") from None
     # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
     # it reach an error message (P2-6). -1 is refused below like any other port.
     try:

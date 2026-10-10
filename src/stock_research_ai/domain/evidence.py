@@ -147,7 +147,11 @@ class RetrievalState(BaseModel):
 
 
 def _http_url(value: str) -> str:
-    parts = urlsplit(value)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        # urlsplit's own message quotes the raw netloc: never surface it (P2-6)
+        raise ValueError("Document URLs must be absolute http(s) URLs") from None
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("Document URLs must be absolute http(s) URLs")
     if parts.username or parts.password:

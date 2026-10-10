@@ -76,7 +76,11 @@ class EvidenceSource(Protocol):
 
 def canonical_url(url: str) -> str:
     """Normalized absolute http(s) URL; raises ValueError for anything else."""
-    parts = urlsplit(url.strip())
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        # urlsplit's own message quotes the raw netloc: replace it with a fixed one (P2-6)
+        raise ValueError("Unsupported URL") from None
     scheme = parts.scheme.lower()
     if scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("Unsupported URL")

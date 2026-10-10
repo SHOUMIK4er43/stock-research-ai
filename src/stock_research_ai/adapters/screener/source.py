@@ -14,7 +14,12 @@ MAX_BYTES = 5_000_000
 
 
 def validate_url(url: str) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # urlsplit's own ValueError (e.g. a netloc invalid under NFKC normalization) quotes
+        # the raw netloc: replace it with the fixed text below (P2-6).
+        raise ValueError("Expected a public https://www.screener.in/company/.../ URL") from None
     # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
     # it reach an error message (P2-6). -1 is refused below like any other port.
     try:

@@ -1224,3 +1224,192 @@ async def test_infy_fixture_forecast(tmp_path, fixture_dir):
     assert f.status == ForecastStatus.PARTIAL  # Screener has no capex / working-capital detail
     assert val(f, L.CAPEX).status == "UNAVAILABLE" and val(f, L.PAT).status == "AVAILABLE"
     assert num(f, L.PBT) == num(f, L.EBIT) - num(f, L.FINANCE_COST)
+
+
+# --- historical BULL / BEAR extremes obey the driver bounds -----------------------------------
+
+
+def _in_bounds(f: ForecastDataset) -> None:
+    for a in f.assumptions:
+        assert domain.driver_bounds_error(a.driver, a.value) is None, a
+    for v in f.values:
+        if v.line == L.REVENUE and v.status == "AVAILABLE" and v.kind == "FORECAST":
+            assert v.value is not None and v.value > 0, v
+
+
+def _issue(f: ForecastDataset, code: str, scenario: Scenario, driver: Driver) -> str:
+    found = [
+        i for i in f.issues if (i.code, i.scenario, i.subject) == (code, scenario, driver.value)
+    ]
+    assert len(found) == 1, (code, scenario, driver, sorted(codes(f)))
+    return found[0].detail or ""
+
+
+def _margins(margins: list[object], **kw: object) -> ForecastDataset:
+    return run(company([1000] * len(margins), start=2027 - len(margins), margin=margins), **kw)
+
+
+def test_revenue_collapse_to_zero_never_becomes_the_bear_growth():
+    f = run(company([100, 0, 50, 60], start=2023), horizon=5)
+    base, bull, bear = (f.assumption(D.REVENUE_GROWTH, s, 2027) for s in (S.BASE, S.BULL, S.BEAR))
+    assert ("FY|2024-03-31|12", dec(-100)) in bull.observations  # the raw -100 % YoY exists
+    assert "FY|2024-03-31|12 = -100" in _issue(
+        f, "SCENARIO_EXTREME_OUT_OF_BOUNDS", S.BEAR, D.REVENUE_GROWTH
+    )
+    # the next valid BEAR candidate (+20 %) sits above BASE: BEAR keeps BASE, visibly
+    assert "SCENARIO_RANGE_INVERTED" in codes(f)
+    assert (bear.value, bear.method) == (base.value, base.method)
+    assert "SCENARIO_FELL_BACK_TO_BASE" in bear.warnings
+    assert bull.value == Decimal("20.000000") and bull.value >= base.value >= bear.value
+    assert all(v > 0 for v in (num(f, L.REVENUE, S.BEAR, y) for y in range(2027, 2032)))
+    _in_bounds(f)
+
+
+def test_growth_from_a_near_zero_year_never_becomes_the_bull_growth():
+    f = run(company([100, "0.0001", 50, 60], start=2023))
+    bull, bear = (
+        f.assumption(D.REVENUE_GROWTH, S.BULL, 2027),
+        f.assumption(D.REVENUE_GROWTH, S.BEAR, 2027),
+    )
+    assert ("FY|2025-03-31|12", dec(49999900)) in bull.observations  # beyond the guard
+    assert "49999900" in _issue(f, "SCENARIO_EXTREME_OUT_OF_BOUNDS", S.BULL, D.REVENUE_GROWTH)
+    # the next highest valid YoY (+20 %) is used, marked; it is still above BASE
+    assert (bull.value, bull.method) == (Decimal("20.000000"), DerivationMethod.HISTORICAL_MAX_YOY)
+    assert "SCENARIO_EXTREME_OUT_OF_BOUNDS" in bull.warnings
+    assert num(f, L.REVENUE, S.BULL) == Decimal(72)
+    # -99.9999 % is just above -100 %: inside the bound, accepted unmarked
+    assert bear.value == Decimal("-99.999900") and not {
+        "SCENARIO_EXTREME_OUT_OF_BOUNDS",
+        "SCENARIO_FELL_BACK_TO_BASE",
+    } & set(bear.warnings)
+    assert "FORECAST_OUT_OF_RANGE" not in codes(f)
+    _in_bounds(f)
+
+
+def test_tiny_revenue_margin_never_becomes_the_bear_margin():
+    f = run(company([100, "0.0001", 50, 60], start=2023, margin=[20, -5000000, 20, 20]))
+    bear = f.assumption(D.OPERATING_MARGIN, S.BEAR, 2027)
+    assert ("FY|2024-03-31|12", dec(-5000000)) in bear.observations
+    assert "-5000000" in _issue(f, "SCENARIO_EXTREME_OUT_OF_BOUNDS", S.BEAR, D.OPERATING_MARGIN)
+    assert bear.value == Decimal("20.000000") and bear.method == DerivationMethod.HISTORICAL_MIN
+    _in_bounds(f)
+
+
+def test_next_valid_extreme_replaces_an_out_of_bounds_one():
+    high = _margins([10, 20, 30, 2000000])
+    got = {s: high.assumption(D.OPERATING_MARGIN, s, 2027) for s in S}
+    assert [got[s].value for s in (S.BULL, S.BASE, S.BEAR)] == [dec(30), dec(25), dec(10)]
+    assert got[S.BULL].method == DerivationMethod.HISTORICAL_MAX
+    assert "SCENARIO_EXTREME_OUT_OF_BOUNDS" in got[S.BULL].warnings
+    assert "SCENARIO_EXTREME_OUT_OF_BOUNDS" not in got[S.BEAR].warnings
+    low = _margins([-2000000, 10, 20, 30])
+    got = {s: low.assumption(D.OPERATING_MARGIN, s, 2027) for s in S}
+    assert [got[s].value for s in (S.BULL, S.BASE, S.BEAR)] == [dec(30), dec(15), dec(10)]
+    assert got[S.BEAR].method == DerivationMethod.HISTORICAL_MIN
+    _issue(low, "SCENARIO_EXTREME_OUT_OF_BOUNDS", S.BEAR, D.OPERATING_MARGIN)
+    assert not [i for i in low.issues if i.code.startswith("SCENARIO_") and i.scenario == S.BULL]
+    for f in (high, low):
+        _in_bounds(f)
+
+
+@pytest.mark.parametrize(
+    ("margins", "scenario"),
+    [([10, 20, 1500000, 2000000], S.BULL), ([-2000000, -1500000, 10, 20], S.BEAR)],
+)
+def test_no_valid_extreme_on_its_side_keeps_base(margins, scenario):
+    f = _margins(margins)
+    base = f.assumption(D.OPERATING_MARGIN, S.BASE, 2027)
+    got = f.assumption(D.OPERATING_MARGIN, scenario, 2027)
+    assert domain.driver_bounds_error(D.OPERATING_MARGIN, base.value) is None
+    _issue(f, "SCENARIO_EXTREME_OUT_OF_BOUNDS", scenario, D.OPERATING_MARGIN)
+    _issue(f, "SCENARIO_RANGE_INVERTED", scenario, D.OPERATING_MARGIN)  # 20 / 10 vs BASE
+    assert (got.value, got.method) == (base.value, base.method)
+    assert "SCENARIO_FELL_BACK_TO_BASE" in got.warnings
+    _in_bounds(f)
+
+
+def test_no_in_bounds_extreme_at_all_keeps_base():
+    f = _margins([-2000000, 2000000], history_years=2)
+    base = f.assumption(D.OPERATING_MARGIN, S.BASE, 2027)
+    assert base.value == 0
+    for scenario in (S.BULL, S.BEAR):
+        got = f.assumption(D.OPERATING_MARGIN, scenario, 2027)
+        assert (got.value, got.method) == (base.value, base.method)
+        assert {"SCENARIO_EXTREME_OUT_OF_BOUNDS", "SCENARIO_FELL_BACK_TO_BASE"} <= set(got.warnings)
+        assert "BASE 0.000000 used" in _issue(
+            f, "SCENARIO_FELL_BACK_TO_BASE", scenario, D.OPERATING_MARGIN
+        )
+    _in_bounds(f)
+
+
+def test_percentage_guard_boundary_is_inclusive_and_beyond_it_rejected():
+    at = _margins([10, 20, 30, 1000000])
+    assert at.assumption(D.OPERATING_MARGIN, S.BULL, 2027).value == domain.MAX_PERCENT
+    assert (
+        at.assumption(D.OPERATING_MARGIN, S.BULL, 2027).warnings
+        == at.assumption(D.OPERATING_MARGIN, S.BASE, 2027).warnings
+    )
+    assert (
+        _margins([-1000000, 10, 20, 30]).assumption(D.OPERATING_MARGIN, S.BEAR, 2027).value
+        == -domain.MAX_PERCENT
+    )
+    beyond = _margins([10, 20, 30, "1000000.000001"])
+    assert beyond.assumption(D.OPERATING_MARGIN, S.BULL, 2027).value == dec(30)
+    assert "1000000.000001" in _issue(
+        beyond, "SCENARIO_EXTREME_OUT_OF_BOUNDS", S.BULL, D.OPERATING_MARGIN
+    )
+
+
+def test_growth_that_quantizes_to_minus_100_is_rejected():
+    # 100 -> 0.0000001 is -99.9999999 %: valid raw, but -100.000000 once quantized
+    f = run(company([100, "0.0000001", "0.0000001", "0.0000001"], start=2023))
+    assert "-99.9999999" in _issue(f, "SCENARIO_EXTREME_OUT_OF_BOUNDS", S.BEAR, D.REVENUE_GROWTH)
+    _in_bounds(f)
+
+
+def test_out_of_bounds_historical_base_growth_is_never_derived():
+    f = run(company(["0.0001", 2], start=2025), history_years=2)
+    assert f.assumption(D.REVENUE_GROWTH, S.BASE, 2027) is None  # 1,999,900 % CAGR
+    assert any(
+        i.code == "HISTORY_OUT_OF_BOUNDS" and i.subject == D.REVENUE_GROWTH.value for i in f.issues
+    )
+    assert val(f, L.REVENUE).status == "UNAVAILABLE"
+    _in_bounds(f)
+
+
+def test_normal_historical_extremes_are_unmarked():
+    f = run(company([1000, 1080, 1250, 1300, 1500, 1600], margin=[18, 22, 20, 19, 24, 21]))
+    assert not [i for i in f.issues if i.code.startswith("SCENARIO_")]
+    for a in f.assumptions:
+        assert not {"SCENARIO_EXTREME_OUT_OF_BOUNDS", "SCENARIO_FELL_BACK_TO_BASE"} & set(
+            a.warnings
+        )
+    bull = f.assumption(D.OPERATING_MARGIN, S.BULL, 2027)
+    assert bull.value == max(v for _, v in bull.observations)
+
+
+def test_pathological_extremes_keep_scenarios_isolated_and_deterministic():
+    rows = company([100, "0.0001", 50, 60], start=2023, margin=[20, -5000000, 20, 20])
+    full = run(rows, horizon=5)
+    assert canonical_forecast_json(full) == canonical_forecast_json(run(rows, horizon=5))
+    assert _scenario_json(full, S.BASE) == _scenario_json(
+        run(rows, scenarios=[S.BASE], horizon=5), S.BASE
+    )
+    bear_only = run(rows, scenarios=[S.BEAR], horizon=5)
+    assert _scenario_json(full, S.BEAR) == _scenario_json(bear_only, S.BEAR)
+    # an explicit BEAR assumption still replaces the (bounded) derived default, nothing else
+    changed = run(rows, horizon=5, explicit_assumptions=[explicit(D.REVENUE_GROWTH, -50, S.BEAR)])
+    assert changed.assumption(D.REVENUE_GROWTH, S.BEAR, 2027).value == -50
+    assert _scenario_json(changed, S.BULL) == _scenario_json(full, S.BULL)
+    issues = [i for i in full.issues if i.code.startswith("SCENARIO_")]
+    assert len(issues) == 2  # one per rejected extreme: BULL growth, BEAR margin
+
+
+def test_no_assumption_source_can_carry_an_out_of_bounds_value():
+    f = run(company(GROWING))
+    a = f.assumption(D.REVENUE_GROWTH, S.BEAR, 2027)
+    for bad in (-100, -101, domain.MAX_PERCENT + 1):
+        with pytest.raises(ValidationError, match="REVENUE_GROWTH must be"):
+            domain.ForecastAssumption.model_validate(a.model_dump() | {"value": dec(bad)})
+    with pytest.raises(ValidationError):
+        explicit(D.REVENUE_GROWTH, -100)

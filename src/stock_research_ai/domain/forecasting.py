@@ -344,6 +344,10 @@ class ForecastAssumption(BaseModel):
             self.method == DerivationMethod.FALLBACK_CONSTANT
         ):
             raise ValueError("only fallbacks use the fallback method")
+        # whatever its source, no assumption outside its driver's bounds reaches a formula
+        problem = driver_bounds_error(self.driver, self.value)
+        if problem:
+            raise ValueError(problem)
         return self
 
 

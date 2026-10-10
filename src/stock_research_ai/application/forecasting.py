@@ -19,7 +19,7 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from uuid import UUID, uuid5
@@ -689,6 +689,15 @@ class Deriver:
         completeness = _completeness(years, expected)
         sparse = () if completeness == HistoryCompleteness.FULL else ("SPARSE_HISTORY",)
         method = DM.HISTORICAL_CAGR if years > 1 else DM.HISTORICAL_SINGLE_YOY
+        problem = driver_bounds_error(D.REVENUE_GROWTH, quantize(result))
+        if problem:
+            self.issues.add(
+                "HISTORY_OUT_OF_BOUNDS",
+                Severity.WARNING,
+                problem,
+                subject=D.REVENUE_GROWTH.value,
+            )
+            return None
         base = Candidate(
             quantize(result),
             method,
@@ -710,31 +719,85 @@ class Deriver:
                 tuple(sorted(set(flat))),
             )
             return {SC.BASE: base, SC.BULL: same, SC.BEAR: same}
-        high = max(yoy, key=lambda o: (o.value, o.period_key))
-        low = min(yoy, key=lambda o: (o.value, o.period_key))
-        yoy_completeness = _completeness(len(yoy), expected)
-        bull = self._pick(high, yoy, DM.HISTORICAL_MAX_YOY, yoy_completeness)
-        bear = self._pick(low, yoy, DM.HISTORICAL_MIN_YOY, yoy_completeness)
         # a year without revenue inside the CAGR span can put the CAGR outside the observed
         # year-on-year range: the scenario then keeps the base value, never an inverted one
-        for name, candidate, inverted in (
-            ("BULL", bull, bull.value < base.value),
-            ("BEAR", bear, bear.value > base.value),
-        ):
-            if inverted:
+        return self._scenarios(
+            D.REVENUE_GROWTH,
+            base,
+            yoy,
+            (DM.HISTORICAL_MAX_YOY, DM.HISTORICAL_MIN_YOY),
+            _completeness(len(yoy), expected),
+        )
+
+    def _scenarios(
+        self,
+        driver: Driver,
+        base: Candidate,
+        observations: Sequence[Observation],
+        methods: tuple[DerivationMethod, DerivationMethod],
+        completeness: HistoryCompleteness,
+    ) -> dict[Scenario, Candidate]:
+        """BASE plus the BULL (highest) and BEAR (lowest) historical extremes.
+
+        Every extreme passes the same driver bounds as any other assumption source: an
+        out-of-bounds observation is rejected (never clamped) and the next most extreme one is
+        tried; a scenario with no in-bounds candidate on its side of BASE keeps BASE. Both are
+        reported as issues and marked on the assumption.
+        """
+        out = {SC.BASE: base}
+        for scenario, method in zip((SC.BULL, SC.BEAR), methods, strict=True):
+            bull = scenario == SC.BULL
+            rejected: list[str] = []
+            chosen: Observation | None = None
+            for o in sorted(observations, key=lambda o: (o.value, o.period_key), reverse=bull):
+                # the raw value first: an absurd one is never even quantized
+                problem = driver_bounds_error(driver, o.value) or driver_bounds_error(
+                    driver, quantize(o.value)
+                )
+                if problem is None:
+                    chosen = o
+                    break
+                rejected.append(f"{o.period_key} = {o.value}")
+            mark: tuple[str, ...] = ()
+            if rejected:
+                mark = ("SCENARIO_EXTREME_OUT_OF_BOUNDS",)
+                self.issues.add(
+                    "SCENARIO_EXTREME_OUT_OF_BOUNDS",
+                    Severity.WARNING,
+                    f"{scenario.value} historical candidate(s) rejected, "
+                    f"outside {driver.value} bounds: {'; '.join(rejected)}",
+                    scenario=scenario,
+                    subject=driver.value,
+                )
+            candidate = (
+                None if chosen is None else self._pick(chosen, observations, method, completeness)
+            )
+            if candidate is None:
+                self.issues.add(
+                    "SCENARIO_FELL_BACK_TO_BASE",
+                    Severity.WARNING,
+                    f"no {scenario.value} historical candidate within {driver.value} bounds: "
+                    f"BASE {base.value} used",
+                    scenario=scenario,
+                    subject=driver.value,
+                )
+            elif (candidate.value < base.value) if bull else (candidate.value > base.value):
                 self.issues.add(
                     "SCENARIO_RANGE_INVERTED",
                     Severity.WARNING,
-                    f"{name} {candidate.value} is on the wrong side of BASE {base.value}: "
-                    "BASE used",
-                    scenario=SC(name),
-                    subject=D.REVENUE_GROWTH.value,
+                    f"{scenario.value} {candidate.value} is on the wrong side of BASE "
+                    f"{base.value}: BASE used",
+                    scenario=scenario,
+                    subject=driver.value,
                 )
-        return {
-            SC.BASE: base,
-            SC.BULL: base if bull.value < base.value else bull,
-            SC.BEAR: base if bear.value > base.value else bear,
-        }
+                candidate = None
+            if candidate is None:
+                mark += ("SCENARIO_FELL_BACK_TO_BASE",) if rejected else ()
+                candidate = base
+            if mark:
+                candidate = replace(candidate, warnings=tuple(sorted({*candidate.warnings, *mark})))
+            out[scenario] = candidate
+        return out
 
     @staticmethod
     def _pick(
@@ -788,13 +851,9 @@ class Deriver:
         )
         if not scenario_range or len(observations) == 1:
             return {SC.BASE: base, SC.BULL: base, SC.BEAR: base}
-        high = max(observations, key=lambda o: (o.value, o.period_key))
-        low = min(observations, key=lambda o: (o.value, o.period_key))
-        return {
-            SC.BASE: base,
-            SC.BULL: self._pick(high, observations, DM.HISTORICAL_MAX, completeness),
-            SC.BEAR: self._pick(low, observations, DM.HISTORICAL_MIN, completeness),
-        }
+        return self._scenarios(
+            driver, base, obs, (DM.HISTORICAL_MAX, DM.HISTORICAL_MIN), completeness
+        )
 
 
 # --- assumptions ------------------------------------------------------------------------------

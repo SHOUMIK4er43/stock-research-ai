@@ -4,11 +4,22 @@ The explicitly selected provider uses its own environment setting first, then it
 own account under the stock-research-ai Keychain service. An unset selector keeps
 the legacy Anthropic account; an AI Credits key never implicitly selects AI Credits.
 No plaintext-file fallback or cross-provider credential lookup is performed.
+
+Kite market-data credentials (Box 12) keep the pre-existing KiteSource convention - the
+process environment, then the project's git-ignored `.env` - and then fall back to their own
+Keychain accounts; they never share an account with the analyst keys.
 """
 
+import os
 import shutil
 import subprocess
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
+
+from dotenv import dotenv_values
+from pydantic import SecretStr
 
 from stock_research_ai.config import Settings
 from stock_research_ai.logging_setup import register_secret
@@ -19,6 +30,8 @@ from stock_research_ai.logging_setup import register_secret
 _KEYCHAIN_SERVICE = "stock-research-ai"
 _ANALYST_API_KEY_ACCOUNT = "analyst-api-key"
 _AICREDITS_API_KEY_ACCOUNT = "aicredits-api-key"
+_KITE_API_KEY_ACCOUNT = "kite-api-key"
+_KITE_ACCESS_TOKEN_ACCOUNT = "kite-access-token"
 
 
 def _account(provider: str) -> str:
@@ -220,12 +233,60 @@ def store_analyst_api_key_in_keychain(
     store.set(_account(provider), value)
 
 
+@dataclass(frozen=True)
+class KiteCredentials:
+    """Kite Connect market-data credentials. Values are SecretStr: never shown by repr/str."""
+
+    api_key: SecretStr
+    access_token: SecretStr
+    source: CredentialSource
+
+
+def resolve_kite_credentials(
+    *,
+    environ: Mapping[str, str] | None = None,
+    dotenv_path: Path | None = Path(".env"),
+    keychain: SecretStore | None = None,
+) -> KiteCredentials | None:
+    """KITE_API_KEY + KITE_ACCESS_TOKEN from the process environment, else the project `.env`
+    (the existing KiteSource convention), else the Keychain accounts `kite-api-key` /
+    `kite-access-token`. Both values must come from the same source - a pair is never mixed.
+    KITE_API_SECRET is never read: market-data calls do not need it."""
+    env = os.environ if environ is None else environ
+    candidates: list[tuple[CredentialSource, str | None, str | None]] = [
+        ("environment", env.get("KITE_API_KEY"), env.get("KITE_ACCESS_TOKEN"))
+    ]
+    if dotenv_path is not None and dotenv_path.is_file():
+        values = dotenv_values(dotenv_path)
+        candidates.append(
+            ("environment", values.get("KITE_API_KEY"), values.get("KITE_ACCESS_TOKEN"))
+        )
+    for source, key, token in candidates:
+        if key and token:
+            register_secret(key)
+            register_secret(token)
+            return KiteCredentials(SecretStr(key), SecretStr(token), source)
+    store = keychain if keychain is not None else MacOSKeychainSecretStore()
+    try:
+        key = store.get(_KITE_API_KEY_ACCOUNT)
+        token = store.get(_KITE_ACCESS_TOKEN_ACCOUNT)
+    except SecretStoreUnavailableError:
+        return None
+    if key and token:
+        register_secret(key)
+        register_secret(token)
+        return KiteCredentials(SecretStr(key), SecretStr(token), "keychain")
+    return None
+
+
 __all__ = [
     "CredentialSource",
+    "KiteCredentials",
     "EnvironmentSecretStore",
     "MacOSKeychainSecretStore",
     "SecretStore",
     "SecretStoreUnavailableError",
     "resolve_analyst_api_key",
+    "resolve_kite_credentials",
     "store_analyst_api_key_in_keychain",
 ]

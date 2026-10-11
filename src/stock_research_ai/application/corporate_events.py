@@ -131,11 +131,19 @@ FINANCIAL_TYPES = frozenset({E.RESULTS, E.ANNUAL_REPORT, E.INVESTOR_PRESENTATION
 
 # --- money ------------------------------------------------------------------------------------
 
-_AMOUNT = re.compile(
-    r"(?P<cur>Rs\.?|INR|₹|USD|US\$|EUR|€)\s*(?P<num>\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-    r"\s*(?:/-)?\s*(?P<unit>crores?|cr\b\.?|lakhs?|lacs?|millions?|mn\b|billions?|bn\b)?",
-    _I,
+#: A currency marker, never the tail of a word ('Hrs', 'MINR').
+_CURRENCY = re.compile(r"(?<![A-Za-z])(?P<cur>Rs\.?|INR|₹|USD|US\$|EUR|€)\s{0,4}", _I)
+#: The WHOLE numeric token after a marker: digits, commas and dots, plus one or two blanks only
+#: where they touch a comma (text extraction writes 'Rs 148,26,89 ,066'). It is validated as
+#: one token; a token that cannot be read whole is malformed, never cut back to a prefix.
+_TOKEN = re.compile(r"[\d,](?:[\d,.]|[ \t]{1,2}(?=,)|(?<=,)[ \t]{1,2}(?=\d))*")
+_UNIT = re.compile(
+    r"\s*(?:/-)?\s*(?P<unit>crores?|cr\b\.?|lakhs?|lacs?|millions?|mn\b|billions?|bn\b)?", _I
 )
+_GROUPED = re.compile(r"\d+(?:,\d+)*(?:\.\d+)?")
+#: Text extraction also splits paise off a grouped amount: 'Rs. 72,73,45,018. 74/-'.
+_SPLIT_PAISE = re.compile(r"[ \t]{1,2}(\d{2})(?=[ \t]{0,2}/)")  # only before the '/-' terminator
+MAX_AMOUNT_DIGITS = 20
 _TAX_INCLUSIVE = re.compile(r"incl(?:\.|uding|usive)?\s*(?:of\s*)?(?:GST|taxes)", _I)
 _TAX_EXCLUSIVE = re.compile(r"excl(?:\.|uding|usive)?\s*(?:of\s*)?(?:GST|taxes)|plus GST|"
                             r"\+\s*GST|without GST", _I)
@@ -164,36 +172,99 @@ def _to_crore(number: Decimal, unit: str | None) -> Decimal | None:
     return value if 0 < value <= MAX_MONEY else None
 
 
-def stated_amounts(segment: str) -> list[StatedMoney]:
-    out = []
-    for match in _AMOUNT.finditer(segment[:20_000]):
-        raw = match.group("num").replace(",", "")
-        try:
-            number = Decimal(raw)
-        except ArithmeticError:
+def _grouping_ok(token: str) -> bool:
+    """Plain digits, or comma groups: Indian (1,23,45,678 / 1134,11,42,182), Western
+    (1,234,567) or the two mixed (1,134,11,42,182). The leading group may exceed three digits
+    (amounts of Rs 1,000 crore and more are written '1134,11,42,182'); every later group is
+    two or three digits and the last is exactly three."""
+    if not _GROUPED.fullmatch(token):
+        return False
+    head, *rest = token.split(".")[0].split(",")
+    if not rest:
+        return True
+    return (len(head) <= 7 and len(rest[-1]) == 3
+            and all(len(group) in (2, 3) for group in rest[:-1]))
+
+
+def _indian(token: str) -> bool:
+    groups = token.split(".")[0].split(",")
+    return (len(groups) >= 3 and len(groups[-1]) == 3
+            and all(len(group) == 2 for group in groups[1:-1]))
+
+
+def amount_token(token: str, following: str = "") -> str | None:
+    """The complete number a raw token states (commas kept), or None when it cannot be read
+    whole - never a prefix of a number. `following` is the text right after the token.
+
+    A full stop ending the token, or a comma ending it before a blank / the end of the text,
+    is punctuation. A token cut short by an attached letter or digit ('Rs. 1,lQ,86,49,140'),
+    or followed by a blank and more digits ('Rs. 1134 11 42 182'), is unreadable. Blanks
+    touching a comma are an extraction artefact only when the joined
+    token is one Indian-grouped number of three or more groups ('148,26,89 ,066'); anything
+    else ('Rs. 100, 200') is unreadable rather than guessed."""
+    if token.endswith(",") and following[:1] not in ("", " ", "\t", "\n", "\r"):
+        return None
+    if following[:1].isalnum() or re.match(r"[ \t]{1,2}\d", following):
+        return None
+    token = token.rstrip(".")
+    if not re.search(r"\s", token):
+        candidate = token[:-1] if token.endswith(",") else token
+        return candidate if _grouping_ok(candidate) else None
+    joined = re.sub(r"\s+", "", token)
+    return joined if _grouping_ok(joined) and _indian(joined) else None
+
+
+def scan_amounts(segment: str) -> tuple[list[StatedMoney], int]:
+    """(amounts, malformed): every currency-marked amount, each read as one complete token.
+    A marker followed by a number that cannot be read whole counts as malformed and yields no
+    value."""
+    out: list[StatedMoney] = []
+    malformed = 0
+    text = segment[:20_000]
+    for marker in _CURRENCY.finditer(text):
+        found = _TOKEN.match(text, marker.end())
+        if found is None:
+            continue  # 'Rs.' with no number after it
+        token, token_end = found.group(0), found.end()
+        paise = _SPLIT_PAISE.match(text, token_end)
+        if paise is not None and token.endswith(".") and "," in token:
+            token, token_end = token + paise.group(1), paise.end()
+        unit = _UNIT.match(text, token_end)
+        assert unit is not None  # every part of the pattern is optional
+        following = "" if unit.group("unit") else text[token_end: token_end + 3]
+        number_text = amount_token(token, following)
+        if number_text is None:
+            malformed += 1
             continue
-        if len(raw) > 20:
+        digits = number_text.replace(",", "")
+        if len(digits) > MAX_AMOUNT_DIGITS:
             continue
-        crore = _to_crore(number, match.group("unit"))
+        crore = _to_crore(Decimal(digits), unit.group("unit"))
         if crore is None:
             continue
-        cur = match.group("cur").upper()
+        cur = marker.group("cur").upper()
         currency = "USD" if "US" in cur else "EUR" if cur in ("EUR", "€") else "INR"
-        tail = segment[match.end(): match.end() + 250]
+        text_end = unit.end()  # the verbatim amount includes its unit and any '/-'
+        tail = text[text_end: text_end + 250]
         tax = (TaxBasis.INCLUSIVE_OF_TAX if _TAX_INCLUSIVE.search(tail)
                else TaxBasis.EXCLUSIVE_OF_TAX if _TAX_EXCLUSIVE.search(tail) else TaxBasis.UNKNOWN)
-        out.append(StatedMoney(crore=crore, currency=currency, text=match.group(0).strip()[:200],
-                               tax=tax))
-    return out
+        out.append(StatedMoney(crore=crore, currency=currency,
+                               text=text[marker.start():text_end].strip()[:200], tax=tax))
+    return out, malformed
+
+
+def stated_amounts(segment: str) -> list[StatedMoney]:
+    return scan_amounts(segment)[0]
 
 
 def single_amount(segment: str) -> tuple[StatedMoney | None, bool]:
-    """(value, ambiguous): one distinct (currency, value) or nothing."""
-    found = stated_amounts(segment)
+    """(value, ambiguous): one distinct (currency, value) or nothing. A malformed amount in
+    the segment makes it ambiguous: the unreadable one might be the value."""
+    found, malformed = scan_amounts(segment)
     distinct = {(m.currency, m.crore) for m in found}
-    if len(distinct) == 1:
+    if len(distinct) == 1 and not malformed:
         return found[0], False
-    return None, len(distinct) > 1
+    return None, len(distinct) > 1 or malformed > 0
 
 
 # --- classification ---------------------------------------------------------------------------
@@ -264,6 +335,7 @@ class _Draft:
     value_ambiguous: bool
     party: str | None
     basis: FinancialBasis
+    malformed_amounts: int = 0
 
     @property
     def primary(self) -> FilingRow:
@@ -306,9 +378,11 @@ def build_events(
     for row in sorted([*unique.values(), *loose], key=lambda r: tuple(map(str, _row_key(r)))):
         kind, rule = classify(row.category, row.subject, row.body)
         haystack = " | ".join(x for x in (row.category, row.subject, row.body) if x)
-        value, ambiguous = single_amount(f"{row.subject} {row.body or ''}")
+        stated = f"{row.subject} {row.body or ''}"
+        value, ambiguous = single_amount(stated)
         drafts.append(_Draft(
             rows=[row], kind=kind, rule=rule, value=value, value_ambiguous=ambiguous,
+            malformed_amounts=scan_amounts(stated)[1],
             party=counterparty(row.subject, row.body) if kind in ORDER_EVENT_TYPES else None,
             basis=detect_basis(kind, haystack),
         ))
@@ -352,6 +426,10 @@ def build_events(
         draft.rows.sort(key=lambda r: tuple(map(str, _row_key(r))))
         row = draft.primary
         own: list[Issue] = []
+        if draft.malformed_amounts:
+            own.append(issue("MALFORMED_AMOUNT", f"{draft.malformed_amounts} stated amount(s) "
+                             "cannot be read as one complete number; no value is taken from "
+                             "them", payload=row.payload_id, locator=row.locator))
         if draft.value_ambiguous:
             own.append(issue("AMBIGUOUS_VALUE", "Several different amounts are stated; none "
                              "selected", payload=row.payload_id, locator=row.locator))

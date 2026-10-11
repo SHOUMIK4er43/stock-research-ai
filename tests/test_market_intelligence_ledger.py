@@ -33,6 +33,7 @@ from test_market_intelligence import (
     request,
 )
 
+from stock_research_ai.application.corporate_events import scan_amounts, single_amount
 from stock_research_ai.application.order_comparability import (
     ALL,
     ORDER_VALUES,
@@ -70,6 +71,7 @@ from stock_research_ai.domain.market_intelligence import (
     PeriodRevenue,
     Provider,
     RawPayload,
+    ReferenceRevenue,
     ReportedInflow,
     ReportedOrderBook,
     TaxBasis,
@@ -844,7 +846,9 @@ def test_later_awards_ruled_out_by_explicit_evidence_keep_the_bid_pending():
     out = pending(bid(project="Bridge at Godavari"),
                   rec(2, date(2026, 7, 1), project="Tunnel at Banihal", value="100"),
                   rec(3, date(2026, 7, 2), value="100", letters=(date(2026, 3, 3),)),
-                  rec(4, date(2026, 7, 3), client="Western Railway", value="100"),
+                  # a different client alone proves nothing: its different project rules it out
+                  rec(4, date(2026, 7, 3), client="Western Railway", project="Station "
+                      "redevelopment at Surat", value="100"),
                   rec(5, date(2026, 5, 1), value="100", doc=False))  # before the bid
     linkage = next(c for c in out["chains"] if c.status == ChainStatus.PENDING_L1).l1_linkage
     assert linkage is not None and linkage.resolution == L1Resolution.TRUE_PENDING
@@ -922,3 +926,273 @@ def test_listings_verified_separately_are_not_tied_without_an_nse_isin():
     assert "LISTINGS_NOT_CROSS_VERIFIED" in {i.code for i in identity.issues}
     assert [e.exchanges for e in data.events] == [("NSE",)]  # RVNL's own NSE filing only
     assert data.orders == () and data.corporate_actions == ()
+
+
+# --- residual A: a noisy client name never makes a bid falsely TRUE_PENDING -------------------
+
+NOISY_BID_CLIENT = "M. P"
+NOISY_AWARD_CLIENT = "Madhya Pradesh Paschim Kshetra Vidyut Vitran Co Ltd"
+
+
+def linkage_of(result: list[OrderChain]) -> Any:
+    bid_chain = next(c for c in result if c.status == ChainStatus.PENDING_L1)
+    assert bid_chain.l1_linkage is not None
+    return bid_chain.l1_linkage
+
+
+def test_same_project_with_a_noisy_client_name_is_not_true_pending():
+    bid_ = bid(client=NOISY_BID_CLIENT, project="Project Alpha")
+    award_ = rec(2, date(2026, 7, 1), client=NOISY_AWARD_CLIENT, project="Project Alpha",
+                 value="100")
+    result = chains(bid_, award_)
+    assert len(result) == 2  # client strings differ: the linking rules do not merge them
+    linkage = linkage_of(result)
+    assert linkage.resolution == L1Resolution.UNRESOLVED_LINKAGE
+    assert linkage.candidate_order_ids == (award_.order_id,)
+
+
+def test_same_tender_with_a_noisy_client_name_is_not_true_pending():
+    bid_ = bid(client=NOISY_BID_CLIENT, refs=("TENDER:MPPKVVCL-2024-77",))
+    award_ = rec(2, date(2026, 7, 1), client=NOISY_AWARD_CLIENT,
+                 refs=("TENDER:MPPKVVCL-2024-77",), value="100")
+    assert linkage_of(chains(bid_, award_)).resolution == L1Resolution.UNRESOLVED_LINKAGE
+
+
+def test_letter_reference_with_a_noisy_client_name_is_not_true_pending():
+    bid_ = bid(client=NOISY_BID_CLIENT, project="Project Alpha")
+    award_ = rec(2, date(2026, 7, 1), client=NOISY_AWARD_CLIENT, letters=(bid_.announcement_date,),
+                 value="100")
+    assert linkage_of(chains(bid_, award_)).resolution == L1Resolution.UNRESOLVED_LINKAGE
+    # with the same client the explicit reference links them (the normal strong rule)
+    same = rec(3, date(2026, 7, 1), client="NMDC", letters=(bid_.announcement_date,),
+               value="100")
+    (chain,) = chains(bid(client="NMDC", project="Project Alpha"), same)
+    assert chain.l1_linkage is not None
+    assert chain.l1_linkage.resolution == L1Resolution.LINKED_TO_AWARD
+
+
+def test_different_client_and_different_project_is_ruled_out():
+    result = chains(bid(client=NOISY_BID_CLIENT, project="Project Alpha"),
+                    rec(2, date(2026, 7, 1), client=NOISY_AWARD_CLIENT, project="Project Beta",
+                        value="100"))
+    assert linkage_of(result).resolution == L1Resolution.TRUE_PENDING
+
+
+def test_same_client_different_project_is_not_linked_and_ruled_out():
+    result = chains(bid(project="Project Alpha"),
+                    rec(2, date(2026, 7, 1), project="Project Beta", value="100"))
+    assert len(result) == 2
+    assert linkage_of(result).resolution == L1Resolution.TRUE_PENDING
+
+
+def test_different_explicit_tenders_rule_out_even_the_same_project_text():
+    result = chains(bid(client=NOISY_BID_CLIENT, project="Project Alpha",
+                        refs=("TENDER:T-1001",)),
+                    rec(2, date(2026, 7, 1), client=NOISY_AWARD_CLIENT, project="Project Alpha",
+                        refs=("TENDER:T-2002",), value="100"))
+    assert linkage_of(result).resolution == L1Resolution.TRUE_PENDING
+
+
+def test_two_possible_later_awards_stay_unresolved_never_guessed():
+    a = rec(2, date(2026, 7, 1), client=NOISY_AWARD_CLIENT, project="Project Alpha", value="100")
+    b = rec(3, date(2026, 8, 1), client="MPPKVVCL", project="Project Alpha", value="100")
+    result = chains(bid(client=NOISY_BID_CLIENT, project="Project Alpha"), a, b)
+    linkage = linkage_of(result)
+    assert linkage.resolution == L1Resolution.UNRESOLVED_LINKAGE
+    assert set(linkage.candidate_order_ids) == {a.order_id, b.order_id}
+    assert sum(c.status == ChainStatus.CONFIRMED for c in result) == 2  # nothing merged
+
+
+def test_noisy_client_bid_is_excluded_from_the_known_pending_total():
+    out = pending(bid(1, client=NOISY_BID_CLIENT, project="Project Alpha", value="100"),
+                  bid(2, date(2026, 6, 2), project="Bridge at Godavari", value="40"),
+                  rec(3, date(2026, 7, 1), client=NOISY_AWARD_CLIENT, project="Project Alpha",
+                      value="100"))
+    m = out["m"]
+    assert m[K.DISCLOSED_PENDING_L1_VALUE].value is None
+    assert m[K.PENDING_L1_TRUE_PENDING_VALUE].value == Decimal(40)
+    assert m[K.PENDING_L1_UNRESOLVED_VALUE].value == Decimal(100)
+
+
+# --- residual B: complete-token money parsing ---------------------------------------------------
+
+RUPEES_PER_CRORE = Decimal(10_000_000)
+
+
+def rupees(grouped: str) -> Decimal:
+    """Crore from a rupee amount written with grouping commas: drop the commas, divide."""
+    return Decimal(grouped.replace(",", "")) / RUPEES_PER_CRORE
+
+
+@pytest.mark.parametrize(
+    ("text", "crore"),
+    [
+        ("Rs. 1134,11,42,182", rupees("1134,11,42,182")),  # 11,341,142,182 rupees
+        ("Rs. 1,134,11,42,182", rupees("1134,11,42,182")),
+        ("Rs. 110,00,00,000", Decimal(110)),  # 1,100,000,000 / 10^7
+        ("Rs. 7,20,000", Decimal("0.072")),  # 720,000 / 10^7
+        ("Rs. 1,23,45,678", rupees("12345678")),
+        ("Rs. 404,88,18,738/-", Decimal("404.8818738")),
+        ("₹1,234", Decimal(1234) / RUPEES_PER_CRORE),
+        ("₹1,234,567", Decimal(1234567) / RUPEES_PER_CRORE),
+        ("₹123456789", Decimal("12.3456789")),
+        ("Rs. 1134.50", Decimal("1134.50") / RUPEES_PER_CRORE),
+        ("Rs. 148,26,89 ,066", rupees("148,26,89,066")),  # extraction blank before a comma
+        ("Rs 148 ,26,89,066/-", rupees("148,26,89,066")),
+        ("INR 164, 18,63,783.67/-", rupees("164,18,63,783.67")),  # blank after a comma
+        ("Rs. 1,134 crore", Decimal(1134)),  # an explicit unit is never raw rupees
+        ("Rs. 1,134.50 Cr", Decimal("1134.50")),
+        ("Rs.100crore", Decimal(100)),
+        ("Rs. 72 lakh", Decimal("0.72")),  # 72 x 10^5 / 10^7
+        ("₹7.2 lakh", Decimal("0.072")),
+        ("USD 7,152,236.59/-", Decimal("7152236.59") / RUPEES_PER_CRORE),  # crore of USD
+    ],
+)
+def test_money_tokens_are_read_whole(text, crore):
+    found, malformed = scan_amounts(text)
+    assert malformed == 0 and [m.crore for m in found] == [crore]
+    assert single_amount(text) == (found[0], False)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Rs. 1134,11,42,",  # a trailing group is missing
+        "Rs. 148,26,89 ,",
+        "Rs. ,",
+        "Rs. 1,,23,000",
+        "Rs. 1,lQ,86,49,140.99",  # cut short by an extraction letter: never Rs 1
+        "Rs. 12O,00,000",
+        "Rs. 1134 11 42 182",  # blanks without commas are never joined
+        "Rs. 100, 200 and Rs. 300",  # a list or one number? unreadable, never 100
+        "Rs. 1134,11,42",  # Indian groups but no final three-digit group
+        "Rs. 1,2,345",
+    ],
+)
+def test_malformed_money_never_yields_a_prefix(text):
+    found, malformed = scan_amounts(text)
+    assert malformed >= 1
+    assert not any(m.crore in (Decimal(1134) / RUPEES_PER_CRORE, Decimal(148) / RUPEES_PER_CRORE,
+                               Decimal(1) / RUPEES_PER_CRORE, Decimal(100) / RUPEES_PER_CRORE)
+                   for m in found)
+    assert single_amount(text)[0] is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["letter dated 12.03.2026", "Tender No. 1134,11,42,182", "a 25% share", "Tel +91 11 2345 6789",
+     "Contract No. 110,00,00,000", "Hrs 10,000"],
+)
+def test_numbers_outside_monetary_context_are_not_money(text):
+    assert scan_amounts(text) == ([], 0)
+
+
+def test_large_amounts_propagate_through_order_economics():
+    a_url = "https://nsearchives.nseindia.com/corporate/BIG1.pdf"
+    x_url = "https://nsearchives.nseindia.com/corporate/BIGX.pdf"
+    project = "Doubling of track between Navipet and Nizamabad"
+    big = "Rs. 1134,11,42,182"
+    value = rupees("1134,11,42,182")  # 1134.1142182 crore
+    revenue = ReferenceRevenue(fiscal_year=2026, value_crore=Decimal(20000),
+                               basis=FinancialBasis.CONSOLIDATED, citation=CITE)
+    data = build([*base_payloads(), nse_announcements(
+        announcement("01-Jan-2025 10:00:00", "Updates", "Newspaper", seq="0"),
+        _loa("1", "01-Jun-2026 10:00:00", f"Letter of Award from South Central Railway worth "
+             f"{big}", a_url),
+        _loa("2", "01-Jul-2026 10:00:00", "Partial cancellation of contract from South Central "
+             "Railway", x_url))],
+        reference_revenue=revenue,
+        document_texts=(
+            DocumentText(source_url=a_url, document_sha256=SHA,
+                         text=f"received Letter of Award from South Central Railway for "
+                              f"“{project}”. Broad consideration or size of the order {big}/-"),
+            DocumentText(source_url=x_url, document_sha256=SHA,
+                         text=f"in continuation to our letter dated 01.06.2026 the contract from "
+                              f"South Central Railway for “{project}” is partially cancelled. "
+                              "Broad consideration or size of the order Rs. 134,11,42,182/-")))
+    award_event = next(e for e in data.events if e.event_type.value == "LOA")
+    assert award_event.financial_value_crore == value
+    assert award_event.materiality is not None
+    assert award_event.materiality.ratio_pct == (value / 20000 * 100).quantize(Decimal("0.000001"))
+    (chain,) = data.order_chains
+    cancelled = rupees("134,11,42,182")
+    assert chain.status == ChainStatus.PARTIALLY_CANCELLED
+    assert chain.confirmed_gross_value_crore == value - cancelled == Decimal(1000)
+    assert chain.confirmed_attributable_value_crore == Decimal(1000)
+    m = metrics(data)
+    assert m[K.DISCLOSED_CONFIRMED_INFLOW].value == value.quantize(Decimal("0.000001"))
+    assert m[K.CANCELLATION_RATE].value == (cancelled / value * 100).quantize(Decimal("0.000001"))
+
+
+def test_unreadable_annexure_amount_is_flagged_and_never_used():
+    url = "https://nsearchives.nseindia.com/corporate/OCR1.pdf"
+    data = build([*base_payloads(), nse_announcements(
+        _loa("1", "01-Jun-2026 10:00:00", "Letter of Award from Eastern Railway", url))],
+        document_texts=(DocumentText(
+            source_url=url, document_sha256=SHA,
+            text="received Letter of Award from Eastern Railway for “Bypass line”. Broad "
+                 "consideration or size of the Rs. 1,lQ,86,49,140.99/ - (Rupees- One Hundred "
+                 "Ten Crore ...)"),))
+    (order,) = data.orders
+    assert order.gross_value_crore is None
+    assert "MALFORMED_AMOUNT" in {i.code for i in order.issues}
+    (chain,) = data.order_chains
+    assert chain.confirmed_gross_value_crore is None
+
+
+def test_equal_large_values_still_never_link():
+    a = rec(1, D, project="Project Alpha", value="1134.1142182")
+    b = rec(2, date(2026, 7, 1), project="Project Beta", value="1134.1142182")
+    assert len(chains(a, b)) == 2
+
+
+@pytest.mark.parametrize(
+    ("text", "crore"),
+    [
+        ("The project costs is Rs \n1544.60 Cr.", Decimal("1544.60")),  # marker, line break, value
+        ("cost per set is Rs. \n120 Crores", Decimal(120)),
+        # extraction split the paise off before the '/-' terminator: 72,73,45,018.74 rupees
+        ("Rs. 72,73,45,018. 74/- (Rupees Seventy-Two Crore ...)", rupees("72,73,45,018.74")),
+        ("Rs. 72, 73,45,018. 74 /-", rupees("72,73,45,018.74")),
+    ],
+)
+def test_live_extraction_layouts_read_whole(text, crore):
+    assert [m.crore for m in scan_amounts(text)[0]] == [crore]
+
+
+def test_split_digits_not_before_the_terminator_are_unreadable():
+    assert scan_amounts("Rs. 5,000. 25 orders") == ([], 1)
+
+
+def test_a_component_amount_is_never_taken_for_the_unreadable_total():
+    # live RVNL 2024-03-07 layout: the total has no readable marker, the supply part is
+    # readable, the installation part is not: no value, never the supply component
+    segment = ("the total cost of project is Rs order(s)/contract(s); 888,56,35, 186/ (The supply "
+               "portion including tax is Rs. 782,69,76,778/ - and \ninstallation portion "
+               "including tax is Rs. \n105,86 58,408.00/-)")
+    found, malformed = scan_amounts(segment)
+    assert [m.crore for m in found] == [rupees("782,69,76,778")] and malformed == 1
+    assert single_amount(segment) == (None, True)
+
+
+def test_explicit_letter_reference_with_conflicting_extracted_text_stays_unresolved():
+    # live RVNL layout: same client, the LOA continues the bid's letter, but the extracted
+    # tender numbers differ ('PUNE-TDC-2025' vs 'PUNE-TDC-2025-EPC-05'): not linked (blocked),
+    # and never ruled out either
+    bid_ = bid(client="Central Railway", project="Traction substation at Pune",
+               refs=("TENDER:PUNE-TDC-2025",))
+    award_ = rec(2, date(2026, 7, 1), client="Central Railway",
+                 project="Traction substation at Pune", refs=("TENDER:PUNE-TDC-2025-EPC-05",),
+                 letters=(bid_.announcement_date,), value="100")
+    result = chains(bid_, award_)
+    assert len(result) == 2
+    loa = next(c for c in result if c.status == ChainStatus.CONFIRMED)
+    assert "ORDER_LINK_BLOCKED" in {i.code for i in loa.issues}
+    assert linkage_of(result).resolution == L1Resolution.UNRESOLVED_LINKAGE
+
+
+def test_a_different_client_alone_never_rules_an_award_out():
+    # the bid's 'client' is really project text; the later award names no project
+    result = chains(bid(client="Varkala Sivagiri Railway Station", project="Varkala works"),
+                    rec(2, date(2026, 7, 1), client="Southern Railway", value="100"))
+    assert linkage_of(result).resolution == L1Resolution.UNRESOLVED_LINKAGE

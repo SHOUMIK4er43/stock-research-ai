@@ -50,6 +50,7 @@ from stock_research_ai.application.corporate_events import (
     StatedMoney,
     letter_dates,
     norm_key,
+    scan_amounts,
     single_amount,
 )
 from stock_research_ai.application.exchange_intelligence import issue, uid
@@ -237,7 +238,12 @@ def extract_order(
         if value is not None:
             rules.append("VALUE_FROM_ANNEXURE_LABEL")
         elif ambiguous:
-            issues.append(issue("AMBIGUOUS_ORDER_VALUE", "Several values under the value label"))
+            if scan_amounts(segment)[1]:
+                issues.append(issue("MALFORMED_AMOUNT", "An amount under the value label cannot "
+                                    "be read as one complete number; no value is taken"))
+            else:
+                issues.append(issue("AMBIGUOUS_ORDER_VALUE", "Several values under the value "
+                                    "label"))
     if value is None and event.financial_value_crore is not None:
         value = StatedMoney(
             crore=event.financial_value_crore, currency=event.value_currency or "INR",
@@ -775,22 +781,50 @@ def _strong_key(record: OrderRecord) -> bool:
     return record.project is not None or bool(_linking_ids(_refs(record.reference_ids)))
 
 
-def _may_be_award_of(bid: OrderRecord, award: OrderRecord) -> bool:
-    """True unless explicit evidence shows the award belongs to another project."""
+@dataclass(frozen=True)
+class _Print:
+    """A record's project identity, computed once: normalized project text and explicit
+    numbers by kind (PACKAGE included) plus the numbers that may identify a project."""
+
+    project: str | None
+    refs: dict[str, set[str]]
+    ids: frozenset[str]
+
+
+def _print(record: OrderRecord) -> _Print:
+    refs = _refs(record.reference_ids)
+    return _Print(project=norm_key(record.project) if record.project else None, refs=refs,
+                  ids=frozenset(_linking_ids(refs)))
+
+
+def _may_be_award_of(bid: OrderRecord, award: OrderRecord, bp: _Print, ap: _Print) -> bool:
+    """True unless explicit project-identity evidence shows the award belongs to another
+    project: a different project text or explicit number (the `fingerprint_conflict` rules),
+    or an explicit continuation of another filing. A parsed client name is noisy text
+    ('M. P' vs 'Madhya Pradesh Paschim Kshetra ...') and never rules an award out by itself.
+    An award that explicitly continues the bid's own letter stays possible even when
+    extracted text or numbers disagree: the disagreement leaves the bid unresolved, never
+    pending."""
     if award.announcement_date < bid.announcement_date:
         return False
-    if bid.client_key and award.client_key and bid.client_key != award.client_key:
-        return False
-    if award.referenced_letter_dates and bid.announcement_date not in \
-            award.referenced_letter_dates:
-        return False  # the award explicitly continues another filing
-    projects = {norm_key(award.project)} if award.project else set()
-    return fingerprint_conflict(bid.project, _refs(bid.reference_ids), projects,
-                                _refs(award.reference_ids)) is None
+    if bid.announcement_date in award.referenced_letter_dates:
+        return True
+    for kind, ids in bp.refs.items():
+        theirs = ap.refs.get(kind)
+        if theirs and ids.isdisjoint(theirs):
+            return False  # different explicit numbers of one kind: another project
+    joined = bool(bp.ids & ap.ids)
+    if bp.project and ap.project and bp.project != ap.project and not joined:
+        return False  # different explicit project texts: another project
+    if joined or (bp.project is not None and bp.project == ap.project):
+        return True
+    # A different client string alone proves nothing; only an explicit continuation of
+    # another filing rules the award out here.
+    return not award.referenced_letter_dates
 
 
 def _l1_linkage(
-    chain: _Chain, machine: _Machine, unexplained: Sequence[OrderRecord],
+    chain: _Chain, machine: _Machine, unexplained: Sequence[tuple[OrderRecord, _Print]],
     coverage: LedgerCoverage,
 ) -> L1Linkage | None:
     bids = [r for r in chain.live if r.stage == OrderStage.L1_BIDDER]
@@ -810,7 +844,8 @@ def _l1_linkage(
         return None
     covered = (coverage.complete and coverage.ledger_start is not None
                and coverage.ledger_start <= bid.announcement_date)
-    candidates = [a for a in unexplained if _may_be_award_of(bid, a)]
+    bp = _print(bid)
+    candidates = [a for a, ap in unexplained if _may_be_award_of(bid, a, bp, ap)]
     reasons: list[str] = []
     if not covered:
         reasons += list(coverage.reasons) or ["LEDGER_DOES_NOT_COVER_BID"]
@@ -848,7 +883,7 @@ def build_chains(
     machines = [_run(c) for c in chains]
     # awards whose chain has no bid: a pending bid may be one of these, unless ruled out
     unexplained = [
-        c.live[0] for c in chains
+        (c.live[0], _print(c.live[0])) for c in chains
         if c.live and c.live[0].stage in _AWARD_STAGES
         and not any(r.stage == OrderStage.L1_BIDDER for r in c.live)
     ]

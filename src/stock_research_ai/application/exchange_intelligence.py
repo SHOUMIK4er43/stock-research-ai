@@ -4,6 +4,13 @@ Pure functions over RawPayload bytes: no network, no clock, no AI. Every payload
 bounded rows or into an explicit issue (blocked, rate limited, unavailable, invalid); a failure
 never becomes an empty success and never a zero. Rows that belong to another security (a
 market-wide feed, a mismatched ISIN) are dropped with an issue, never silently kept.
+
+Provider identity gating: a feed row is attributed to the company only through a VERIFIED
+identifier (one a provider payload stated, see CompanyIdentity) - the row's own NSE symbol,
+ISIN or BSE code equal to the verified value, or, for a row that states no identifier at all,
+a company-scoped payload whose query key is the verified identifier of that exchange. A row
+whose only key is a caller-declared, unverified identifier is never ingested: it is counted
+under PROVIDER_IDENTITY_UNVERIFIED instead.
 """
 
 import csv
@@ -15,8 +22,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
-from urllib.parse import urlsplit
+from typing import Any, Literal
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid5
 
 from stock_research_ai.domain.market_intelligence import (
@@ -405,7 +412,7 @@ class IdentityInputs:
 
 
 _BSE_CODE_KEYS = ("SecurityCode", "Scripcode", "ScripCode", "SCRIP_CD")
-_BSE_ISIN_KEYS = ("ISIN", "ISINNo", "IsinNo")
+_BSE_ISIN_KEYS = ("ISIN", "ISINNo", "IsinNo", "ISIN_NUMBER")
 _BSE_NAME_KEYS = ("CompanyName", "Cmpname", "LONG_NAME", "SLONGNAME")
 _BSE_SYMBOL_KEYS = ("SecurityId", "ScripID", "scrip_id")
 
@@ -429,6 +436,7 @@ def resolve_identity(
     issues: list[Issue] = []
     evidence: list[IdentityEvidence] = []
     observed: dict[IdentityField, set[str]] = {f: set() for f in IdentityField}
+    isin_providers: set[Provider] = set()  # exchanges whose own payload stated the ISIN
 
     def note(
         fld: IdentityField, value: str, provider: Provider, pid: UUID | None, loc: str
@@ -438,6 +446,8 @@ def resolve_identity(
         )
         if pid is not None:
             observed[fld].add(name_key(value) if fld == IdentityField.NAME else value)
+            if fld == IdentityField.ISIN:
+                isin_providers.add(provider)
 
     for fld, value in (
         (IdentityField.NSE_SYMBOL, request.nse_symbol),
@@ -453,6 +463,7 @@ def resolve_identity(
         return _identity(request, IdentityStatus.FAILED, evidence, issues, {})
 
     names: dict[Provider, str] = {}
+    bse_anchored = False  # a BSE header stated the code together with a valid ISIN
     # NSE equity master: exact symbol (or exact ISIN when no symbol was declared).
     for payload, pid in inputs.nse_master:
         rows = csv_rows(payload, pid, issues, budget)
@@ -528,9 +539,18 @@ def resolve_identity(
             issues.append(issue("INVALID_SOURCE_DATA", "BSE header names no code or ISIN",
                                 severity="ERROR", payload=pid))
             continue
+        isin_ok = bse_isin is not None and isin_valid(bse_isin)
         if code and re.fullmatch(r"[0-9]{6}", code):
+            # Recorded for conflict detection either way; verifies the code only with an ISIN
+            # (a header that just echoes the requested scripcode proves nothing).
             note(IdentityField.BSE_CODE, code, Provider.BSE, pid, "$")
-        if bse_isin and isin_valid(bse_isin):
+            if isin_ok:
+                bse_anchored = True
+            else:
+                issues.append(issue("BSE_HEADER_WITHOUT_ISIN", "The BSE header states the code "
+                                    "but no valid ISIN; the BSE code is not verified",
+                                    payload=pid))
+        if bse_isin is not None and isin_ok:
             note(IdentityField.ISIN, bse_isin, Provider.BSE, pid, "$")
         name = _first(row, _BSE_NAME_KEYS)
         if name:
@@ -556,6 +576,19 @@ def resolve_identity(
         issues.append(issue("NAME_VARIANT", "Exchanges spell the company name differently; "
                             "identity rests on codes, not names", severity="INFO"))
     resolved = {fld: next(iter(v)) for fld, v in observed.items() if len(v) == 1}
+    if IdentityField.BSE_CODE in resolved and not bse_anchored:
+        del resolved[IdentityField.BSE_CODE]
+    if (IdentityField.NSE_SYMBOL in resolved and IdentityField.BSE_CODE in resolved
+            and Provider.NSE not in isin_providers):
+        # Both listings were verified, but no NSE source states an ISIN that ties the NSE
+        # symbol to the BSE header's security (e.g. the NSE master failed and Kite verified
+        # the symbol): the BSE listing, and an ISIN only BSE stated, are not attributed.
+        del resolved[IdentityField.BSE_CODE]
+        if isin_providers == {Provider.BSE}:
+            resolved.pop(IdentityField.ISIN, None)
+        issues.append(issue("LISTINGS_NOT_CROSS_VERIFIED", "No NSE source states the ISIN, so "
+                            "the BSE listing cannot be tied to the NSE symbol; BSE code not "
+                            "verified"))
     if conflict:
         return _identity(request, IdentityStatus.AMBIGUOUS, evidence, issues, {})
     confirmed_listing = [
@@ -575,7 +608,8 @@ def resolve_identity(
         for fld in wanted:
             if fld not in resolved:
                 issues.append(issue("IDENTITY_FIELD_UNCONFIRMED",
-                                    f"Declared {fld.value} not confirmed by any source"))
+                                    f"Declared {fld.value} not confirmed by any source; rows "
+                                    "keyed only by it are not attributed"))
         if IdentityField.ISIN not in resolved:
             issues.append(issue("ISIN_UNCONFIRMED", "No source stated the ISIN"))
         status = IdentityStatus.PARTIAL
@@ -596,9 +630,10 @@ def _identity(
     name: str | None = None,
 ) -> CompanyIdentity:
     usable = status in (IdentityStatus.RESOLVED, IdentityStatus.PARTIAL)
-    isin = resolved.get(IdentityField.ISIN) or (request.isin if usable else None)
-    nse = resolved.get(IdentityField.NSE_SYMBOL) or (request.nse_symbol if usable else None)
-    bse = resolved.get(IdentityField.BSE_CODE) or (request.bse_code if usable else None)
+    # Verified identifiers only: a declared value never stands in for a provider's.
+    isin = resolved.get(IdentityField.ISIN) if usable else None
+    nse = resolved.get(IdentityField.NSE_SYMBOL) if usable else None
+    bse = resolved.get(IdentityField.BSE_CODE) if usable else None
     token = resolved.get(IdentityField.KITE_TOKEN) if usable else None
     evidence.sort(key=lambda e: (e.field.value, e.provider.value, str(e.payload_id), e.locator))
     return CompanyIdentity(
@@ -608,6 +643,9 @@ def _identity(
         isin=isin,
         nse_symbol=nse,
         bse_code=bse,
+        declared_isin=request.isin,
+        declared_nse_symbol=request.nse_symbol,
+        declared_bse_code=request.bse_code,
         name=name if usable else None,
         kite_instrument_token=token,
         kite_exchange="NSE" if token else None,
@@ -616,23 +654,71 @@ def _identity(
     )
 
 
-def row_matches(
-    identity: CompanyIdentity, symbol: object, isin: object, code: object = None
-) -> bool:
-    """A feed row belongs to the identity: every key it states must equal the identity's."""
-    stated = False
-    for given, own in ((symbol, identity.nse_symbol), (isin, identity.isin),
-                       (code, identity.bse_code)):
-        value = (
-            str(given) if isinstance(given, int) and not isinstance(given, bool)
-            else text(given, 40)
-        )
-        if value is None or own is None:
+Admission = Literal["MATCH", "MISMATCH", "UNVERIFIED", "UNSTATED"]
+
+
+def _key(value: object) -> str | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return text(value, 40)
+
+
+def row_identity(
+    identity: CompanyIdentity, symbol: object = None, isin: object = None, code: object = None
+) -> Admission:
+    """MATCH: a key the row states equals a verified identifier and no stated key
+    contradicts the identity (verified or declared). MISMATCH: some stated key contradicts.
+    UNVERIFIED: the row's keys can only be compared with unverified declarations.
+    UNSTATED: the row states no key."""
+    matched = unverified = False
+    for given, verified, declared in (
+        (symbol, identity.nse_symbol, identity.declared_nse_symbol),
+        (isin, identity.isin, identity.declared_isin),
+        (code, identity.bse_code, identity.declared_bse_code),
+    ):
+        value = _key(given)
+        if value is None:
             continue
-        stated = True
-        if value != own:
-            return False
-    return stated
+        if verified is not None:
+            if value != verified:
+                return "MISMATCH"
+            matched = True
+        elif declared is not None and value != declared:
+            return "MISMATCH"
+        else:
+            unverified = True
+    return "MATCH" if matched else "UNVERIFIED" if unverified else "UNSTATED"
+
+
+def scope_identity(identity: CompanyIdentity, payload: RawPayload) -> Admission:
+    """For a row that states no identifier: the payload must be company-scoped by the
+    exchange's VERIFIED identifier (the query key, when the URL states one, must equal it)."""
+    provider = PAYLOAD_PROVIDER[payload.kind]
+    verified = identity.nse_symbol if provider == Provider.NSE else (
+        identity.bse_code if provider == Provider.BSE else None
+    )
+    if verified is None:
+        return "UNVERIFIED"
+    keys = ("symbol",) if provider == Provider.NSE else ("scripcode", "strScrip")
+    try:
+        query = parse_qs(urlsplit(payload.url).query)
+    except ValueError:
+        return "MISMATCH"
+    stated = {v for k in keys for v in query.get(k, [])}
+    return "MISMATCH" if stated and stated != {verified} else "MATCH"
+
+
+def admit(
+    identity: CompanyIdentity, payload: RawPayload, counts: dict[str, int], *,
+    symbol: object = None, isin: object = None, code: object = None,
+) -> bool:
+    """Gate one feed row; tally refusals by kind for `_row_issues`."""
+    status = row_identity(identity, symbol, isin, code)
+    if status == "UNSTATED":
+        status = scope_identity(identity, payload)
+    if status != "MATCH":
+        counts[status] = counts.get(status, 0) + 1
+    return status == "MATCH"
 
 
 # --- filing rows ----------------------------------------------------------------------------
@@ -661,10 +747,11 @@ def nse_announcements(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[FilingRow]:
     out: list[FilingRow] = []
-    dropped = undated = 0
+    refused: dict[str, int] = {}
+    undated = 0
     for loc, row in json_rows(payload, pid, issues, budget, "data"):
-        if not row_matches(identity, row.get("symbol"), row.get("sm_isin")):
-            dropped += 1
+        if not admit(identity, payload, refused, symbol=row.get("symbol"),
+                     isin=row.get("sm_isin")):
             continue
         moment = parse_moment(row.get("an_dt")) or parse_moment(row.get("sort_date"))
         if moment is None:
@@ -685,7 +772,7 @@ def nse_announcements(
                                   url=url, published=moment),
             )
         )
-    _row_issues(issues, pid, dropped, undated)
+    _row_issues(issues, pid, refused, undated)
     return out
 
 
@@ -693,10 +780,11 @@ def bse_announcements(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[FilingRow]:
     out: list[FilingRow] = []
-    dropped = undated = 0
+    refused: dict[str, int] = {}
+    undated = 0
     for loc, row in json_rows(payload, pid, issues, budget, "Table"):
-        if not row_matches(identity, None, None, row.get("SCRIP_CD")):
-            dropped += 1
+        if not admit(identity, payload, refused, isin=_first(row, _BSE_ISIN_KEYS),
+                     code=row.get("SCRIP_CD")):
             continue
         moment = (parse_moment(row.get("NEWS_DT")) or parse_moment(row.get("DissemDT"))
                   or parse_moment(row.get("DT_TM")))
@@ -724,14 +812,19 @@ def bse_announcements(
                                   url=url, published=moment),
             )
         )
-    _row_issues(issues, pid, dropped, undated)
+    _row_issues(issues, pid, refused, undated)
     return out
 
 
-def _row_issues(issues: list[Issue], pid: UUID, dropped: int, undated: int) -> None:
-    if dropped:
+def _row_issues(issues: list[Issue], pid: UUID, refused: dict[str, int], undated: int) -> None:
+    if refused.get("MISMATCH"):
         issues.append(issue("ROW_IDENTITY_MISMATCH",
-                            f"{dropped} rows belong to another security and were dropped",
+                            f"{refused['MISMATCH']} rows belong to another security and were "
+                            "dropped", payload=pid))
+    if refused.get("UNVERIFIED"):
+        issues.append(issue("PROVIDER_IDENTITY_UNVERIFIED",
+                            f"{refused['UNVERIFIED']} rows are keyed only by an identifier the "
+                            "provider did not verify; kept out of the company's data",
                             payload=pid))
     if undated:
         issues.append(issue("MALFORMED_DATE", f"{undated} rows without a valid date were dropped",
@@ -811,10 +904,10 @@ def nse_corporate_actions(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[ActionRow]:
     out: list[ActionRow] = []
-    dropped = 0
+    refused: dict[str, int] = {}
     for loc, row in json_rows(payload, pid, issues, budget, "data"):
-        if not row_matches(identity, row.get("symbol"), row.get("isin")):
-            dropped += 1
+        if not admit(identity, payload, refused, symbol=row.get("symbol"),
+                     isin=row.get("isin")):
             continue
         subject = text(row.get("subject"), 1000)
         if subject is None:
@@ -833,7 +926,7 @@ def nse_corporate_actions(
                 issues=tuple(own),
             )
         )
-    _row_issues(issues, pid, dropped, 0)
+    _row_issues(issues, pid, refused, 0)
     return out
 
 
@@ -841,9 +934,10 @@ def bse_corporate_actions(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[ActionRow]:
     out: list[ActionRow] = []
+    refused: dict[str, int] = {}
     for loc, row in json_rows(payload, pid, issues, budget, "Table"):
-        code = row.get("scrip_code") or row.get("SCRIP_CD")
-        if code is not None and not row_matches(identity, None, None, code):
+        if not admit(identity, payload, refused, isin=_first(row, _BSE_ISIN_KEYS),
+                     code=row.get("scrip_code") or row.get("SCRIP_CD")):
             continue
         subject = text(row.get("Purpose") or row.get("purpose"), 1000)
         if subject is None:
@@ -863,6 +957,7 @@ def bse_corporate_actions(
                 issues=tuple(own),
             )
         )
+    _row_issues(issues, pid, refused, 0)
     return out
 
 
@@ -873,8 +968,10 @@ def nse_shareholding(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[ShareholdingFiling]:
     filings: list[ShareholdingFiling] = []
+    refused: dict[str, int] = {}
     for loc, row in json_rows(payload, pid, issues, budget, "data"):
-        if not row_matches(identity, row.get("symbol"), row.get("isin")):
+        if not admit(identity, payload, refused, symbol=row.get("symbol"),
+                     isin=row.get("isin")):
             continue
         period = parse_day(row.get("date"))
         if period is None:
@@ -899,6 +996,7 @@ def nse_shareholding(
                                     published=parse_moment(row.get("broadcastDate"))),),
             )
         )
+    _row_issues(issues, pid, refused, 0)
     # A later filing for the same period supersedes the earlier one (never deleted).
     filings.sort(key=lambda f: (f.period_end, f.submitted_on or date.min, str(f.filing_id)))
     out: list[ShareholdingFiling] = []
@@ -916,8 +1014,9 @@ def nse_insider_trades(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[InsiderTrade]:
     out = []
+    refused: dict[str, int] = {}
     for loc, row in json_rows(payload, pid, issues, budget, "data"):
-        if not row_matches(identity, row.get("symbol"), None):
+        if not admit(identity, payload, refused, symbol=row.get("symbol")):
             continue
         person = text(row.get("acqName"), 1000)
         if person is None:
@@ -943,6 +1042,7 @@ def nse_insider_trades(
                 sources=(source_ref(payload, pid, loc, record_id=record),),
             )
         )
+    _row_issues(issues, pid, refused, 0)
     return out
 
 
@@ -955,11 +1055,19 @@ def nse_documents(
 ) -> list[FilingDocument]:
     kind = payload.kind
     out: list[FilingDocument] = []
+    refused: dict[str, int] = {}
     keys = ("data",)
     for loc, row in json_rows(payload, pid, issues, budget, *keys):
+        # The credit-rating feed is market-wide and filtered by issuer in `_document`; every
+        # other document feed is company-scoped and gated like any other row.
+        if kind != PayloadKind.NSE_CREDIT_RATINGS and not admit(
+            identity, payload, refused, symbol=row.get("symbol"), isin=row.get("isin")
+        ):
+            continue
         doc = _document(kind, row, loc, payload, pid, identity, issues)
         if doc is not None:
             out.append(doc)
+    _row_issues(issues, pid, refused, 0)
     return out
 
 
@@ -990,8 +1098,6 @@ def _document(
             sources=(source_ref(payload, pid, loc, url=url, published=published),),
         )
     if kind == PayloadKind.NSE_FINANCIAL_RESULTS:
-        if not row_matches(identity, row.get("symbol"), row.get("isin")):
-            return None
         consolidated = text(row.get("consolidated"), 40)
         basis = (
             FinancialBasis.CONSOLIDATED if consolidated == "Consolidated"

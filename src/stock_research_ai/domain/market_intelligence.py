@@ -49,7 +49,7 @@ MARKET_INTELLIGENCE_SCHEMA: Literal["MARKET_INTELLIGENCE_DATASET_V1"] = (
 )
 MARKET_INTELLIGENCE_ENGINE_VERSION = "market-intelligence/1"
 CLASSIFICATION_VERSION = "event-rules/1"
-ORDER_RULES_VERSION = "order-rules/1"
+ORDER_RULES_VERSION = "order-rules/2"
 MARKET_METHOD_VERSION = "market-methods/1"
 #: Exchange-local time. India has no daylight saving: a fixed +05:30 offset is exact.
 IST = timezone(timedelta(hours=5, minutes=30), "Asia/Kolkata")
@@ -271,12 +271,21 @@ class IdentityEvidence(BaseModel):
 
 
 class CompanyIdentity(BaseModel):
+    """`isin`, `nse_symbol` and `bse_code` are VERIFIED identifiers: each was stated by a
+    provider payload (never only by the caller) without conflict. A BSE code counts as
+    verified only when a BSE header states it together with an ISIN, so a header that merely
+    echoes the requested code proves nothing. What the caller declared is kept separately in
+    `declared_*` and never admits exchange rows on its own."""
+
     model_config = _model()
     identity_id: UUID
     status: IdentityStatus
     isin: Isin | None = None
     nse_symbol: NseSymbol | None = None
     bse_code: BseCode | None = None
+    declared_isin: Isin | None = None
+    declared_nse_symbol: NseSymbol | None = None
+    declared_bse_code: BseCode | None = None
     name: Label | None = None
     kite_instrument_token: KiteToken | None = None
     kite_exchange: Literal["NSE", "BSE"] | None = None
@@ -733,6 +742,12 @@ class OrderStage(StrEnum):
 STAGE_ORDER = {OrderStage.L1_BIDDER: 0, OrderStage.LOA: 1, OrderStage.SIGNED_CONTRACT: 2}
 
 
+class CancellationScope(StrEnum):
+    FULL = "FULL"  # the filing explicitly cancels the whole order / LOA / contract
+    PARTIAL = "PARTIAL"  # the filing explicitly cancels a part (amount or percent if stated)
+    UNSPECIFIED = "UNSPECIFIED"  # neither is explicit: never read as a full cancellation
+
+
 class Geography(StrEnum):
     DOMESTIC = "DOMESTIC"
     INTERNATIONAL = "INTERNATIONAL"
@@ -779,6 +794,10 @@ class OrderRecord(BaseModel):
     award_mode: AwardMode = AwardMode.UNKNOWN
     client_category: ClientCategory = ClientCategory.UNKNOWN
     referenced_letter_dates: tuple[date, ...] = ()
+    #: Explicit identifiers as 'KIND:ID' (TENDER, CONTRACT, LOA, WORK_ORDER, PACKAGE).
+    reference_ids: tuple[Label, ...] = ()
+    cancellation_scope: CancellationScope | None = None  # cancellation records only
+    cancellation_pct: Percent | None = None  # an explicitly stated cancelled share
     source_url: Url | None = None
     document_sha256: Sha256Hex | None = None
     extraction_rules: tuple[Code, ...] = ()
@@ -788,6 +807,10 @@ class OrderRecord(BaseModel):
     def valued(self) -> Self:
         if (self.gross_value_crore is None) != (self.value_currency is None):
             raise ValueError("A stated order value needs its currency")
+        if (self.cancellation_scope is not None) != (self.stage == OrderStage.CANCELLATION):
+            raise ValueError("Only a cancellation has a cancellation scope")
+        if self.cancellation_pct is not None and not Decimal(0) < self.cancellation_pct < 100:
+            raise ValueError("A cancelled share must be in (0, 100)")
         if self.attributable_value_crore is not None and self.gross_value_crore is None:
             raise ValueError("Attributable value requires a gross value")
         if self.jv_share_pct is not None and not Decimal(0) < self.jv_share_pct <= 100:
@@ -797,10 +820,77 @@ class OrderRecord(BaseModel):
 
 class ChainStatus(StrEnum):
     PENDING_L1 = "PENDING_L1"  # lowest bidder only: never confirmed order book
-    CONFIRMED = "CONFIRMED"  # awarded (LOA) or contracted, not cancelled
-    CANCELLED = "CANCELLED"
+    CONFIRMED = "CONFIRMED"  # awarded (LOA) or contracted (or re-awarded), not cancelled
+    PARTIALLY_CANCELLED = "PARTIALLY_CANCELLED"  # an explicit part cancelled, rest active
+    CANCELLED = "CANCELLED"  # explicitly cancelled as a whole
+    #: A cancellation whose scope or amount cannot be determined: the remaining value is
+    #: unknown, never assumed to be zero (full) or unchanged.
+    CANCELLATION_UNRESOLVED = "CANCELLATION_UNRESOLVED"
     UNLINKED_CANCELLATION = "UNLINKED_CANCELLATION"  # cancels an order outside the ledger
     UNLINKED_REVISION = "UNLINKED_REVISION"
+
+
+#: Chains whose remaining value counts in the confirmed order value.
+COUNTED_CHAIN_STATUSES = frozenset({ChainStatus.CONFIRMED, ChainStatus.PARTIALLY_CANCELLED})
+
+
+class TransitionKind(StrEnum):
+    L1 = "L1"
+    AWARD = "AWARD"  # first award of the chain (LOA / contract)
+    REAWARD = "REAWARD"  # a new award after a full cancellation
+    STAGE = "STAGE"  # a later confirmed stage of the same award (e.g. signed contract)
+    PARTIAL_CANCELLATION = "PARTIAL_CANCELLATION"
+    FULL_CANCELLATION = "FULL_CANCELLATION"
+    UNRESOLVED_CANCELLATION = "UNRESOLVED_CANCELLATION"
+    REVISION = "REVISION"
+    DUPLICATE = "DUPLICATE"  # the same stage disclosed again: never a second order
+    IGNORED = "IGNORED"  # recorded, no economic effect (reason in `rule`)
+
+
+class OrderTransition(BaseModel):
+    """One step of a chain's chronological state machine, with its provenance. `amount` is
+    the awarded value (AWARD / REAWARD), the cancelled value (cancellations) or the
+    revision delta (REVISION); None when not stated or not comparable."""
+
+    model_config = _model()
+    order_id: UUID
+    effective_date: date
+    stage: OrderStage
+    kind: TransitionKind
+    status_after: ChainStatus | None
+    value_before_crore: Money | None = None
+    value_after_crore: Money | None = None
+    amount_crore: Money | None = None
+    currency: Literal["INR", "USD", "EUR"] | None = None
+    tax_basis: TaxBasis = TaxBasis.UNKNOWN
+    rule: Code
+
+
+class L1Resolution(StrEnum):
+    LINKED_TO_AWARD = "LINKED_TO_AWARD"  # the chain reached LOA / contract
+    #: Coverage is complete and no later award could belong to this bid.
+    TRUE_PENDING = "TRUE_PENDING"
+    #: A later award of a compatible client exists that the evidence can neither link to
+    #: this bid nor rule out (missing attachment text, project, tender number ...).
+    UNRESOLVED_LINKAGE = "UNRESOLVED_LINKAGE"
+    #: The announcement feed cannot show whether a later award exists (failed or truncated
+    #: source, or the bid predates ledger coverage).
+    SOURCE_INCOMPLETE = "SOURCE_INCOMPLETE"
+
+
+class L1Linkage(BaseModel):
+    """Why an L1 bid is (or is not) known to be still pending. 'No LOA was found' and 'we
+    could not tell whether an LOA exists' are never the same answer."""
+
+    model_config = _model()
+    resolution: L1Resolution
+    follow_up_search_performed: bool
+    event_coverage_complete: bool
+    document_text_available: bool
+    strong_link_key: bool  # project text or an explicit tender / contract number
+    unresolved_award_candidates: NonNegativeInt = 0
+    candidate_order_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
+    reasons: tuple[Code, ...] = ()
 
 
 class OrderChain(BaseModel):
@@ -815,6 +905,7 @@ class OrderChain(BaseModel):
     link_rules: tuple[Code, ...] = ()
     status: ChainStatus
     revised: bool = False
+    reawarded: bool = False
     first_announced: date
     confirmed_on: date | None = None  # first LOA / contract
     last_updated: date
@@ -830,12 +921,16 @@ class OrderChain(BaseModel):
     client_category: ClientCategory = ClientCategory.UNKNOWN
     counted_in_confirmed: bool
     counting_note: Code
+    transitions: tuple[OrderTransition, ...] = ()
+    l1_linkage: L1Linkage | None = None
     issues: tuple[Issue, ...] = ()
 
     @model_validator(mode="after")
     def counted(self) -> Self:
-        if self.counted_in_confirmed != (self.status == ChainStatus.CONFIRMED):
+        if self.counted_in_confirmed != (self.status in COUNTED_CHAIN_STATUSES):
             raise ValueError("Only confirmed chains count in the confirmed order value")
+        if not {t.order_id for t in self.transitions} <= set(self.order_ids):
+            raise ValueError("A transition belongs to an order of its chain")
         if self.status == ChainStatus.PENDING_L1 and (
             self.confirmed_gross_value_crore is not None
             or self.confirmed_attributable_value_crore is not None
@@ -919,6 +1014,9 @@ class OrderBookMetricKind(StrEnum):
     COMPETITIVE_BIDDING_SHARE = "COMPETITIVE_BIDDING_SHARE"
     NOMINATION_SHARE = "NOMINATION_SHARE"
     JV_ATTRIBUTABLE_CONFIRMED_VALUE = "JV_ATTRIBUTABLE_CONFIRMED_VALUE"
+    #: The split of the pending-L1 pipeline by linkage evidence: never one overstated total.
+    PENDING_L1_TRUE_PENDING_VALUE = "PENDING_L1_TRUE_PENDING_VALUE"
+    PENDING_L1_UNRESOLVED_VALUE = "PENDING_L1_UNRESOLVED_VALUE"
 
 
 class OrderBookMetric(BaseModel):
@@ -1228,7 +1326,7 @@ class MarketIntelligenceDataset(BaseModel):
     schema_version: Literal["MARKET_INTELLIGENCE_DATASET_V1"] = MARKET_INTELLIGENCE_SCHEMA
     engine_version: Literal["market-intelligence/1"] = "market-intelligence/1"
     classification_version: Literal["event-rules/1"] = "event-rules/1"
-    order_rules_version: Literal["order-rules/1"] = "order-rules/1"
+    order_rules_version: Literal["order-rules/2"] = "order-rules/2"
     market_method_version: Literal["market-methods/1"] = "market-methods/1"
     dataset_id: UUID
     generated_at: AwareDatetime

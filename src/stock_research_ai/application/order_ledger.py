@@ -6,15 +6,37 @@ an order stage. Each disclosure becomes an OrderRecord; records of one project a
 into one OrderChain by fixed rules, in this order:
   LETTER_REFERENCE  the filing says "in continuation to our letter dated D" and exactly one
                     earlier chain of the same client was announced on D
+  TENDER_REFERENCE  the same explicit tender / contract / LOA / work-order number
   PROJECT_TEXT      same client and identical normalized project description
-  EXACT_VALUE       same client and identical stated value (to the rupee)
-A chain counts its value once, at its latest confirmed stage; an L1-only chain is reported
-separately as pending and never as confirmed; a cancellation removes the chain from the
-confirmed value; a revision replaces the value and records the delta; a JV order counts its
-attributable share only when the share is explicitly stated. Order details come from the
-filing's title/summary and, when supplied, the already-extracted text of its attachment -
-read only by anchored labels from the SEBI disclosure annexure. Ambiguity leaves a field
-unknown with an issue.
+A monetary value never links two records: equal values are common and prove nothing.
+Before any rule, a conservative project fingerprint excludes a chain: a different explicit
+project description (unless the same explicit number joins them), or different numbers of
+the same kind (two tenders, two packages), keep two projects apart whatever their client,
+value or date.
+
+Each chain is then replayed chronologically as a state machine (PENDING_L1 -> CONFIRMED ->
+PARTIALLY_CANCELLED / CANCELLED / CANCELLATION_UNRESOLVED -> re-awarded CONFIRMED ...), and
+every step is kept as an OrderTransition with its provenance:
+  award           the award value enters the book once; a later stage (signed contract)
+                  restates the current value, never adds to it
+  revision        the revised value replaces the active value; delta = new - previous
+  cancellation    FULL removes the whole active value only when the filing says the whole
+                  order / LOA / contract is cancelled (or states exactly the active value);
+                  PARTIAL removes only an explicitly stated amount or percentage; anything
+                  else leaves the remaining value unknown (CANCELLATION_UNRESOLVED), never
+                  assumed. A stated amount is subtracted only when it is comparable
+                  (currency, tax basis, JV attribution) with the chain's value
+  re-award        a later award after a full cancellation reactivates the chain
+A JV order counts its attributable share only when the share is explicitly stated.
+
+An L1 chain is reported as truly pending only when the announcement feed is complete for the
+whole period after the bid and no later award could belong to it; otherwise its linkage is
+UNRESOLVED_LINKAGE or SOURCE_INCOMPLETE and the pending-L1 total is not presented as complete.
+
+Order details come from the filing's title/summary and, when supplied, the already-extracted
+text of its attachment - read only by anchored labels from the SEBI disclosure annexure.
+Ambiguity leaves a field unknown with an issue. Every ratio, sum and reconciliation passes
+`order_comparability.check_comparable` first.
 """
 
 import re
@@ -31,9 +53,21 @@ from stock_research_ai.application.corporate_events import (
     single_amount,
 )
 from stock_research_ai.application.exchange_intelligence import issue, uid
+from stock_research_ai.application.order_comparability import (
+    ALL,
+    ORDER_VALUES,
+    Comparability,
+    Dimension,
+    Quantity,
+    as_of_equals,
+    check_comparable,
+    same_period,
+)
 from stock_research_ai.domain.market_intelligence import (
+    COUNTED_CHAIN_STATUSES,
     STAGE_ORDER,
     AwardMode,
+    CancellationScope,
     ChainStatus,
     ClientCategory,
     CorporateEvent,
@@ -41,6 +75,8 @@ from stock_research_ai.domain.market_intelligence import (
     EventType,
     Geography,
     Issue,
+    L1Linkage,
+    L1Resolution,
     MarketIntelligenceRequest,
     MetricStatus,
     OrderBookAnalytics,
@@ -51,9 +87,12 @@ from stock_research_ai.domain.market_intelligence import (
     OrderFact,
     OrderRecord,
     OrderStage,
+    OrderTransition,
     PeriodRevenue,
+    ReportedInflow,
     ReportedOrderBook,
     TaxBasis,
+    TransitionKind,
 )
 
 _I = re.IGNORECASE | re.DOTALL
@@ -84,6 +123,38 @@ _JV_SHARE = re.compile(
 )
 _NOMINATION = re.compile(r"\bon nomination\b|\bnomination basis\b", re.I)
 _TENDER = re.compile(r"\be-?tender\b|\btender no\b|lowest bidder", re.I)
+#: An explicit identifier: '<kind> No./Number/Ref./ID[:] <id>'. The id must carry a digit.
+_REFERENCE = re.compile(
+    r"\b(?P<kind>e-?tender|tender|NIT|RFP|bid|contract|agreement|LOA|letter of "
+    r"(?:award|acceptance)|work order|package)\s*(?:no|number|ref(?:erence)?|id)\b\.?\s*"
+    r"[:.\-–]?\s*(?P<id>[A-Za-z0-9][A-Za-z0-9/._\-]{0,79})",
+    _I,
+)
+_REFERENCE_KIND = {
+    "etender": "TENDER", "e-tender": "TENDER", "tender": "TENDER", "nit": "TENDER",
+    "rfp": "TENDER", "bid": "TENDER", "contract": "CONTRACT", "agreement": "CONTRACT",
+    "loa": "LOA", "letter of award": "LOA", "letter of acceptance": "LOA",
+    "work order": "WORK_ORDER", "package": "PACKAGE",
+}
+#: Explicit scope of a cancellation. PARTIAL wins over FULL wording in the same filing.
+_PARTIAL = re.compile(
+    r"\bpartial(?:ly)?\b|\bpart of (?:the )?(?:order|contract|work|scope|loa)\b|\bportion of\b"
+    r"|\bde-?scop|\bshort[- ]?clos|\breduc(?:tion|ed)\s+(?:in\s+|of\s+)?(?:the\s+)?scope",
+    _I,
+)
+_FULL = re.compile(
+    r"cancell?ation of (?:the )?(?:entire |whole )?(?:letter of (?:award|acceptance)|loa|"
+    r"work order|order|contract)\b"
+    r"|\b(?:order|contract|loa|letter of (?:award|acceptance)|work order)\b[^|]{0,300}?\bhas "
+    r"been (?:cancell?ed|terminated)\b"
+    r"|termination of (?:the )?(?:entire |whole )?(?:contract|order|loa)\b"
+    r"|\b(?:entire|whole|complete|full)\b[^|.]{0,60}\bcancell?",
+    _I,
+)
+_CANCEL_PCT = re.compile(
+    r"(\d{1,2}(?:\.\d{1,4})?)\s*%\s*of\s+(?:the\s+)?(?:order|contract|scope|work|loa|value)", _I
+)
+SIX = Decimal("0.000001")
 
 STAGE_BY_EVENT = {
     EventType.L1_BIDDER: OrderStage.L1_BIDDER,
@@ -92,6 +163,7 @@ STAGE_BY_EVENT = {
     EventType.ORDER_CANCELLATION: OrderStage.CANCELLATION,
     EventType.ORDER_REVISION: OrderStage.REVISION,
 }
+_AWARD_STAGES = (OrderStage.LOA, OrderStage.SIGNED_CONTRACT)
 
 
 def _clean(value: str | None, limit: int) -> str | None:
@@ -108,6 +180,29 @@ def _window(text: str, anchor: re.Pattern[str], size: int) -> str | None:
     tail = text[match.end(): match.end() + size]
     stop = _NEXT_ITEM.search(tail)
     return tail[: stop.start()] if stop else tail
+
+
+def reference_ids(text: str) -> tuple[str, ...]:
+    """Explicit identifiers as 'KIND:ID'. Only safe normalization (case, surrounding
+    punctuation); every digit, letter, slash and dash of the id is kept."""
+    out = set()
+    for match in _REFERENCE.finditer(text[:200_000]):
+        kind = _REFERENCE_KIND[" ".join(match.group("kind").lower().split())]
+        ident = match.group("id").upper().rstrip("./-_")
+        if not any(c.isdigit() for c in ident) or (kind != "PACKAGE" and len(ident) < 4):
+            continue
+        out.add(f"{kind}:{ident}")
+    return tuple(sorted(out))
+
+
+def _cancellation(text: str) -> tuple[CancellationScope, Decimal | None]:
+    if _PARTIAL.search(text):
+        shares = {Decimal(p) for p in _CANCEL_PCT.findall(text)}
+        share = next(iter(shares)) if len(shares) == 1 else None
+        return CancellationScope.PARTIAL, share if share and 0 < share < 100 else None
+    if _FULL.search(text):
+        return CancellationScope.FULL, None
+    return CancellationScope.UNSPECIFIED, None
 
 
 def extract_order(
@@ -194,10 +289,17 @@ def extract_order(
         if joint is None:
             attributable = gross  # no JV is disclosed: the whole value is the company's
         elif share is not None and 0 < share <= 100:
-            attributable = (gross * share / 100).quantize(Decimal("0.000001"))
+            attributable = (gross * share / 100).quantize(SIX)
         else:
             issues.append(issue("JV_SHARE_NOT_STATED", "JV order without a stated share: "
                                 "attributable value unknown"))
+    scope = pct = None
+    if stage == OrderStage.CANCELLATION:
+        scope, pct = _cancellation(combined)
+        rules.append(f"CANCELLATION_SCOPE_{scope.value}")
+    references = reference_ids(combined)
+    if references:
+        rules.append("REFERENCE_NUMBER_STATED")
     category = fact.client_category if fact and fact.client_category else ClientCategory.UNKNOWN
     return OrderRecord(
         order_id=uid("order", event.event_id),
@@ -223,6 +325,9 @@ def extract_order(
         award_mode=mode,
         client_category=category,
         referenced_letter_dates=letter_dates(combined),
+        reference_ids=references,
+        cancellation_scope=scope,
+        cancellation_pct=pct,
         source_url=event.source_url,
         document_sha256=document.document_sha256 if document else None,
         extraction_rules=tuple(rules),
@@ -230,7 +335,21 @@ def extract_order(
     )
 
 
-# --- chains -----------------------------------------------------------------------------------
+# --- linking ----------------------------------------------------------------------------------
+
+
+def _refs(ids: Sequence[str]) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for ref in ids:
+        kind, _, ident = ref.partition(":")
+        out.setdefault(kind, set()).add(ident)
+    return out
+
+
+def _linking_ids(refs: dict[str, set[str]]) -> set[str]:
+    """Ids that may identify a project. A package number alone is too short to: it only
+    separates two packages of one tender."""
+    return {i for kind, ids in refs.items() if kind != "PACKAGE" for i in ids}
 
 
 @dataclass
@@ -239,53 +358,110 @@ class _Chain:
     rules: list[str] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
     duplicates: list[OrderRecord] = field(default_factory=list)
+    projects: set[str] = field(default_factory=set)
+    refs: dict[str, set[str]] = field(default_factory=dict)
+    dates: set[date] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        for record in list(self.records):
+            self._index(record)
+
+    def add(self, record: OrderRecord) -> None:
+        self.records.append(record)
+        self._index(record)
+
+    def _index(self, record: OrderRecord) -> None:
+        self.dates.add(record.announcement_date)
+        if record.project:
+            self.projects.add(norm_key(record.project))
+        for kind, ids in _refs(record.reference_ids).items():
+            self.refs.setdefault(kind, set()).update(ids)
 
     @property
     def client_key(self) -> str | None:
         return next((r.client_key for r in self.records if r.client_key), None)
 
+    @property
+    def live(self) -> list[OrderRecord]:
+        duplicates = {r.order_id for r in self.duplicates}
+        return [r for r in self.records if r.order_id not in duplicates]
 
-def _link(record: OrderRecord, chains: list[_Chain]) -> tuple[_Chain | None, str | None, bool]:
-    """(chain, rule, ambiguous)."""
+
+def fingerprint_conflict(
+    project: str | None, refs: dict[str, set[str]],
+    other_projects: set[str], other_refs: dict[str, set[str]],
+) -> str | None:
+    """Why two sets of disclosures cannot be the same project (None = no contradiction).
+    Different explicit numbers of one kind always separate; different explicit project
+    texts separate unless an explicit number joins them."""
+    for kind, ids in refs.items():
+        theirs = other_refs.get(kind)
+        if theirs and ids.isdisjoint(theirs):
+            return f"{kind}_REFERENCE_CONFLICT"
+    joined = bool(_linking_ids(refs) & _linking_ids(other_refs))
+    if project and other_projects and norm_key(project) not in other_projects and not joined:
+        return "PROJECT_TEXT_CONFLICT"
+    return None
+
+
+def _conflict(record: OrderRecord, chain: _Chain) -> str | None:
+    return fingerprint_conflict(record.project, _refs(record.reference_ids), chain.projects,
+                                chain.refs)
+
+
+def _link(
+    record: OrderRecord, pool: Sequence[_Chain]
+) -> tuple[_Chain | None, str | None, bool, list[str]]:
+    """(chain, rule, ambiguous, blocked-by codes). Value never links."""
     if record.stage == OrderStage.L1_BIDDER and not record.referenced_letter_dates:
-        return None, None, False
-    pool = [
-        c for c in chains
-        if record.client_key is not None and c.client_key == record.client_key
-        and c.records[-1].announcement_date <= record.announcement_date
-    ]
+        return None, None, False, []
+    record_ids = _linking_ids(_refs(record.reference_ids))
     tests: list[tuple[str, Any]] = [
-        ("LETTER_REFERENCE", lambda c: any(r.announcement_date in record.referenced_letter_dates
-                                           for r in c.records)),
-        ("PROJECT_TEXT", lambda c: record.project is not None and any(
-            r.project and norm_key(r.project) == norm_key(record.project) for r in c.records)),
-        ("EXACT_VALUE", lambda c: record.gross_value_crore is not None and any(
-            r.gross_value_crore == record.gross_value_crore for r in c.records)),
+        ("LETTER_REFERENCE", lambda c: any(d in c.dates for d in record.referenced_letter_dates)),
+        ("TENDER_REFERENCE", lambda c: bool(record_ids & _linking_ids(c.refs))),
+        ("PROJECT_TEXT", lambda c: record.project is not None
+         and norm_key(record.project) in c.projects),
     ]
+    candidates = [c for c in pool if c.records[-1].announcement_date <= record.announcement_date]
+    open_pool: list[_Chain] = []
+    blocked: list[str] = []
+    for chain in candidates:
+        why = _conflict(record, chain)
+        if why is None:
+            open_pool.append(chain)
+        elif any(test(chain) for _, test in tests):
+            blocked.append(why)  # a reference points at a contradicting project
     for rule, test in tests:
-        hits = [c for c in pool if test(c)]
+        hits = [c for c in open_pool if test(c)]
         if len(hits) == 1:
-            return hits[0], rule, False
+            return hits[0], rule, False, blocked
         if len(hits) > 1:
-            # narrow by the remaining tests, in order
+            # narrow by the remaining strong tests, in order (never by value)
             for _, narrower in tests:
                 narrowed = [c for c in hits if narrower(c)]
                 if len(narrowed) == 1:
-                    return narrowed[0], f"{rule}_NARROWED", False
-            return None, None, True
-    return None, None, False
+                    return narrowed[0], f"{rule}_NARROWED", False, blocked
+            return None, None, True, blocked
+    return None, None, False, blocked
 
 
-def build_chains(records: Sequence[OrderRecord]) -> list[OrderChain]:
+def _link_all(records: Sequence[OrderRecord]) -> list[_Chain]:
     chains: list[_Chain] = []
+    by_client: dict[str, list[_Chain]] = {}
     for record in sorted(records, key=lambda r: (r.announcement_date, str(r.event_id))):
-        chain, rule, ambiguous = _link(record, chains)
+        pool = by_client.get(record.client_key, []) if record.client_key else []
+        chain, rule, ambiguous, blocked = _link(record, pool)
         if chain is None:
             new = _Chain(records=[record])
             if ambiguous:
                 new.issues.append(issue("AMBIGUOUS_ORDER_LINK", "Several earlier orders match; "
                                         "not linked (counted separately, flagged)"))
+            for code in sorted(set(blocked)):
+                new.issues.append(issue("ORDER_LINK_BLOCKED", f"A referenced earlier disclosure "
+                                        f"describes a different project ({code}); not linked"))
             chains.append(new)
+            if record.client_key:
+                by_client.setdefault(record.client_key, []).append(new)
             continue
         assert rule is not None
         stages = [r.stage for r in chain.records]
@@ -296,53 +472,418 @@ def build_chains(records: Sequence[OrderRecord]) -> list[OrderChain]:
                 # second order (e.g. the same LOA filed again).
                 chain.duplicates.append(record)
                 chain.rules.append(f"DUPLICATE_STAGE_{rule}")
-                chain.records.append(record)
+                chain.add(record)
                 continue
-        chain.records.append(record)
+        chain.add(record)
         chain.rules.append(rule)
-    return [_finish(c) for c in chains]
+    return chains
 
 
-def _finish(chain: _Chain) -> OrderChain:
-    records = chain.records
-    stages = tuple(r.stage for r in records)
-    first = records[0]
-    issues = list(chain.issues)
+# --- chronological state machine ----------------------------------------------------------------
+
+
+@dataclass
+class _Machine:
+    jv: bool
+    jv_share: Decimal | None
+    status: ChainStatus | None = None
+    active: Decimal | None = None
+    currency: str | None = None
+    tax: TaxBasis = TaxBasis.UNKNOWN
+    l1_value: Decimal | None = None
+    l1_currency: str | None = None
+    l1_tax: TaxBasis = TaxBasis.UNKNOWN
+    cancelled: Decimal = Decimal(0)
+    cancelled_known: bool = True
+    cancel_amounts: int = 0
+    revision_delta: Decimal | None = None
+    revision_unknown: bool = False
+    revised: bool = False
+    had_award: bool = False
+    reawarded: bool = False
+    episode: int | None = None  # index of the current AWARD / REAWARD transition
+    stated: set[Decimal] = field(default_factory=set)  # award / revision values seen
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    issues: list[Issue] = field(default_factory=list)
+
+    def emit(self, r: OrderRecord, kind: TransitionKind, rule: str, *, before: Decimal | None,
+             after: Decimal | None, amount: Decimal | None, currency: str | None = None,
+             tax: TaxBasis | None = None) -> None:
+        self.steps.append({
+            "order_id": r.order_id, "effective_date": r.announcement_date, "stage": r.stage,
+            "kind": kind, "status_after": self.status, "value_before_crore": before,
+            "value_after_crore": after, "amount_crore": amount,
+            "currency": currency if currency is not None else self.currency,
+            "tax_basis": tax if tax is not None else self.tax, "rule": rule,
+        })
+
+    def note(self, code: str, message: str, severity: str = "WARNING") -> None:
+        self.issues.append(issue(code, message, severity=severity))
+
+    # -- stages --
+    def l1(self, r: OrderRecord) -> None:
+        if self.status in (None, ChainStatus.CANCELLED):
+            self.status = ChainStatus.PENDING_L1
+            self.active = None
+            if r.gross_value_crore is not None:
+                self.l1_value, self.l1_currency = r.gross_value_crore, r.value_currency
+                self.l1_tax = r.value_tax_basis
+            self.emit(r, TransitionKind.L1, "LOWEST_BIDDER", before=None, after=None,
+                      amount=r.gross_value_crore, currency=r.value_currency,
+                      tax=r.value_tax_basis)
+        elif self.status == ChainStatus.PENDING_L1:
+            if r.gross_value_crore is not None:
+                self.l1_value, self.l1_currency = r.gross_value_crore, r.value_currency
+                self.l1_tax = r.value_tax_basis
+            self.emit(r, TransitionKind.L1, "LOWEST_BIDDER_RESTATED", before=None, after=None,
+                      amount=r.gross_value_crore, currency=r.value_currency,
+                      tax=r.value_tax_basis)
+        else:
+            self.emit(r, TransitionKind.IGNORED, "L1_AFTER_AWARD", before=self.active,
+                      after=self.active, amount=None)
+
+    def award(self, r: OrderRecord) -> None:
+        value = r.gross_value_crore
+        if self.status in (None, ChainStatus.PENDING_L1, ChainStatus.CANCELLED):
+            kind = TransitionKind.REAWARD if self.had_award else TransitionKind.AWARD
+            self.status = ChainStatus.CONFIRMED
+            self.active, self.currency, self.tax = value, r.value_currency, r.value_tax_basis
+            self.had_award = True
+            self.reawarded = self.reawarded or kind == TransitionKind.REAWARD
+            if value is not None:
+                self.stated.add(value)
+            self.episode = len(self.steps)
+            self.emit(r, kind, "REAWARD_AFTER_CANCELLATION" if kind == TransitionKind.REAWARD
+                      else "AWARD", before=None, after=value, amount=value)
+            return
+        if value is None:
+            self.emit(r, TransitionKind.STAGE, "STAGE_WITHOUT_VALUE", before=self.active,
+                      after=self.active, amount=None)
+            return
+        if self.status != ChainStatus.CONFIRMED:
+            self.note("STAGE_VALUE_AFTER_CANCELLATION_NOT_APPLIED", "A later stage states a "
+                      "value after a cancellation; the remaining value is not replaced")
+            self.emit(r, TransitionKind.IGNORED, "STAGE_VALUE_AFTER_CANCELLATION_NOT_APPLIED",
+                      before=self.active, after=self.active, amount=None)
+            return
+        self._fill_award(r)
+        before = self.active
+        self.active, self.currency, self.tax = value, r.value_currency, r.value_tax_basis
+        self.stated.add(value)
+        self.emit(r, TransitionKind.STAGE, "VALUE_AT_LATEST_CONFIRMED_STAGE", before=before,
+                  after=value, amount=None)
+
+    def _fill_award(self, r: OrderRecord) -> None:
+        """The award value is the first value stated for the award (LOA or later stage)."""
+        if self.episode is not None and self.steps[self.episode]["amount_crore"] is None:
+            self.steps[self.episode].update({
+                "amount_crore": r.gross_value_crore, "value_after_crore": r.gross_value_crore,
+                "currency": r.value_currency, "tax_basis": r.value_tax_basis,
+            })
+
+    def duplicate(self, r: OrderRecord) -> None:
+        if (r.stage in _AWARD_STAGES and self.status == ChainStatus.CONFIRMED
+                and self.active is None and r.gross_value_crore is not None):
+            # the same award restated with its value: the value becomes known, once
+            self._fill_award(r)
+            self.active, self.currency, self.tax = (r.gross_value_crore, r.value_currency,
+                                                    r.value_tax_basis)
+            self.stated.add(r.gross_value_crore)
+        self.emit(r, TransitionKind.DUPLICATE, "DUPLICATE_STAGE", before=self.active,
+                  after=self.active, amount=None)
+
+    def _comparable(self, r: OrderRecord) -> Comparability:
+        check = check_comparable(
+            [Quantity("chain", self.active, self.currency, self.tax),
+             Quantity("stated", r.gross_value_crore, r.value_currency, r.value_tax_basis)],
+            ORDER_VALUES, unknown_matches_unknown=True,
+        )
+        if r.stage == OrderStage.CANCELLATION and r.joint_venture and (
+            not self.jv or (r.jv_share_pct is not None and r.jv_share_pct != self.jv_share)
+        ):
+            return Comparability(reasons=(*check.reasons, "JV_ATTRIBUTION_MISMATCH"))
+        return check
+
+    def cancel(self, r: OrderRecord) -> None:
+        scope = r.cancellation_scope or CancellationScope.UNSPECIFIED
+        if self.status is None:
+            self.emit(r, TransitionKind.IGNORED, "CANCELLATION_OUTSIDE_LEDGER", before=None,
+                      after=None, amount=None)
+            return
+        if self.status == ChainStatus.CANCELLED:
+            self.emit(r, TransitionKind.IGNORED, "ALREADY_CANCELLED", before=None, after=None,
+                      amount=None)
+            return
+        if self.status == ChainStatus.PENDING_L1:
+            if scope == CancellationScope.FULL:
+                self.status = ChainStatus.CANCELLED
+                self.emit(r, TransitionKind.FULL_CANCELLATION, "BID_CANCELLED", before=None,
+                          after=None, amount=None)
+            else:
+                self.status = ChainStatus.CANCELLATION_UNRESOLVED
+                self.emit(r, TransitionKind.UNRESOLVED_CANCELLATION, "BID_CANCELLATION_SCOPE_"
+                          "NOT_STATED", before=None, after=None, amount=None)
+            return
+        active = self.active
+        stated = r.gross_value_crore
+        amount: Decimal | None = None
+        if stated is not None:
+            check = self._comparable(r)
+            if check.ok:
+                amount = stated
+            elif active is not None:
+                self.note("CANCELLATION_NOT_COMPARABLE", "The cancelled amount is not "
+                          f"comparable with the order ({', '.join(check.reasons)}); not "
+                          "subtracted")
+        if scope == CancellationScope.PARTIAL:
+            part = None
+            if r.cancellation_pct is not None and active is not None:
+                part = (active * r.cancellation_pct / 100).quantize(SIX)
+            elif amount is not None and active is not None:
+                if amount >= active:
+                    return self._unresolved(r, "PARTIAL_CANCELLATION_NOT_BELOW_ORDER_VALUE")
+                part = amount
+            if part is None:
+                self.status = ChainStatus.PARTIALLY_CANCELLED
+                self.active, self.cancelled_known = None, False
+                self.note("PARTIAL_CANCELLATION_VALUE_UNKNOWN", "A part of the order is "
+                          "cancelled but the part is not stated comparably: remaining value "
+                          "unknown")
+                self.emit(r, TransitionKind.PARTIAL_CANCELLATION, "PARTIAL_AMOUNT_NOT_STATED",
+                          before=active, after=None, amount=None)
+                return
+            return self._partial(r, part, "PARTIAL_PERCENT_STATED"
+                                 if r.cancellation_pct is not None else "PARTIAL_AMOUNT_STATED")
+        if scope == CancellationScope.FULL:
+            if (amount is not None and active is not None and amount != active
+                    and amount not in self.stated):
+                return self._unresolved(r, "CANCELLED_VALUE_CONFLICTS_WITH_ORDER")
+            if amount is not None and active is not None and amount != active:
+                self.note("CANCELLATION_RESTATES_EARLIER_VALUE", "The whole order is cancelled; "
+                          "the filing restates an earlier value of it", severity="INFO")
+            return self._full(r, "WHOLE_ORDER_CANCELLED")
+        # UNSPECIFIED: only an explicit comparable amount decides
+        if amount is not None and active is not None:
+            if amount == active:
+                return self._full(r, "STATED_AMOUNT_EQUALS_ORDER_VALUE")
+            if amount < active:
+                return self._partial(r, amount, "STATED_AMOUNT_BELOW_ORDER_VALUE")
+            return self._unresolved(r, "CANCELLED_VALUE_CONFLICTS_WITH_ORDER")
+        return self._unresolved(r, "CANCELLATION_SCOPE_NOT_STATED")
+
+    def _partial(self, r: OrderRecord, part: Decimal, rule: str) -> None:
+        before = self.active
+        assert before is not None
+        self.status = ChainStatus.PARTIALLY_CANCELLED
+        self.active = before - part
+        self.cancelled += part
+        self.cancel_amounts += 1
+        self.emit(r, TransitionKind.PARTIAL_CANCELLATION, rule, before=before,
+                  after=self.active, amount=part)
+
+    def _full(self, r: OrderRecord, rule: str) -> None:
+        before = self.active
+        self.status = ChainStatus.CANCELLED
+        if before is None:
+            self.cancelled_known = False
+        else:
+            self.cancelled += before
+            self.cancel_amounts += 1
+        self.active = None
+        self.emit(r, TransitionKind.FULL_CANCELLATION, rule, before=before,
+                  after=Decimal(0) if before is not None else None, amount=before)
+
+    def _unresolved(self, r: OrderRecord, rule: str) -> None:
+        before = self.active
+        self.status = ChainStatus.CANCELLATION_UNRESOLVED
+        self.active, self.cancelled_known = None, False
+        self.note("CANCELLATION_UNRESOLVED", f"Cancellation scope or amount cannot be "
+                  f"determined ({rule}); remaining value unknown, never assumed")
+        self.emit(r, TransitionKind.UNRESOLVED_CANCELLATION, rule, before=before, after=None,
+                  amount=None)
+
+    def revise(self, r: OrderRecord) -> None:
+        self.revised = True
+        if self.status is None:
+            self.emit(r, TransitionKind.IGNORED, "REVISION_OUTSIDE_LEDGER", before=None,
+                      after=None, amount=None)
+            return
+        if self.status not in COUNTED_CHAIN_STATUSES:
+            rule = ("REVISION_AFTER_FULL_CANCELLATION" if self.status == ChainStatus.CANCELLED
+                    else "REVISION_NOT_APPLICABLE")
+            self.note(rule, "A revision of an order that is not active; no value applied")
+            self.emit(r, TransitionKind.IGNORED, rule, before=self.active, after=self.active,
+                      amount=None)
+            return
+        value = r.gross_value_crore
+        if value is None:
+            self.emit(r, TransitionKind.REVISION, "REVISION_VALUE_NOT_STATED",
+                      before=self.active, after=self.active, amount=None)
+            return
+        before = self.active
+        check = self._comparable(r)
+        delta = None
+        if before is not None and check.ok:
+            delta = value - before
+            self.revision_delta = (self.revision_delta or Decimal(0)) + delta
+            rule = "REVISED_VALUE_REPLACES_PREVIOUS"
+        else:
+            self.revision_unknown = True
+            rule = "REVISION_NOT_COMPARABLE"
+            self.note(rule, "The revised value cannot be compared with the previous value "
+                      f"({', '.join(check.reasons)}); it replaces it, delta unknown")
+        self.active, self.currency, self.tax = value, r.value_currency, r.value_tax_basis
+        self.stated.add(value)
+        self.emit(r, TransitionKind.REVISION, rule, before=before, after=value, amount=delta)
+
+
+def _run(chain: _Chain) -> _Machine:
+    awards = [r for r in chain.live if r.stage in _AWARD_STAGES]
+    shares = {r.jv_share_pct for r in awards if r.jv_share_pct is not None}
+    machine = _Machine(jv=any(r.joint_venture for r in awards),
+                       jv_share=next(iter(shares)) if len(shares) == 1 else None)
     duplicates = {r.order_id for r in chain.duplicates}
-    live = [r for r in records if r.order_id not in duplicates]
-    confirmed = [r for r in live if r.stage in (OrderStage.LOA, OrderStage.SIGNED_CONTRACT)]
-    l1 = [r for r in live if r.stage == OrderStage.L1_BIDDER]
-    cancelled = any(r.stage == OrderStage.CANCELLATION for r in live)
-    revisions = [r for r in live if r.stage == OrderStage.REVISION]
-    if not confirmed and not l1:
-        status = (ChainStatus.UNLINKED_CANCELLATION if cancelled
+    for r in chain.records:
+        if r.order_id in duplicates:
+            machine.duplicate(r)
+        elif r.stage == OrderStage.L1_BIDDER:
+            machine.l1(r)
+        elif r.stage in _AWARD_STAGES:
+            machine.award(r)
+        elif r.stage == OrderStage.CANCELLATION:
+            machine.cancel(r)
+        else:
+            machine.revise(r)
+    return machine
+
+
+# --- L1 linkage -------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LedgerCoverage:
+    """Whether the announcement feed can show every later award: some exchange on which the
+    listing is verified answered completely (SEBI LODR Reg. 30 requires every disclosure on
+    each exchange where the company is listed) and nothing was truncated."""
+
+    complete: bool
+    ledger_start: date | None
+    reasons: tuple[str, ...] = ()
+
+
+def _strong_key(record: OrderRecord) -> bool:
+    return record.project is not None or bool(_linking_ids(_refs(record.reference_ids)))
+
+
+def _may_be_award_of(bid: OrderRecord, award: OrderRecord) -> bool:
+    """True unless explicit evidence shows the award belongs to another project."""
+    if award.announcement_date < bid.announcement_date:
+        return False
+    if bid.client_key and award.client_key and bid.client_key != award.client_key:
+        return False
+    if award.referenced_letter_dates and bid.announcement_date not in \
+            award.referenced_letter_dates:
+        return False  # the award explicitly continues another filing
+    projects = {norm_key(award.project)} if award.project else set()
+    return fingerprint_conflict(bid.project, _refs(bid.reference_ids), projects,
+                                _refs(award.reference_ids)) is None
+
+
+def _l1_linkage(
+    chain: _Chain, machine: _Machine, unexplained: Sequence[OrderRecord],
+    coverage: LedgerCoverage,
+) -> L1Linkage | None:
+    bids = [r for r in chain.live if r.stage == OrderStage.L1_BIDDER]
+    if not bids:
+        return None
+    bid = bids[-1]
+    searched = coverage.ledger_start is not None
+    document = bid.document_sha256 is not None
+    strong = _strong_key(bid)
+    if machine.had_award:
+        return L1Linkage(resolution=L1Resolution.LINKED_TO_AWARD,
+                         follow_up_search_performed=searched,
+                         event_coverage_complete=coverage.complete,
+                         document_text_available=document, strong_link_key=strong,
+                         reasons=("AWARD_LINKED",))
+    if machine.status != ChainStatus.PENDING_L1:
+        return None
+    covered = (coverage.complete and coverage.ledger_start is not None
+               and coverage.ledger_start <= bid.announcement_date)
+    candidates = [a for a in unexplained if _may_be_award_of(bid, a)]
+    reasons: list[str] = []
+    if not covered:
+        reasons += list(coverage.reasons) or ["LEDGER_DOES_NOT_COVER_BID"]
+    if not document:
+        reasons.append("L1_DOCUMENT_TEXT_ABSENT")
+    if not strong:
+        reasons.append("NO_STRONG_LINK_KEY")
+    if bid.client_key is None:
+        reasons.append("CLIENT_NOT_IDENTIFIED")
+    if candidates:
+        reasons.append("LATER_AWARD_NEITHER_LINKED_NOR_RULED_OUT")
+    resolution = (L1Resolution.SOURCE_INCOMPLETE if not covered
+                  else L1Resolution.UNRESOLVED_LINKAGE if candidates
+                  else L1Resolution.TRUE_PENDING)
+    if resolution == L1Resolution.TRUE_PENDING:
+        reasons.append("NO_LATER_AWARD_FOUND")
+    return L1Linkage(
+        resolution=resolution, follow_up_search_performed=searched,
+        event_coverage_complete=covered, document_text_available=document,
+        strong_link_key=strong, unresolved_award_candidates=len(candidates),
+        candidate_order_ids=tuple(a.order_id for a in candidates[:50]),
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
+
+
+# --- chains -----------------------------------------------------------------------------------
+
+
+def build_chains(
+    records: Sequence[OrderRecord], coverage: LedgerCoverage | None = None
+) -> list[OrderChain]:
+    coverage = coverage or LedgerCoverage(complete=False, ledger_start=None,
+                                          reasons=("COVERAGE_NOT_ASSESSED",))
+    chains = _link_all(records)
+    machines = [_run(c) for c in chains]
+    # awards whose chain has no bid: a pending bid may be one of these, unless ruled out
+    unexplained = [
+        c.live[0] for c in chains
+        if c.live and c.live[0].stage in _AWARD_STAGES
+        and not any(r.stage == OrderStage.L1_BIDDER for r in c.live)
+    ]
+    return [_finish(c, m, _l1_linkage(c, m, unexplained, coverage))
+            for c, m in zip(chains, machines, strict=True)]
+
+
+def _finish(chain: _Chain, machine: _Machine, linkage: L1Linkage | None) -> OrderChain:
+    records = chain.records
+    live = chain.live
+    first = records[0]
+    issues = [*chain.issues, *machine.issues]
+    confirmed = [r for r in live if r.stage in _AWARD_STAGES]
+    status = machine.status
+    if status is None:
+        status = (ChainStatus.UNLINKED_CANCELLATION
+                  if any(r.stage == OrderStage.CANCELLATION for r in live)
                   else ChainStatus.UNLINKED_REVISION)
         issues.append(issue("UNLINKED_ORDER_CHANGE", "Change to an order not found in the "
                             "ledger window; no value counted"))
-    elif cancelled:
-        status = ChainStatus.CANCELLED
-    elif confirmed:
-        status = ChainStatus.CONFIRMED
-    else:
-        status = ChainStatus.PENDING_L1
+    counted = status in COUNTED_CHAIN_STATUSES
+    gross = machine.active if counted else None
+    attributable = None
+    if gross is not None:
+        if not machine.jv:
+            attributable = gross
+        elif machine.jv_share is not None:
+            attributable = (gross * machine.jv_share / 100).quantize(SIX)
     valued = [r for r in confirmed if r.gross_value_crore is not None]
-    awarded = valued[0] if valued else None
-    current = valued[-1] if valued else None
-    revision_delta = None
-    for revision in revisions:
-        if revision.gross_value_crore is not None and current is not None:
-            revision_delta = (revision_delta or Decimal(0)) + (
-                revision.gross_value_crore - (current.gross_value_crore or Decimal(0))
-            )
-            current = revision
-    base: OrderRecord | None = current
-    gross = base.gross_value_crore if base else None
-    attributable = base.attributable_value_crore if base else None
     currencies = {r.value_currency for r in live if r.value_currency}
     if len(currencies) > 1:
         issues.append(issue("MIXED_ORDER_CURRENCY", "Stages state different currencies"))
-    values_l1 = [r.gross_value_crore for r in l1 if r.gross_value_crore is not None]
-    if confirmed and values_l1 and awarded and values_l1[-1] != awarded.gross_value_crore:
+    l1_values = [r.gross_value_crore for r in live
+                 if r.stage == OrderStage.L1_BIDDER and r.gross_value_crore is not None]
+    if valued and l1_values and l1_values[-1] != valued[0].gross_value_crore:
         issues.append(issue("L1_VALUE_DIFFERS_FROM_AWARD", "Award value differs from the L1 "
                             "value; the award value is used", severity="INFO"))
     if status == ChainStatus.CONFIRMED and first.client_key is None:
@@ -351,62 +892,64 @@ def _finish(chain: _Chain) -> OrderChain:
     if status == ChainStatus.CONFIRMED and gross is None:
         issues.append(issue("ORDER_VALUE_NOT_DISCLOSED", "Confirmed order without a stated value",
                             severity="INFO"))
+    if linkage is not None and linkage.resolution in (L1Resolution.UNRESOLVED_LINKAGE,
+                                                      L1Resolution.SOURCE_INCOMPLETE):
+        issues.append(issue(f"L1_{linkage.resolution.value}", "Whether this bid was later "
+                            "awarded cannot be established; not reported as truly pending"))
     geos = {r.geography for r in live if r.geography != Geography.UNKNOWN}
     modes = {r.award_mode for r in live if r.award_mode != AwardMode.UNKNOWN}
     cats = {r.client_category for r in live if r.client_category != ClientCategory.UNKNOWN}
-    if l1 and AwardMode.NOMINATION not in modes:
+    if any(r.stage == OrderStage.L1_BIDDER for r in live) and AwardMode.NOMINATION not in modes:
         modes.add(AwardMode.COMPETITIVE_BIDDING)
-    counted = status == ChainStatus.CONFIRMED
     note = {
         ChainStatus.CONFIRMED: "COUNTED_ONCE_AT_LATEST_CONFIRMED_STAGE",
+        ChainStatus.PARTIALLY_CANCELLED: "COUNTED_REMAINING_AFTER_PARTIAL_CANCELLATION",
         ChainStatus.PENDING_L1: "L1_NOT_AN_ORDER_REPORTED_SEPARATELY",
         ChainStatus.CANCELLED: "CANCELLED_EXCLUDED",
+        ChainStatus.CANCELLATION_UNRESOLVED: "CANCELLATION_UNRESOLVED_NOT_COUNTED",
         ChainStatus.UNLINKED_CANCELLATION: "UNLINKED_CHANGE_NOT_COUNTED",
         ChainStatus.UNLINKED_REVISION: "UNLINKED_CHANGE_NOT_COUNTED",
     }[status]
     tax = {r.value_tax_basis for r in valued}
+    steps = [{**s, "status_after": s["status_after"] or status} for s in machine.steps]
     return OrderChain(
         chain_id=uid("chain", first.order_id),
         client=next((r.client for r in records if r.client), None),
         project=next((r.project for r in records if r.project), None),
         order_ids=tuple(r.order_id for r in records),
-        stages=stages,
+        stages=tuple(r.stage for r in records),
         link_rules=tuple(chain.rules),
         status=status,
-        revised=bool(revisions),
+        revised=machine.revised,
+        reawarded=machine.reawarded,
         first_announced=first.announcement_date,
         confirmed_on=confirmed[0].announcement_date if confirmed else None,
         last_updated=records[-1].announcement_date,
         value_currency=next(iter(currencies)) if len(currencies) == 1 else None,
         value_tax_basis=next(iter(tax)) if len(tax) == 1 else TaxBasis.UNKNOWN,
-        pending_l1_value_crore=values_l1[-1] if status == ChainStatus.PENDING_L1 and values_l1
-        else None,
-        confirmed_gross_value_crore=gross if counted else None,
-        confirmed_attributable_value_crore=attributable if counted else None,
-        cancelled_value_crore=gross if status == ChainStatus.CANCELLED else None,
-        revision_delta_crore=revision_delta,
+        pending_l1_value_crore=machine.l1_value if status == ChainStatus.PENDING_L1 else None,
+        confirmed_gross_value_crore=gross,
+        confirmed_attributable_value_crore=attributable,
+        cancelled_value_crore=machine.cancelled
+        if machine.cancel_amounts and machine.cancelled_known else None,
+        revision_delta_crore=None if machine.revision_unknown else machine.revision_delta,
         geography=next(iter(geos)) if len(geos) == 1 else Geography.UNKNOWN,
         award_mode=next(iter(modes)) if len(modes) == 1 else AwardMode.UNKNOWN,
         client_category=next(iter(cats)) if len(cats) == 1 else ClientCategory.UNKNOWN,
         counted_in_confirmed=counted,
         counting_note=note,
+        transitions=tuple(OrderTransition.model_validate(s) for s in steps),
+        l1_linkage=linkage,
         issues=tuple(issues),
     )
-
-
-def awarded_value(chain: OrderChain, orders: dict[Any, OrderRecord]) -> Decimal | None:
-    """Value at award (first confirmed stage with a value) - the inflow of the period."""
-    for oid in chain.order_ids:
-        r = orders[oid]
-        if r.stage in (OrderStage.LOA, OrderStage.SIGNED_CONTRACT) and r.gross_value_crore:
-            return r.gross_value_crore
-    return None
 
 
 # --- analytics --------------------------------------------------------------------------------
 
 K = OrderBookMetricKind
 Completeness = Literal["DISCLOSED_ORDERS_ONLY", "REPORTED", "MIXED", "NOT_APPLICABLE"]
+_AWARD_KINDS = (TransitionKind.AWARD, TransitionKind.REAWARD)
+_CANCEL_KINDS = (TransitionKind.PARTIAL_CANCELLATION, TransitionKind.FULL_CANCELLATION)
 
 
 def _metric(kind: OrderBookMetricKind, unit: str, method: str, completeness: Completeness,
@@ -415,10 +958,10 @@ def _metric(kind: OrderBookMetricKind, unit: str, method: str, completeness: Com
             issues: Sequence[str] = ()) -> OrderBookMetric:
     return OrderBookMetric.model_validate({
         "kind": kind, "status": "AVAILABLE" if reason is None else "UNAVAILABLE",
-        "value": value.quantize(Decimal("0.000001")) if value is not None and reason is None
-        else None,
+        "value": value.quantize(SIX) if value is not None and reason is None else None,
         "unit": unit, "method": method, "completeness": completeness, "reason": reason,
-        "period_start": start, "period_end": end, "chains": chains, "issues": tuple(issues),
+        "period_start": start, "period_end": end, "chains": chains,
+        "issues": tuple(dict.fromkeys(issues)),
     })
 
 
@@ -426,28 +969,141 @@ def fiscal_bounds(fy: int) -> tuple[date, date]:
     return date(fy - 1, 4, 1), date(fy, 3, 31)
 
 
-def _tax_ok(bases: set[TaxBasis], allow: bool) -> tuple[bool, list[str]]:
-    if bases <= {TaxBasis.EXCLUSIVE_OF_TAX}:
-        return True, []
-    if allow:
-        return True, ["TAX_INCLUSIVE_OR_UNKNOWN_VALUES_PERMITTED_BY_POLICY"]
-    return False, []
+def _book(b: ReportedOrderBook) -> Quantity:
+    return Quantity("order_book", b.value_crore, b.currency, b.tax_basis, b.basis)
+
+
+def _revenue(r: PeriodRevenue) -> Quantity:
+    return Quantity("revenue", r.value_crore, r.currency, r.tax_basis, r.basis)
+
+
+def _reported(i: ReportedInflow) -> Quantity:
+    return Quantity("reported_inflow", i.value_crore, i.currency, i.tax_basis)
+
+
+def _step(t: OrderTransition) -> Quantity:
+    return Quantity(t.kind.value.lower(), t.amount_crore, t.currency, t.tax_basis)
+
+
+def _sum_check(quantities: Sequence[Quantity]) -> str | None:
+    """A sum of disclosed order values: one currency and one tax basis (all-unknown is a
+    'disclosed orders only' sum, flagged by the caller)."""
+    check = check_comparable(quantities, (Dimension.CURRENCY, Dimension.TAX, Dimension.UNIT),
+                             unknown_matches_unknown=True)
+    if not check.ok:
+        return "MIXED_TAX_BASIS" if check.reason == "TAX_BASIS_NOT_COMPARABLE" else check.reason
+    return None
+
+
+def _awards(chain: OrderChain, start: date, end: date) -> list[OrderTransition]:
+    return [t for t in chain.transitions
+            if t.kind in _AWARD_KINDS and start <= t.effective_date <= end]
+
+
+@dataclass(frozen=True)
+class _Inflow:
+    value: Decimal | None
+    quantity: Quantity | None
+    source: Literal["REPORTED", "DISCLOSED_ORDERS_ONLY"]
+    chains: int
+    reason: str | None
+    notes: tuple[str, ...] = ()
+
+    @property
+    def taxes(self) -> set[TaxBasis]:
+        return {self.quantity.tax} if self.quantity is not None else set()
 
 
 def _ledger_inflow(
-    chains: Sequence[OrderChain], orders: dict[Any, OrderRecord], start: date, end: date,
-    ledger_start: date | None,
-) -> tuple[Decimal | None, set[TaxBasis], int, str | None]:
+    chains: Sequence[OrderChain], start: date, end: date, ledger_start: date | None,
+) -> _Inflow:
+    """Award (and re-award) values whose award falls in [start, end], from the ledger."""
     if ledger_start is None or ledger_start > start:
-        return None, set(), 0, "LEDGER_DOES_NOT_COVER_PERIOD"
-    picked = [c for c in chains if c.confirmed_on is not None and start <= c.confirmed_on <= end]
-    values = [awarded_value(c, orders) for c in picked]
-    if any(v is None for v in values):
-        return None, set(), len(picked), "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS"
-    if any(c.value_currency not in (None, "INR") for c in picked):
-        return None, set(), len(picked), "NON_INR_ORDER_VALUES"
-    total = sum((v for v in values if v is not None), Decimal(0))
-    return total, {c.value_tax_basis for c in picked}, len(picked), None
+        return _Inflow(None, None, "DISCLOSED_ORDERS_ONLY", 0, "LEDGER_DOES_NOT_COVER_PERIOD")
+    picked = [(c, t) for c in chains for t in _awards(c, start, end)]
+    n = len({c.chain_id for c, _ in picked})
+    if any(t.amount_crore is None for _, t in picked):
+        return _Inflow(None, None, "DISCLOSED_ORDERS_ONLY", n,
+                       "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS")
+    if any(t.currency != "INR" for _, t in picked):
+        return _Inflow(None, None, "DISCLOSED_ORDERS_ONLY", n, "NON_INR_ORDER_VALUES")
+    taxes = {t.tax_basis for _, t in picked}
+    notes = tuple(f"TAX_BASIS_{b.value}" for b in sorted(taxes))
+    if _sum_check([_step(t) for _, t in picked]):
+        return _Inflow(None, None, "DISCLOSED_ORDERS_ONLY", n, "MIXED_TAX_BASIS", notes)
+    total = sum((t.amount_crore for _, t in picked if t.amount_crore is not None), Decimal(0))
+    tax = next(iter(taxes)) if taxes else TaxBasis.EXCLUSIVE_OF_TAX  # nothing awarded: zero
+    return _Inflow(total, Quantity("ledger_inflow", total, "INR", tax), "DISCLOSED_ORDERS_ONLY",
+                   n, None, notes)
+
+
+def _inflow(
+    chains: Sequence[OrderChain], request: MarketIntelligenceRequest, start: date, end: date,
+    ledger_start: date | None, target: Quantity | None,
+) -> _Inflow:
+    """A reported inflow for exactly [start, end] wins only when it is comparable with the
+    calculation's target; otherwise the ledger's disclosed inflow is used, flagged."""
+    reported = next((i for i in request.reported_inflows
+                     if same_period((i.period_start, i.period_end), (start, end)) is None), None)
+    notes: tuple[str, ...] = ()
+    if reported is not None:
+        quantity = _reported(reported)
+        check = check_comparable([quantity, target], (Dimension.CURRENCY, Dimension.TAX),
+                                 allow_tax_policy=request.allow_tax_inclusive_order_values) \
+            if target is not None else None
+        if check is None or check.ok:
+            return _Inflow(reported.value_crore, quantity, "REPORTED", 0, None,
+                           check.notes if check else ())
+        notes = ("REPORTED_INFLOW_NOT_COMPARABLE", *(f"REPORTED_INFLOW_{r}"
+                                                     for r in check.reasons))
+    ledger = _ledger_inflow(chains, start, end, ledger_start)
+    return _Inflow(ledger.value, ledger.quantity, ledger.source, ledger.chains, ledger.reason,
+                   (*notes, *ledger.notes))
+
+
+def _pending_metrics(
+    chains: Sequence[OrderChain], t_start: date, today: date, covered: bool,
+) -> list[OrderBookMetric]:
+    pending = [c for c in chains if c.status == ChainStatus.PENDING_L1
+               and c.first_announced >= t_start]
+    true = [c for c in pending if c.l1_linkage is not None
+            and c.l1_linkage.resolution == L1Resolution.TRUE_PENDING]
+    unresolved = [c for c in pending if c not in true]
+
+    def total(group: list[OrderChain]) -> tuple[Decimal, str | None]:
+        if not covered:
+            return Decimal(0), "LEDGER_DOES_NOT_COVER_PERIOD"
+        if any(c.pending_l1_value_crore is None for c in group):
+            return Decimal(0), "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS"
+        steps = [t for c in group for t in c.transitions if t.kind == TransitionKind.L1
+                 and t.amount_crore is not None]
+        why = _sum_check([_step(t) for t in steps]) if steps else None
+        return sum((c.pending_l1_value_crore or Decimal(0) for c in group), Decimal(0)), why
+
+    value, reason = total(pending)
+    if reason is None and unresolved:
+        reason = "PENDING_L1_LINKAGE_UNRESOLVED"
+    counts = [f"UNRESOLVED_L1_CHAINS_{len(unresolved)}"] if unresolved else []
+    true_value, true_reason = total(true)
+    open_value, open_reason = total(unresolved)
+    return [
+        _metric(K.DISCLOSED_PENDING_L1_VALUE, "INR_CRORE",
+                "SUM_L1_VALUE_OF_OPEN_L1_CHAINS_LAST_365D (ONLY WHEN EVERY BID'S LINKAGE IS "
+                "RESOLVED)", "DISCLOSED_ORDERS_ONLY", value=value, reason=reason,
+                start=t_start, end=today, chains=len(pending),
+                issues=["L1_IS_NOT_CONFIRMED_ORDER_BOOK", *counts]),
+        _metric(K.PENDING_L1_TRUE_PENDING_VALUE, "INR_CRORE",
+                "SUM_L1_VALUE_OF_BIDS_WITH_COMPLETE_COVERAGE_AND_NO_LATER_AWARD_LAST_365D",
+                "DISCLOSED_ORDERS_ONLY", value=true_value, reason=true_reason, start=t_start,
+                end=today, chains=len(true),
+                issues=["L1_IS_NOT_CONFIRMED_ORDER_BOOK",
+                        *(["EXCLUDES_UNRESOLVED_L1_CHAINS"] if unresolved else [])]),
+        _metric(K.PENDING_L1_UNRESOLVED_VALUE, "INR_CRORE",
+                "SUM_L1_VALUE_OF_BIDS_WHOSE_AWARD_STATUS_IS_UNKNOWN_LAST_365D",
+                "DISCLOSED_ORDERS_ONLY", value=open_value, reason=open_reason, start=t_start,
+                end=today, chains=len(unresolved),
+                issues=["AWARD_STATUS_UNKNOWN_MAY_ALREADY_BE_IN_CONFIRMED_INFLOW"]),
+    ]
 
 
 def order_book_analytics(
@@ -456,36 +1112,20 @@ def order_book_analytics(
     request: MarketIntelligenceRequest,
     ledger_start: date | None,
 ) -> OrderBookAnalytics:
-    by_id = {o.order_id: o for o in orders}
     allow = request.allow_tax_inclusive_order_values
     today = request.as_of.date()
     t_start = today - timedelta(days=364)
     metrics: list[OrderBookMetric] = []
 
-    inflow, inflow_tax, n, reason = _ledger_inflow(chains, by_id, t_start, today, ledger_start)
-    mixed = len(inflow_tax) > 1
+    inflow = _ledger_inflow(chains, t_start, today, ledger_start)
     metrics.append(_metric(
         K.DISCLOSED_CONFIRMED_INFLOW, "INR_CRORE",
-        "SUM_AWARD_VALUE_OF_CHAINS_CONFIRMED_IN_LAST_365D", "DISCLOSED_ORDERS_ONLY",
-        value=inflow, reason=reason or ("MIXED_TAX_BASIS" if mixed else None),
-        start=t_start, end=today, chains=n,
-        issues=[f"TAX_BASIS_{b.value}" for b in sorted(inflow_tax)],
+        "SUM_AWARD_VALUE_OF_AWARDS_IN_LAST_365D", "DISCLOSED_ORDERS_ONLY",
+        value=inflow.value, reason=inflow.reason, start=t_start, end=today, chains=inflow.chains,
+        issues=inflow.notes,
     ))
-    pending = [c for c in chains if c.status == ChainStatus.PENDING_L1
-               and c.first_announced >= t_start]
-    pending_values = [c.pending_l1_value_crore for c in pending]
-    pending_reason = (
-        "LEDGER_DOES_NOT_COVER_PERIOD" if ledger_start is None or ledger_start > t_start
-        else "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS" if any(v is None for v in pending_values)
-        else None
-    )
-    metrics.append(_metric(
-        K.DISCLOSED_PENDING_L1_VALUE, "INR_CRORE", "SUM_L1_VALUE_OF_OPEN_L1_CHAINS_LAST_365D",
-        "DISCLOSED_ORDERS_ONLY",
-        value=sum((v for v in pending_values if v is not None), Decimal(0)),
-        reason=pending_reason, start=t_start, end=today, chains=len(pending),
-        issues=["L1_IS_NOT_CONFIRMED_ORDER_BOOK"],
-    ))
+    covered = ledger_start is not None and ledger_start <= t_start
+    metrics += _pending_metrics(chains, t_start, today, covered)
 
     annual = sorted(
         (r for r in request.period_revenues if 360 <= (r.period_end - r.period_start).days <= 370),
@@ -494,46 +1134,49 @@ def order_book_analytics(
     latest = annual[-1] if annual else None
     books = sorted(request.reported_order_books, key=lambda b: b.as_of)
 
-    # order book / revenue
-    book = next((b for b in reversed(books) if b.as_of <= today), None)
-    method = "LATEST_REPORTED_ORDER_BOOK / LATEST_ANNUAL_REVENUE"
-    if book is None or latest is None:
+    # order book / revenue: the book at exactly the revenue period's end (never the closest)
+    method = "ORDER_BOOK_AT_REVENUE_PERIOD_END / LATEST_ANNUAL_REVENUE"
+    if not books or latest is None:
         metrics.append(_metric(K.ORDER_BOOK_TO_REVENUE, "RATIO", method, "REPORTED",
                                reason="INPUT_NOT_SUPPLIED"))
     else:
-        reason, notes = _comparable(book, latest, allow)
-        metrics.append(_metric(K.ORDER_BOOK_TO_REVENUE, "RATIO", method, "REPORTED",
-                               value=book.value_crore / latest.value_crore
-                               if latest.value_crore else None,
-                               reason=reason or (None if latest.value_crore else "ZERO_REVENUE"),
-                               start=latest.period_start, end=book.as_of, issues=notes))
+        book = next((b for b in books if as_of_equals(b.as_of, latest.period_end) is None), None)
+        if book is None:
+            metrics.append(_metric(K.ORDER_BOOK_TO_REVENUE, "RATIO", method, "REPORTED",
+                                   reason="PERIOD_MISMATCH", start=latest.period_start,
+                                   end=latest.period_end,
+                                   issues=["NO_ORDER_BOOK_AT_REVENUE_PERIOD_END"]))
+        else:
+            check = check_comparable([_book(book), _revenue(latest)], ALL,
+                                     allow_tax_policy=allow)
+            metrics.append(_metric(K.ORDER_BOOK_TO_REVENUE, "RATIO", method, "REPORTED",
+                                   value=book.value_crore / latest.value_crore
+                                   if latest.value_crore else None,
+                                   reason=check.reason
+                                   or (None if latest.value_crore else "ZERO_REVENUE"),
+                                   start=latest.period_start, end=book.as_of,
+                                   issues=check.notes))
 
-    # book-to-bill, inflow growth
-    def inflow_for(start: date, end: date) -> tuple[Decimal | None, set[TaxBasis], str,
-                                                    str | None]:
-        reported = next((i for i in request.reported_inflows
-                         if (i.period_start, i.period_end) == (start, end)), None)
-        if reported is not None:
-            return reported.value_crore, {reported.tax_basis}, "REPORTED", None
-        value, bases, _, why = _ledger_inflow(chains, by_id, start, end, ledger_start)
-        if why is None and len(bases) > 1:
-            why = "MIXED_TAX_BASIS"
-        return value, bases, "DISCLOSED_ORDERS_ONLY", why
-
+    # book-to-bill: inflow and revenue over the identical period
     if latest is None:
         metrics.append(_metric(K.BOOK_TO_BILL, "RATIO", "INFLOW / REVENUE", "NOT_APPLICABLE",
                                reason="INPUT_NOT_SUPPLIED"))
     else:
-        value, bases, source, why = inflow_for(latest.period_start, latest.period_end)
-        ok, notes = _tax_ok(bases, allow)
-        if why is None and not ok:
-            why = "TAX_BASIS_NOT_COMPARABLE"
-        if why is None and latest.currency != "INR":
-            why = "CURRENCY_MISMATCH"
+        flow = _inflow(chains, request, latest.period_start, latest.period_end, ledger_start,
+                       _revenue(latest))
+        why, notes = flow.reason, list(flow.notes)
+        if why is None and flow.quantity is not None:
+            check = check_comparable([flow.quantity, _revenue(latest)],
+                                     (Dimension.CURRENCY, Dimension.BASIS, Dimension.TAX,
+                                      Dimension.UNIT), allow_tax_policy=allow)
+            why = check.reason
+            notes += check.notes
         metrics.append(_metric(
-            K.BOOK_TO_BILL, "RATIO", "PERIOD_INFLOW / PERIOD_REVENUE", source,  # type: ignore[arg-type]
-            value=value / latest.value_crore if value is not None and latest.value_crore else None,
-            reason=why, start=latest.period_start, end=latest.period_end, issues=notes,
+            K.BOOK_TO_BILL, "RATIO", "PERIOD_INFLOW / PERIOD_REVENUE (SAME PERIOD)", flow.source,
+            value=flow.value / latest.value_crore
+            if flow.value is not None and latest.value_crore else None,
+            reason=why, start=latest.period_start, end=latest.period_end,
+            issues=[n for n in notes if not n.startswith("TAX_BASIS_")],
         ))
     growth_reason: str | None = "INPUT_NOT_SUPPLIED"
     growth_value = None
@@ -543,48 +1186,56 @@ def order_book_analytics(
         prev_end = cur_start - timedelta(days=1)
         prev_start = date(prev_end.year - 1, prev_end.month, prev_end.day) + timedelta(days=1) \
             if not (prev_end.month == 2 and prev_end.day == 29) else date(prev_end.year - 1, 3, 1)
-        now_v, now_b, now_s, why_now = inflow_for(cur_start, cur_end)
-        old_v, old_b, old_s, why_old = inflow_for(prev_start, prev_end)
-        growth_reason = why_now or why_old
-        if growth_reason is None and (now_s != old_s or now_b != old_b):
+        now = _inflow(chains, request, cur_start, cur_end, ledger_start, None)
+        old = _inflow(chains, request, prev_start, prev_end, ledger_start, None)
+        growth_reason = now.reason or old.reason
+        if growth_reason is None and (now.source != old.source or now.taxes != old.taxes):
             growth_reason = "PERIODS_NOT_COMPARABLE"
-        if growth_reason is None and not old_v:
+        if growth_reason is None and now.quantity is not None and old.quantity is not None:
+            growth_reason = check_comparable(
+                [now.quantity, old.quantity], (Dimension.CURRENCY, Dimension.UNIT)).reason
+        if growth_reason is None and not old.value:
             growth_reason = "ZERO_BASE_PERIOD"
-        if growth_reason is None and now_v is not None and old_v:
-            growth_value = (now_v / old_v - 1) * 100
+        if growth_reason is None and now.value is not None and old.value:
+            growth_value = (now.value / old.value - 1) * 100
         g_start, g_end = prev_start, cur_end
     metrics.append(_metric(K.ORDER_INFLOW_GROWTH, "PERCENT",
                            "INFLOW(PERIOD) / INFLOW(PRIOR EQUAL PERIOD) - 1", "MIXED",
                            value=growth_value, reason=growth_reason, start=g_start, end=g_end))
 
-    # execution rate
+    # execution rate: revenue of the period over the book on the day before it starts
     opening = None
     if latest is not None:
-        opening = next((b for b in books if b.as_of == latest.period_start - timedelta(days=1)),
+        opening = next((b for b in books
+                        if as_of_equals(b.as_of, latest.period_start - timedelta(days=1)) is None),
                        None)
     if latest is None or opening is None:
         metrics.append(_metric(K.EXECUTION_RATE, "PERCENT", "PERIOD_REVENUE / OPENING_ORDER_BOOK",
                                "REPORTED", reason="INPUT_NOT_SUPPLIED"))
     else:
-        reason, notes = _comparable(opening, latest, allow)
+        check = check_comparable([_book(opening), _revenue(latest)], ALL, allow_tax_policy=allow)
         metrics.append(_metric(
             K.EXECUTION_RATE, "PERCENT", "PERIOD_REVENUE / OPENING_ORDER_BOOK", "REPORTED",
             value=latest.value_crore / opening.value_crore * 100 if opening.value_crore else None,
-            reason=reason or (None if opening.value_crore else "ZERO_OPENING_ORDER_BOOK"),
-            start=latest.period_start, end=latest.period_end, issues=notes,
+            reason=check.reason or (None if opening.value_crore else "ZERO_OPENING_ORDER_BOOK"),
+            start=latest.period_start, end=latest.period_end, issues=check.notes,
         ))
 
-    # ledger-only shares over chains confirmed in the last 365 days
-    population = [c for c in chains if c.confirmed_on is not None and c.confirmed_on >= t_start]
-    awarded = {c.chain_id: awarded_value(c, by_id) for c in population}
+    # ledger-only shares over the awards of the last 365 days
+    windowed = {c.chain_id: _awards(c, t_start, today) for c in chains}
+    population = [c for c in chains if windowed[c.chain_id]]
+    awarded: dict[Any, Decimal | None] = {}
+    for c in population:
+        amounts = [t.amount_crore for t in windowed[c.chain_id]]
+        awarded[c.chain_id] = None if any(a is None for a in amounts) else sum(
+            (a for a in amounts if a is not None), Decimal(0))
     complete = all(v is not None for v in awarded.values()) and bool(population)
     total = sum((v for v in awarded.values() if v is not None), Decimal(0))
     base_reason = None if complete and total > 0 else (
         "NO_CONFIRMED_ORDERS_IN_WINDOW" if not population else "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS"
     )
-    taxes = {c.value_tax_basis for c in population}
-    if base_reason is None and len(taxes) > 1:
-        base_reason = "MIXED_TAX_BASIS"
+    if base_reason is None:
+        base_reason = _sum_check([_step(t) for c in population for t in windowed[c.chain_id]])
 
     def share(kind: OrderBookMetricKind, attr: str, wanted: set[Any], method: str) -> None:
         reason = base_reason
@@ -622,12 +1273,12 @@ def order_book_analytics(
                                value=sum(ranked[:top], Decimal(0)) / total * 100 if total
                                else None, reason=reason, start=t_start, end=today,
                                chains=len(population)))
-    attributable = [c.confirmed_attributable_value_crore for c in population
-                    if c.status == ChainStatus.CONFIRMED]
-    confirmed_now = [c for c in population if c.status == ChainStatus.CONFIRMED]
+    confirmed_now = [c for c in population if c.counted_in_confirmed]
+    attributable = [c.confirmed_attributable_value_crore for c in confirmed_now]
     metrics.append(_metric(
         K.JV_ATTRIBUTABLE_CONFIRMED_VALUE, "INR_CRORE",
-        "SUM_ATTRIBUTABLE_VALUE_OF_CONFIRMED_CHAINS_LAST_365D", "DISCLOSED_ORDERS_ONLY",
+        "SUM_ATTRIBUTABLE_REMAINING_VALUE_OF_CONFIRMED_CHAINS_AWARDED_LAST_365D",
+        "DISCLOSED_ORDERS_ONLY",
         value=sum((v for v in attributable if v is not None), Decimal(0)),
         reason=None if confirmed_now and all(v is not None for v in attributable) and len(
             {c.value_tax_basis for c in confirmed_now}) == 1
@@ -636,114 +1287,138 @@ def order_book_analytics(
               if any(v is None for v in attributable) else "MIXED_TAX_BASIS"),
         start=t_start, end=today, chains=len(confirmed_now),
     ))
-    # cancellation rate over the whole ledger
-    awarded_all = [c for c in chains if c.confirmed_on is not None]
-    values_all = [awarded_value(c, by_id) for c in awarded_all]
-    cancelled = [awarded_value(c, by_id) for c in awarded_all if c.status == ChainStatus.CANCELLED]
-    c_reason = None
-    if not awarded_all:
-        c_reason = "NO_CONFIRMED_ORDERS"
-    elif any(v is None for v in values_all):
-        c_reason = "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS"
-    elif len({c.value_tax_basis for c in awarded_all}) > 1:
-        c_reason = "MIXED_TAX_BASIS"
-    denominator = sum((v for v in values_all if v is not None), Decimal(0))
-    metrics.append(_metric(
-        K.CANCELLATION_RATE, "PERCENT", "CANCELLED_AWARD_VALUE / ALL_AWARD_VALUE (LEDGER)",
-        "DISCLOSED_ORDERS_ONLY",
-        value=sum((v for v in cancelled if v is not None), Decimal(0)) / denominator * 100
-        if denominator else None,
-        reason=c_reason or (None if denominator else "ZERO_AWARD_VALUE"),
-        start=ledger_start, end=today, chains=len(awarded_all),
-    ))
+    metrics.append(_cancellation_rate(chains, ledger_start, today))
     metrics.sort(key=lambda m: list(K).index(m.kind))
     return OrderBookAnalytics(
         metrics=tuple(metrics),
-        reconciliation=reconcile(chains, by_id, request, ledger_start, books, annual),
+        reconciliation=reconcile(chains, request, ledger_start, books, annual),
         tax_inclusive_values_allowed=allow,
     )
 
 
-def _comparable(book: ReportedOrderBook, revenue: PeriodRevenue, allow: bool) -> tuple[
-    str | None, list[str]
-]:
-    if book.currency != revenue.currency:
-        return "CURRENCY_MISMATCH", []
-    if book.basis != revenue.basis:
-        return "BASIS_MISMATCH", []
-    ok, notes = _tax_ok({book.tax_basis, revenue.tax_basis}, allow)
-    return (None, notes) if ok else ("TAX_BASIS_NOT_COMPARABLE", [])
+def _cancellation_rate(
+    chains: Sequence[OrderChain], ledger_start: date | None, today: date
+) -> OrderBookMetric:
+    """Cancelled value over the value booked (awards + revision deltas), whole ledger."""
+    steps = [t for c in chains for t in c.transitions]
+    awards = [t for t in steps if t.kind in _AWARD_KINDS]
+    cancels = [t for t in steps if t.kind in _CANCEL_KINDS and t.rule != "BID_CANCELLED"]
+    revisions = [t for t in steps if t.kind == TransitionKind.REVISION
+                 and t.rule != "REVISION_VALUE_NOT_STATED"]
+    reason = None
+    if not awards:
+        reason = "NO_CONFIRMED_ORDERS"
+    elif any(t.amount_crore is None for t in awards):
+        reason = "VALUE_NOT_DISCLOSED_FOR_SOME_ORDERS"
+    elif any(t.kind == TransitionKind.UNRESOLVED_CANCELLATION for t in steps):
+        reason = "CANCELLATION_UNRESOLVED"
+    elif any(t.amount_crore is None for t in cancels):
+        reason = "CANCELLED_VALUE_NOT_DISCLOSED"
+    elif any(t.amount_crore is None for t in revisions):
+        reason = "REVISION_NOT_COMPARABLE"
+    else:
+        reason = _sum_check([_step(t) for t in (*awards, *cancels, *revisions)])
+    booked = sum((t.amount_crore or Decimal(0) for t in (*awards, *revisions)), Decimal(0))
+    cancelled = sum((t.amount_crore or Decimal(0) for t in cancels), Decimal(0))
+    return _metric(
+        K.CANCELLATION_RATE, "PERCENT",
+        "CANCELLED_VALUE / (AWARDED_VALUE + REVISION_DELTAS) (LEDGER)", "DISCLOSED_ORDERS_ONLY",
+        value=cancelled / booked * 100 if booked else None,
+        reason=reason or (None if booked else "ZERO_AWARD_VALUE"),
+        start=ledger_start, end=today,
+        chains=len({c.chain_id for c in chains if any(t.kind in _AWARD_KINDS
+                                                      for t in c.transitions)}),
+    )
 
 
 def reconcile(
     chains: Sequence[OrderChain],
-    orders: dict[Any, OrderRecord],
     request: MarketIntelligenceRequest,
     ledger_start: date | None,
     books: Sequence[ReportedOrderBook],
     annual: Sequence[PeriodRevenue],
 ) -> OrderBookReconciliation | None:
+    """opening (day before the period) + inflow (the period) - revenue (the period) -
+    cancellations (dated in the period) +/- revision deltas (dated in the period) = implied
+    closing (last day of the period): one contiguous period, every term comparable."""
     if not annual:
         return None
     revenue = annual[-1]
     start, end = revenue.period_start, revenue.period_end
     base: dict[str, Any] = {"period_start": start, "period_end": end}
-    opening = next((b for b in books if b.as_of == start - timedelta(days=1)), None)
-    closing = next((b for b in books if b.as_of == end), None)
+    opening = next((b for b in books if as_of_equals(b.as_of, start - timedelta(days=1)) is None),
+                   None)
+    closing = next((b for b in books if as_of_equals(b.as_of, end) is None), None)
     if opening is None:
         return OrderBookReconciliation(**base, status=MetricStatus.UNAVAILABLE,
                                        reason="NO_OPENING_ORDER_BOOK")
     allow = request.allow_tax_inclusive_order_values
-    reason, notes = _comparable(opening, revenue, allow)
-    if reason:
-        return OrderBookReconciliation(**base, status=MetricStatus.UNAVAILABLE, reason=reason,
-                                       opening_crore=opening.value_crore)
-    reported = next((i for i in request.reported_inflows
-                     if (i.period_start, i.period_end) == (start, end)), None)
-    source: Literal["REPORTED", "LEDGER_DISCLOSED_ORDERS_ONLY"]
-    inflow: Decimal | None
-    if reported is not None:
-        inflow, bases, source = reported.value_crore, {reported.tax_basis}, "REPORTED"
-    else:
-        inflow, bases, _, why = _ledger_inflow(chains, orders, start, end, ledger_start)
-        if why:
-            return OrderBookReconciliation(**base, status=MetricStatus.UNAVAILABLE, reason=why,
-                                           opening_crore=opening.value_crore,
-                                           executed_revenue_crore=revenue.value_crore)
-        source = "LEDGER_DISCLOSED_ORDERS_ONLY"
+    unavailable: dict[str, Any] = {**base, "status": MetricStatus.UNAVAILABLE,
+                                   "opening_crore": opening.value_crore}
+    check = check_comparable([_book(opening), _revenue(revenue)], ALL, allow_tax_policy=allow)
+    if not check.ok:
+        return OrderBookReconciliation(**unavailable, reason=check.reason)
+    notes = list(check.notes)
+    flow = _inflow(chains, request, start, end, ledger_start, _book(opening))
+    notes += [n for n in flow.notes if not n.startswith("TAX_BASIS_")]
+    if flow.reason:
+        return OrderBookReconciliation(**unavailable, reason=flow.reason,
+                                       executed_revenue_crore=revenue.value_crore,
+                                       issues=tuple(dict.fromkeys(notes)))
+    source: Literal["REPORTED", "LEDGER_DISCLOSED_ORDERS_ONLY"] = (
+        "REPORTED" if flow.source == "REPORTED" else "LEDGER_DISCLOSED_ORDERS_ONLY"
+    )
+    if source == "LEDGER_DISCLOSED_ORDERS_ONLY":
         notes.append("INFLOW_IS_A_LOWER_BOUND_UNDISCLOSED_ORDERS_EXCLUDED")
     if ledger_start is None or ledger_start > start:
-        return OrderBookReconciliation(**base, status=MetricStatus.UNAVAILABLE,
-                                       reason="LEDGER_DOES_NOT_COVER_PERIOD",
-                                       opening_crore=opening.value_crore)
-    ok, more = _tax_ok(bases | {opening.tax_basis}, allow)
-    if not ok:
-        return OrderBookReconciliation(**base, status=MetricStatus.UNAVAILABLE,
-                                       reason="TAX_BASIS_NOT_COMPARABLE",
-                                       opening_crore=opening.value_crore)
-    in_period = [c for c in chains if start <= c.last_updated <= end]
-    cancellations = Decimal(0)
-    revisions = Decimal(0)
-    for chain in in_period:
-        if chain.status == ChainStatus.CANCELLED:
-            value = awarded_value(chain, orders)
-            if value is None:
-                return OrderBookReconciliation(**base, status=MetricStatus.UNAVAILABLE,
-                                               reason="CANCELLED_VALUE_NOT_DISCLOSED",
-                                               opening_crore=opening.value_crore)
-            cancellations += value
-        if chain.revision_delta_crore is not None:
-            revisions += chain.revision_delta_crore
-    assert inflow is not None
-    implied = opening.value_crore + inflow - revenue.value_crore - cancellations + revisions
+        return OrderBookReconciliation(**unavailable, reason="LEDGER_DOES_NOT_COVER_PERIOD")
+    assert flow.quantity is not None and flow.value is not None
+    check = check_comparable([_book(opening), flow.quantity, _revenue(revenue)],
+                             (Dimension.CURRENCY, Dimension.TAX, Dimension.UNIT),
+                             allow_tax_policy=allow)
+    if not check.ok:
+        return OrderBookReconciliation(**unavailable, reason=check.reason)
+    notes += check.notes
+    steps = [t for c in chains for t in c.transitions if start <= t.effective_date <= end]
+    if any(t.kind == TransitionKind.UNRESOLVED_CANCELLATION for t in steps):
+        return OrderBookReconciliation(**unavailable, reason="CANCELLATION_UNRESOLVED")
+    cancels = [t for t in steps if t.kind in _CANCEL_KINDS and t.rule != "BID_CANCELLED"]
+    revisions = [t for t in steps if t.kind == TransitionKind.REVISION
+                 and t.rule != "REVISION_VALUE_NOT_STATED"]
+    if any(t.amount_crore is None for t in cancels):
+        return OrderBookReconciliation(**unavailable, reason="CANCELLED_VALUE_NOT_DISCLOSED")
+    if any(t.amount_crore is None for t in revisions):
+        return OrderBookReconciliation(**unavailable, reason="REVISION_NOT_COMPARABLE")
+    for group, code in ((cancels, "CANCELLATION_NOT_COMPARABLE"),
+                        (revisions, "REVISION_NOT_COMPARABLE")):
+        if group:
+            check = check_comparable([_book(opening), *(_step(t) for t in group)],
+                                     (Dimension.CURRENCY, Dimension.TAX, Dimension.UNIT),
+                                     allow_tax_policy=allow)
+            if not check.ok:
+                return OrderBookReconciliation(**unavailable, reason=code,
+                                               issues=check.reasons)
+            notes += check.notes
+    cancellations = sum((t.amount_crore or Decimal(0) for t in cancels), Decimal(0))
+    revision_total = sum((t.amount_crore or Decimal(0) for t in revisions), Decimal(0))
+    implied = opening.value_crore + flow.value - revenue.value_crore - cancellations + \
+        revision_total
+    reported_closing = difference = None
+    if closing is not None:
+        # a closing book is compared only on the opening's exact currency, basis and tax
+        check = check_comparable([_book(opening), _book(closing)], ALL)
+        if check.ok:
+            reported_closing = closing.value_crore
+            difference = closing.value_crore - implied
+        else:
+            notes += ["CLOSING_BOOK_NOT_COMPARABLE", *(f"CLOSING_{r}" for r in check.reasons)]
     return OrderBookReconciliation(
         **base, status=MetricStatus.AVAILABLE, opening_crore=opening.value_crore,
-        inflow_crore=inflow, inflow_source=source, executed_revenue_crore=revenue.value_crore,
-        cancellations_crore=cancellations, revisions_crore=revisions,
-        implied_closing_crore=implied,
-        reported_closing_crore=closing.value_crore if closing else None,
-        difference_crore=(closing.value_crore - implied) if closing else None,
-        issues=tuple([*notes, *more]),
+        inflow_crore=flow.value, inflow_source=source,
+        executed_revenue_crore=revenue.value_crore, cancellations_crore=cancellations,
+        revisions_crore=revision_total, implied_closing_crore=implied,
+        reported_closing_crore=reported_closing, difference_crore=difference,
+        issues=tuple(dict.fromkeys(notes)),
     )
 
 
@@ -751,6 +1426,7 @@ def build_order_ledger(
     events: Sequence[CorporateEvent],
     request: MarketIntelligenceRequest,
     ledger_start: date | None,
+    coverage: LedgerCoverage | None = None,
 ) -> tuple[list[OrderRecord], list[OrderChain], OrderBookAnalytics]:
     documents = {d.source_url: d for d in sorted(request.document_texts,
                                                  key=lambda d: d.document_sha256)}
@@ -760,5 +1436,9 @@ def build_order_ledger(
         for e in events
         if e.event_type in STAGE_BY_EVENT
     ]
-    chains = sorted(build_chains(records), key=lambda c: (c.first_announced, str(c.chain_id)))
+    if coverage is None:
+        coverage = LedgerCoverage(complete=False, ledger_start=ledger_start,
+                                  reasons=("COVERAGE_NOT_ASSESSED",))
+    chains = sorted(build_chains(records, coverage),
+                    key=lambda c: (c.first_announced, str(c.chain_id)))
     return records, chains, order_book_analytics(chains, records, request, ledger_start)

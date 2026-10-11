@@ -54,7 +54,7 @@ from stock_research_ai.application.market_data import (
     period_returns,
     statistics,
 )
-from stock_research_ai.application.order_ledger import build_order_ledger
+from stock_research_ai.application.order_ledger import LedgerCoverage, build_order_ledger
 from stock_research_ai.application.source_coverage import (
     build_coverage,
     disagreements,
@@ -69,6 +69,7 @@ from stock_research_ai.domain.market_intelligence import (
     BenchmarkRole,
     BenchmarkSpec,
     BetaEstimate,
+    CompanyIdentity,
     CorporateAction,
     CorporateEvent,
     FetchStatus,
@@ -132,6 +133,35 @@ def _benchmark_tokens(
         else:
             issues.append(issue("BENCHMARK_NOT_MAPPED", f"No Kite index row for {key[1]}"))
     return out
+
+
+def _ledger_coverage(
+    identity: CompanyIdentity, ordered: list[tuple[RawPayload, UUID]],
+    ledger_start: date | None, truncated: bool,
+) -> LedgerCoverage:
+    """Complete when the announcement feed of some exchange on which the listing is VERIFIED
+    answered every request and nothing was cut by a bound."""
+    verified = {PayloadKind.NSE_ANNOUNCEMENTS: identity.nse_symbol is not None,
+                PayloadKind.BSE_ANNOUNCEMENTS: identity.bse_code is not None}
+    complete_feed = False
+    reasons: list[str] = []
+    for kind, ok in verified.items():
+        feed = by_kind(ordered, kind)
+        if not feed:
+            continue
+        if not ok:
+            reasons.append(f"{kind.value}_IDENTITY_UNVERIFIED")
+        elif all(p.status == FetchStatus.OK for p, _ in feed):
+            complete_feed = True
+        else:
+            reasons.append(f"{kind.value}_SOURCE_FAILED")
+    if not complete_feed:
+        reasons.append("NO_COMPLETE_VERIFIED_ANNOUNCEMENT_FEED")
+    if truncated:
+        reasons.append("ANNOUNCEMENT_FEED_TRUNCATED")
+    complete = complete_feed and not truncated and ledger_start is not None
+    return LedgerCoverage(complete=complete, ledger_start=ledger_start,
+                          reasons=() if complete else tuple(reasons))
 
 
 def build_market_intelligence(
@@ -244,11 +274,13 @@ def build_market_intelligence(
             found_rows = bse_announcements(payload, pid, identity, issues, budget)
             decoded[pid] = len(found_rows)
             rows += found_rows
+        announcements_truncated = budget.exhausted
         events = build_events(rows, identity.identity_id, request.reference_revenue, issues)
         if len(events) > 5_000:
             issues.append(issue("EVENT_LIMIT", "Only the latest 5,000 events kept",
                                 severity="ERROR"))
             events = events[-5_000:]
+            announcements_truncated = True
         action_rows = []
         for payload, pid in by_kind(ordered, PayloadKind.NSE_CORPORATE_ACTIONS):
             found_actions = nse_corporate_actions(payload, pid, identity, issues, budget)
@@ -290,7 +322,10 @@ def build_market_intelligence(
         )
         ledger_start = min((e.event_date for e in events), default=None) if announcement_ok \
             else None
-        orders, chains, order_book = build_order_ledger(events, request, ledger_start)
+        orders, chains, order_book = build_order_ledger(
+            events, request, ledger_start,
+            _ledger_coverage(identity, ordered, ledger_start, announcements_truncated),
+        )
         related: dict[UUID, set[UUID]] = {}
         event_of = {o.order_id: o.event_id for o in orders}
         for chain in chains:

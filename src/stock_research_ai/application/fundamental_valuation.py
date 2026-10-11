@@ -1,7 +1,9 @@
 """DETAILED_RESEARCH_V1 Box 11: ForecastDataset (+ Box 4) + explicit inputs -> ValuationDataset.
 
 Pipeline:
-  integrity (the forecast re-validates; Box 4, when given, is the forecast's own Box 4 by hash) ->
+  integrity (the forecast re-validates; every Box 10 number is recomputed from its anchors and
+  assumptions by Box 10's own formulas; Box 4, when given, is the forecast's own Box 4 by hash
+  and rebuilds the anchors) ->
   request checks (scenarios forecast, basis, currency, horizon, multiple years, WACC weights) ->
   scenario-free facts at the valuation date (gross debt, cash, non-controlling interest, other
   adjustment, share count; each from Box 10 / Box 4 or an explicit cited input, never zero-filled)
@@ -25,6 +27,10 @@ from uuid import UUID, uuid5
 
 from stock_research_ai.application.financial_metrics import FINANCIAL_INDUSTRIES, Fact
 from stock_research_ai.application.financial_reconciliation import canonical_dataset_json
+from stock_research_ai.application.forecast_integrity import (
+    ForecastIntegrityError,
+    verify_forecast_integrity,
+)
 from stock_research_ai.application.forecasting import (
     EPS_METRICS,
     History,
@@ -1331,6 +1337,11 @@ def build_valuation(
         digest = hashlib.sha256(canonical_dataset_json(box4).encode()).hexdigest()
         if digest != forecast.source_box4.canonical_sha256:
             raise ValuationInputError("BOX4_MISMATCH", "Box 4 is not the forecast's own Box 4")
+    # a valid schema and resolving references do not make a number Box 10's: recompute them all
+    try:
+        verify_forecast_integrity(forecast, box4)
+    except ForecastIntegrityError as exc:
+        raise ValuationInputError("FORECAST_INTEGRITY_FAILED", str(exc)) from None
     base = forecast.base
     if req.reporting_basis is not None and req.reporting_basis != base.reporting_basis:
         raise ValuationInputError(

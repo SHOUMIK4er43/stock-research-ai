@@ -11,10 +11,11 @@ from collections import Counter
 from datetime import date
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.diligence_inputs import fid
+from stock_research_ai.application.governance_risk import holding_points
 from stock_research_ai.application.red_flags import NS, RULES, Ctx
 from stock_research_ai.domain.document_intelligence import EvidenceBundle, ExtractionStatus
 from stock_research_ai.domain.due_diligence import (
-    AUTHORITY_RANK,
     DataQualityItem,
     DataQualitySummary,
     DisagreeingValue,
@@ -30,7 +31,6 @@ from stock_research_ai.domain.due_diligence import (
     Severity,
     SignalClass,
     SignalStatus,
-    SourceAuthority,
     SourceDisagreements,
 )
 from stock_research_ai.domain.financial_canonical import (
@@ -51,7 +51,6 @@ from stock_research_ai.domain.market_intelligence import (
     L1Resolution,
     MarketIntelligenceDataset,
     MetricStatus,
-    ShareholdingFiling,
 )
 
 MAX_DISAGREEMENTS = 20_000
@@ -131,37 +130,46 @@ def source_disagreements(
                 canonical_source=d.canonical_selection.value if resolved and
                 d.canonical_selection else None,
                 reason=(d.reason or d.selection_rationale)[:1000]))
-        # an explicit promoter holding against the exchange filing for the same quarter
-        filed: dict[date, ShareholdingFiling] = {}
-        superseded = {s.supersedes_filing_id for s in box12.shareholding if s.supersedes_filing_id}
-        for f in box12.shareholding:
-            if f.filing_id not in superseded and f.promoter_pct is not None:
-                filed[f.period_end] = f
-        for h in ctx.request.holdings:
-            match = filed.get(h.period_end)
-            if h.category != HolderCategory.PROMOTER or match is None or \
-                    match.promoter_pct is None or match.promoter_pct == h.pct:
-                continue
-            f = match
-            exchange_wins = AUTHORITY_RANK[SourceAuthority.EXCHANGE_FILING] < \
-                AUTHORITY_RANK[h.source.authority]
-            key = ("BOX13", "PROMOTER_HOLDING_PCT", str(h.period_end),
-                   *sorted((str(f.promoter_pct), str(h.pct))))
-            add(key, DisagreementEntry(
-                entry_id=uuid5(NS, f"{ctx.dd_key}|disagreement|promoter|{h.period_end}"),
-                group=DisagreementGroup.SHAREHOLDING, origin=Layer.BOX13,
-                subject="PROMOTER_HOLDING_PCT", period=str(h.period_end),
-                basis=FinancialBasis.NOT_APPLICABLE.value,
-                values=(DisagreeingValue(source="exchange shareholding filing",
-                                         authority=SourceAuthority.EXCHANGE_FILING.value,
-                                         value=f.promoter_pct, record_id=f.filing_id),
-                        DisagreeingValue(source=h.source.reference[:1000],
-                                         authority=h.source.authority.value, value=h.pct,
-                                         record_id=None)),
-                status="RESOLVED" if exchange_wins else "OPEN",
-                canonical_source="EXCHANGE_FILING" if exchange_wins else None,
-                reason="authority policy: an exchange filing outranks the cited input; both "
-                "values preserved" if exchange_wins else "equal authority: no selection"))
+    # Box 13's own selections: one quarter's holding across the exchange filings and the cited
+    # inputs, and every explicit input family (the shared input policy)
+    for category in (HolderCategory.PROMOTER, HolderCategory.PUBLIC):
+        _, disputes = holding_points(ctx, box12, category)
+        for day, resolution in disputes:
+            subject = f"{category.value}_HOLDING_PCT"
+            held = tuple(DisagreeingValue(
+                source=c.item.source_id[:1000], authority=c.item.authority, value=c.item.pct,
+                record_id=c.item.record_id) for c in resolution.candidates)
+            winner = resolution.winner.item if resolution.winner else None
+            add(("BOX13", subject, str(day)), DisagreementEntry(
+                entry_id=uuid5(NS, f"{ctx.dd_key}|disagreement|{subject}|{day}"),
+                group=DisagreementGroup.SHAREHOLDING, origin=Layer.BOX13, subject=subject,
+                period=str(day), basis=FinancialBasis.NOT_APPLICABLE.value, values=held,
+                status="OPEN" if winner is None else "RESOLVED",
+                canonical_source=None if winner is None else
+                f"{winner.authority}: {winner.source_id}"[:1000],
+                reason=("equal authority, different values: no selection, no grade"
+                        if winner is None else "authority policy: the higher-ranked source is "
+                        "canonical; every value preserved")))
+    for conflict in (ctx.inputs.conflicts if ctx.inputs is not None else []):
+        f = conflict.family
+        winner = conflict.resolution.winner
+        first = conflict.first
+        stated = tuple(DisagreeingValue(
+            source=" | ".join(x for x in (f.describe(r), r.source.reference) if x)[:1000],
+            authority=r.source.authority.value, value=f.value(r),
+            record_id=fid(f.record, r)) for r in conflict.records)
+        key = ("REQUEST", f.field, *(str(k) for k in conflict.key))
+        add(key, DisagreementEntry(
+            entry_id=uuid5(NS, f"{ctx.dd_key}|disagreement|{'|'.join(key)}"),
+            group=f.group, origin=Layer.REQUEST, subject=f.subject, period=f.period(first),
+            basis=f.basis(first), values=stated,
+            status="OPEN" if winner is None else "RESOLVED",
+            canonical_source=None if winner is None else
+            f"{winner.item.source.authority.value}: {winner.item.source.reference}"[:1000],
+            reason=("cited inputs of equal authority state different values: no selection; "
+                    "rules needing it are UNAVAILABLE (INPUT_CONFLICT)" if winner is None else
+                    "authority policy: the higher-ranked source is canonical; every value "
+                    "preserved")))
     ordered = sorted(entries.values(), key=lambda e: (e.group.value, e.subject, e.period,
                                                       str(e.entry_id)))
     truncated = len(ordered) > MAX_DISAGREEMENTS
@@ -314,6 +322,13 @@ def data_quality(
     if disagreements.open_count:
         add("UNRESOLVED_DISAGREEMENT", Layer.BOX13, f"{disagreements.open_count} source "
             "disagreements without an authority selection")
+    if ctx.inputs is not None:
+        for conflict in ctx.inputs.conflicts:
+            if conflict.open:
+                add("INPUT_CONFLICT", Layer.REQUEST, f"{conflict.family.subject} "
+                    f"{conflict.family.period(conflict.first)}: {len(conflict.records)} cited "
+                    "inputs disagree (equal authority); withheld from every rule",
+                    conflict.record_ids())
     unavailable = [s for s in ctx.signals if s.status in (
         SignalStatus.UNAVAILABLE, SignalStatus.UNSUPPORTED, SignalStatus.INSUFFICIENT_SAMPLE)]
     for code, n in sorted(Counter(s.code for s in unavailable).items()):
@@ -439,6 +454,14 @@ def open_items(
             add("Which KMP / auditor filings are departures of the CEO, CFO or auditor?",
                 "more change filings than classified changes", "Regulation 30 filings",
                 (s.risk_id,))
+    if ctx.inputs is not None:
+        for c in ctx.inputs.conflicts:
+            if c.open:
+                f = c.family
+                add(f"Which source states {f.subject.lower().replace('_', ' ')} for "
+                    f"{f.period(c.first)} correctly?", f"{len(c.records)} cited inputs of equal "
+                    "authority disagree; nothing was selected", "The original filing or "
+                    "document both inputs cite")
     for r in ctx.request.auditor_reports:
         for kam in r.key_audit_matters:
             add(f"Key audit matter FY{r.fiscal_year} ({r.basis.lower()}): {kam}",

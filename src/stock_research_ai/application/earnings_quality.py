@@ -16,6 +16,7 @@ from statistics import median
 from typing import Literal
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.diligence_inputs import conflicted
 from stock_research_ai.application.financial_formulas import Refused, cagr
 from stock_research_ai.application.financial_metrics import (
     REVENUE,
@@ -854,6 +855,10 @@ def altman_original(ctx: Ctx, end: date | None, market_cap: tuple[Decimal, UUID,
         proxy = parts.get("X2")
         x2 = proxy.value if proxy else None
         warnings.append("X2_RESERVES_PROXY_NOT_RETAINED_EARNINGS")
+    elif conflicted(ctx, "retained_earnings",
+                    lambda r: r.as_of == end and r.basis == ctx.analytical.value):
+        detail = ("cited retained earnings disagree for the latest balance-sheet date and "
+                  "basis (see source disagreements); no value is selected")
     else:
         detail = ("retained earnings not supplied for the latest balance-sheet date and basis "
                   "(reserves are not retained earnings; never invented)")

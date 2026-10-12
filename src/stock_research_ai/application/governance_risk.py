@@ -2,9 +2,11 @@
 
 Inputs: the Box 12 shareholding / event / insider ledgers, the Box 8 guidance outcomes, Box 3
 auditor-report evidence, and explicit cited inputs (pledges, auditor reports, related-party
-transactions, management changes, board facts, penalties ...). Severity is never read from the
-wording of a filing: events are graded only from Box 12's numeric materiality, everything else
-from the registered rules. No motive is inferred and no wrongdoing is implied.
+transactions, management changes, board facts, penalties ...), already normalized by
+diligence_inputs (duplicates once, conflicts resolved by authority or withheld). Severity is
+never read from the wording of a filing: an event is graded only when it is adverse to the
+company (by type, or by a cited direction) and numerically material; everything else from the
+registered rules. No motive is inferred and no wrongdoing is implied.
 """
 
 import re
@@ -15,6 +17,15 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.diligence_inputs import (
+    Candidate,
+    Resolution,
+    conflict_ev,
+    conflicted,
+    fid,
+    norm,
+    resolve,
+)
 from stock_research_ai.application.financial_metrics import REVENUE, Fact, shift
 from stock_research_ai.application.red_flags import (
     NS,
@@ -34,9 +45,11 @@ from stock_research_ai.domain.document_intelligence import (
     SectionKind,
 )
 from stock_research_ai.domain.due_diligence import (
+    AUTHORITY_RANK,
     AuditOpinion,
     AuditorSignals,
     AuditorTextMention,
+    ExchangeEventAssessment,
     ExchangeEventRisk,
     ExchangeEvents,
     ExecutivePay,
@@ -53,8 +66,10 @@ from stock_research_ai.domain.due_diligence import (
     RelatedPartyKind,
     RelatedPartyRelation,
     RiskCategory,
+    ShareCount,
     SignalBasis,
     SignalStatus,
+    SourceAuthority,
 )
 from stock_research_ai.domain.due_diligence import Severity as SV
 from stock_research_ai.domain.financial_canonical import (
@@ -94,11 +109,6 @@ def years_before(day: date, years: int) -> date:
         return day.replace(year=day.year - years, day=28)
 
 
-def fid(family: str, item: object) -> UUID:
-    dump = getattr(item, "model_dump_json", None)
-    return uuid5(NS, f"input|{family}|{dump() if dump else item}")
-
-
 def coverage_ok(box12: MarketIntelligenceDataset | None, category: CoverageCategory) -> bool:
     if box12 is None:
         return False
@@ -117,7 +127,7 @@ def event_source(box12: MarketIntelligenceDataset, event_id: UUID) -> str | None
 # --- ownership ------------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class Holding:
     period_end: date
     pct: Decimal
@@ -125,26 +135,69 @@ class Holding:
     record_id: UUID
     source_id: str
     confidence: Confidence
+    authority: str
+
+
+EXCHANGE_RANK = AUTHORITY_RANK[SourceAuthority.EXCHANGE_FILING]
+
+
+def _pct_text(value: Decimal) -> str:
+    return format(value.normalize(), "f") if value else "0"
+
+
+def holding_points(
+    ctx: Ctx, box12: MarketIntelligenceDataset | None, category: HolderCategory
+) -> tuple[dict[date, Holding | None], list[tuple[date, Resolution]]]:
+    """One observation per quarter end from the Box 12 filings and the cited holdings, decided
+    by the shared input policy: the latest revision of a filing (by its submission date), equal
+    values merged, different values resolved by authority or left OPEN (the quarter is then
+    None: never an arbitrary pick). Returns the points and every disagreement."""
+    candidates: dict[date, list[Candidate]] = {}
+    if box12 is not None:
+        superseded = {f.supersedes_filing_id for f in box12.shareholding
+                      if f.supersedes_filing_id}
+        filings: dict[date, list[tuple[date | None, Candidate]]] = {}
+        for f in box12.shareholding:
+            pct = f.promoter_pct if category == HolderCategory.PROMOTER else f.public_pct
+            if f.filing_id in superseded or pct is None:
+                continue
+            url = f.xbrl_url or next((s.source_url for s in f.sources if s.source_url), None)
+            filings.setdefault(f.period_end, []).append((f.submitted_on, Candidate(
+                EXCHANGE_RANK, _pct_text(pct), f"BOX12|{f.filing_id}",
+                Holding(f.period_end, pct, Layer.BOX12, f.filing_id,
+                        url or f"BOX12:shareholding:{f.filing_id}", Confidence.HIGH,
+                        SourceAuthority.EXCHANGE_FILING.value))))
+        for day, rows in filings.items():
+            dates = [r[0] for r in rows]
+            if all(d is not None for d in dates):  # a later explicit submission revises it
+                newest = max(d for d in dates if d is not None)
+                rows = [r for r in rows if r[0] == newest]
+            candidates[day] = [c for _, c in rows]
+    for h in ctx.request.holdings:
+        if h.category != category:
+            continue
+        candidates.setdefault(h.period_end, []).append(Candidate(
+            AUTHORITY_RANK[h.source.authority], _pct_text(h.pct), f"REQUEST|{fid('holding', h)}",
+            Holding(h.period_end, h.pct, Layer.REQUEST, fid("holding", h),
+                    source_label(h.source), Confidence.HIGH, h.source.authority.value)))
+    points: dict[date, Holding | None] = {}
+    disputes: list[tuple[date, Resolution]] = []
+    explicit_open = {c.first.period_end for c in conflicted(
+        ctx, "holdings", lambda h: h.category == category and h.holder is None)}
+    for day in sorted(set(candidates) | explicit_open):
+        if day in explicit_open:  # the cited inputs themselves disagree (see the input policy)
+            points[day] = None
+            continue
+        resolution = resolve(candidates[day])
+        points[day] = resolution.winner.item if resolution.winner else None
+        if resolution.status in ("RESOLVED", "OPEN"):
+            disputes.append((day, resolution))
+    return points, disputes
 
 
 def promoter_series(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> list[Holding]:
-    points: dict[date, Holding] = {}
-    if box12 is not None:
-        superseded = {s.supersedes_filing_id for s in box12.shareholding if s.supersedes_filing_id}
-        for f in sorted(box12.shareholding,
-                        key=lambda s: (s.period_end, s.submitted_on or date.min, str(s.filing_id))):
-            if f.filing_id in superseded or f.promoter_pct is None:
-                continue
-            url = f.xbrl_url or next((s.source_url for s in f.sources if s.source_url), None)
-            points[f.period_end] = Holding(f.period_end, f.promoter_pct, Layer.BOX12, f.filing_id,
-                                           url or f"BOX12:shareholding:{f.filing_id}",
-                                           Confidence.HIGH)
-    for h in ctx.request.holdings:
-        if h.category == HolderCategory.PROMOTER and h.period_end not in points:
-            points[h.period_end] = Holding(h.period_end, h.pct, Layer.REQUEST,
-                                           fid("holding", h), source_label(h.source),
-                                           Confidence.HIGH)
-    return [points[k] for k in sorted(points)]
+    points, _ = holding_points(ctx, box12, HolderCategory.PROMOTER)
+    return [h for _, h in sorted(points.items()) if h is not None]
 
 
 def _change(points: Sequence[tuple[date, Decimal]], months: int) -> Decimal | None:
@@ -168,27 +221,21 @@ def ownership_series(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> list[
             change_qoq_pp=_change(pairs, 3), change_4q_pp=_change(pairs, 12),
             change_12q_pp=_change(pairs, 36)))
 
-    series(HolderCategory.PROMOTER, [
-        OwnershipPoint(period_end=h.period_end, pct=h.pct, layer=h.layer, record_id=h.record_id,
-                       source_id=h.source_id[:1000]) for h in promoter_series(ctx, box12)])
-    public: dict[date, OwnershipPoint] = {}
-    if box12 is not None:
-        superseded = {s.supersedes_filing_id for s in box12.shareholding if s.supersedes_filing_id}
-        for f in sorted(box12.shareholding, key=lambda s: (s.period_end, str(s.filing_id))):
-            if f.filing_id not in superseded and f.public_pct is not None:
-                public[f.period_end] = OwnershipPoint(
-                    period_end=f.period_end, pct=f.public_pct, layer=Layer.BOX12,
-                    record_id=f.filing_id, source_id=(f.xbrl_url or str(f.filing_id))[:1000])
+    def filed(category: HolderCategory) -> list[OwnershipPoint]:
+        points, _ = holding_points(ctx, box12, category)
+        return [OwnershipPoint(period_end=h.period_end, pct=h.pct, layer=h.layer,
+                               record_id=h.record_id, source_id=h.source_id[:1000])
+                for _, h in sorted(points.items()) if h is not None]
+
+    series(HolderCategory.PROMOTER, filed(HolderCategory.PROMOTER))
+    series(HolderCategory.PUBLIC, filed(HolderCategory.PUBLIC))
     explicit: dict[tuple[HolderCategory, str | None], dict[date, OwnershipPoint]] = {}
-    for h in ctx.request.holdings:
-        if h.category == HolderCategory.PROMOTER:
+    for h in ctx.request.holdings:  # one record per quarter, category and holder (the policy)
+        if h.category in (HolderCategory.PROMOTER, HolderCategory.PUBLIC):
             continue
-        bucket = public if h.category == HolderCategory.PUBLIC else explicit.setdefault(
-            (h.category, h.holder), {})
-        bucket.setdefault(h.period_end, OwnershipPoint(
+        explicit.setdefault((h.category, h.holder), {})[h.period_end] = OwnershipPoint(
             period_end=h.period_end, pct=h.pct, layer=Layer.REQUEST, record_id=fid("holding", h),
-            source_id=source_label(h.source)))
-    series(HolderCategory.PUBLIC, [public[k] for k in sorted(public)])
+            source_id=source_label(h.source))
     for (category, holder), rows in sorted(explicit.items(), key=lambda i: (i[0][0].value,
                                                                              i[0][1] or "")):
         series(category, [rows[k] for k in sorted(rows)], holder)
@@ -206,8 +253,11 @@ def ownership_series(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> list[
 
 
 def promoter_pledge(ctx: Ctx) -> tuple[Ev, Ev | None]:
-    pledges = sorted({p.period_end: p for p in ctx.request.pledges}.values(),
-                     key=lambda p: p.period_end)
+    pledges = sorted(ctx.request.pledges, key=lambda p: p.period_end)  # one per quarter
+    disputed = {c.first.period_end: c for c in conflicted(ctx, "pledges")}
+    window_days = sorted({p.period_end for p in pledges} | set(disputed))[-3:]
+    if any(d in disputed for d in window_days):
+        return conflict_ev(ctx, NA, [disputed[d] for d in window_days if d in disputed]), None
     if not pledges:
         return unavailable(NA, "PLEDGE_DATA_NOT_SUPPLIED", explanation="promoter pledge "
                            "data (shareholding pattern / pledge disclosures) not supplied"), None
@@ -259,36 +309,96 @@ def dilution_ruled_out(ctx: Ctx, box12: MarketIntelligenceDataset | None, start:
     return not any(start < i.issue_date <= end for i in ctx.request.preferential_issues)
 
 
+SPLITTING_EVENTS = {EventType.BONUS, EventType.SPLIT}
+SPLITTING_ACTIONS = {CorporateActionKind.BONUS, CorporateActionKind.SPLIT}
+#: promoter % is filed to 2 decimals: a derived promoter share count within 0.01 % of the
+#: shares outstanding is rounding, not a sale
+PROMOTER_SHARE_TOLERANCE_PP = D("0.01")
+
+
+def bonus_split_ruled_out(box12: MarketIntelligenceDataset | None, start: date,
+                          end: date) -> bool:
+    """No bonus / split in (start, end], on a complete corporate-action ledger."""
+    if box12 is None or not coverage_ok(box12, CoverageCategory.CORPORATE_ACTIONS):
+        return False
+    if any(start < e.event_date <= end and e.event_type in SPLITTING_EVENTS
+           for e in box12.events):
+        return False
+    return not any(a.kind in SPLITTING_ACTIONS and any(start < x <= end for x in (
+        a.record_date, a.ex_date, a.effective_date, a.announcement_date) if x)
+        for a in box12.corporate_actions)
+
+
+def comparable_counts(ctx: Ctx, box12: MarketIntelligenceDataset | None, start: date,
+                      end: date) -> tuple[ShareCount, ShareCount] | str | None:
+    """Two share counts on one share basis: both restated for bonus / split, or both as
+    filed with no bonus / split between them. A string says why counts exist but do not
+    compare (a bonus or split would otherwise read as promoter buying or selling)."""
+    counts = {(c.as_of, c.bonus_split_adjusted): c for c in ctx.request.share_counts}
+    adjusted = counts.get((start, True)), counts.get((end, True))
+    if adjusted[0] is not None and adjusted[1] is not None:
+        return adjusted[0], adjusted[1]
+    filed = counts.get((start, False)), counts.get((end, False))
+    if filed[0] is not None and filed[1] is not None:
+        if bonus_split_ruled_out(box12, start, end):
+            return filed[0], filed[1]
+        return "UNADJUSTED_COUNTS_ACROSS_POSSIBLE_BONUS_SPLIT"
+    if {d for d, _ in counts} >= {start, end}:
+        return "SHARE_COUNT_BASES_DIFFER"
+    return None
+
+
 def promoter_selling(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple[Ev, Ev | None]:
-    series = promoter_series(ctx, box12)
-    if not series:
+    points, disputes = holding_points(ctx, box12, HolderCategory.PROMOTER)
+    if not points:
         return unavailable(NA, "NO_SHAREHOLDING_SERIES"), None
-    latest = series[-1]
-    target = shift(latest.period_end, -12)
-    prior = next((h for h in series if h.period_end == target), None)
-    if prior is None:
+    latest_day = max(points)
+    target = shift(latest_day, -12)
+    if target not in points:
         return unavailable(NA, "NO_HOLDING_FOUR_QUARTERS_EARLIER"), None
     trace = Trace()
+    prior, latest = points[target], points[latest_day]
+    if prior is None or latest is None:  # the quarter's sources disagree: nothing is picked
+        for day, resolution in disputes:
+            if day in (target, latest_day):
+                for c in resolution.candidates:
+                    h = c.item
+                    ctx.record(trace, f"conflicting promoter % {h.period_end} ({h.authority})",
+                               h.pct, "PERCENT", h.layer, h.record_id, h.source_id,
+                               period_end=h.period_end,
+                               evidence=[h.record_id] if h.layer == Layer.BOX12 else [])
+        return conflict_ev(ctx, NA, conflicted(
+            ctx, "holdings", lambda h: h.category == HolderCategory.PROMOTER
+            and h.period_end in (target, latest_day)), trace,
+            what=" - promoter holding"), None
     for h in (prior, latest):
         ctx.record(trace, f"promoter % {h.period_end}", h.pct, "PERCENT", h.layer, h.record_id,
                    h.source_id, period_end=h.period_end, confidence=h.confidence,
                    evidence=[h.record_id] if h.layer == Layer.BOX12 else [])
+    disputed_counts = conflicted(ctx, "share_counts",
+                                 lambda c: c.as_of in (prior.period_end, latest.period_end))
+    if disputed_counts:
+        return conflict_ev(ctx, NA, disputed_counts, trace, what=" - share counts"), None
     raw = q(prior.pct - latest.pct)
     thresholds = RULES["PROMOTER_SELLING"].thresholds
-    counts = {c.as_of: c for c in ctx.request.share_counts}
-    c0, c1 = counts.get(prior.period_end), counts.get(latest.period_end)
+    pair = comparable_counts(ctx, box12, prior.period_end, latest.period_end)
     issues: list[str] = []
     calc = f"{prior.pct} - {latest.pct}"
     value: Decimal
-    if c0 is not None and c1 is not None and c0.bonus_split_adjusted == c1.bonus_split_adjusted:
-        for c in (c0, c1):
-            ctx.explicit(trace, f"shares {c.as_of}", c.shares, "SHARES", fid("shares", c),
-                         c.source, period_end=c.as_of)
-        sold = prior.pct / HUNDRED * c0.shares - latest.pct / HUNDRED * c1.shares
-        value = q(sold * HUNDRED / c1.shares)
+    if isinstance(pair, tuple):
+        c0, c1 = pair
+        for count in (c0, c1):
+            ctx.explicit(trace, f"shares {count.as_of}", count.shares, "SHARES",
+                         fid("shares", count), count.source, period_end=count.as_of)
+        held0, held1 = prior.pct / HUNDRED * c0.shares, latest.pct / HUNDRED * c1.shares
+        value = q((held0 - held1) * HUNDRED / c1.shares)
         issues.append("DILUTION_SEPARATED_BY_SHARE_COUNTS")
-        calc = (f"({prior.pct}% x {c0.shares} - {latest.pct}% x {c1.shares}) / {c1.shares} "
-                "x 100")
+        if c1.shares > c0.shares and value > PROMOTER_SHARE_TOLERANCE_PP:
+            issues.append("PROMOTER_SHARES_FELL_DESPITE_DILUTION")
+        elif raw > 0 and value <= PROMOTER_SHARE_TOLERANCE_PP:
+            issues.append("DECLINE_EXPLAINED_BY_DILUTION")
+        calc = (f"promoter shares {q(held0)} ({prior.pct}% x {c0.shares}) -> {q(held1)} "
+                f"({latest.pct}% x {c1.shares}); ({q(held0)} - {q(held1)}) / {c1.shares} x 100")
     elif dilution_ruled_out(ctx, box12, prior.period_end, latest.period_end):
         value = raw
         issues.append("DILUTION_RULED_OUT_BY_EVENT_LEDGER")
@@ -298,14 +408,16 @@ def promoter_selling(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple
     else:
         return unavailable(NA, "DILUTION_NOT_SEPARABLE", trace=trace, value=raw,
                            explanation=f"promoter holding fell {raw} pp but an issue of shares "
-                           "in the window cannot be excluded"), None
+                           "in the window cannot be excluded" + (
+                               f" (share counts not comparable: {pair})" if pair else "")), None
     severity = grade(value, thresholds)
     ev = Ev(S.EVALUATED, NA, severity, value, period_label=f"{prior.period_end} to "
             f"{latest.period_end}", period_end=latest.period_end, trace=trace, issues=issues,
             calculation=calc, explanation=f"promoter holding change over 4 quarters: "
             f"{prior.pct} % -> {latest.pct} %")
     stable = None
-    quarters = sum(1 for h in series if target <= h.period_end <= latest.period_end)
+    quarters = sum(1 for d, h in points.items()
+                   if h is not None and target <= d <= latest.period_end)
     if abs(raw) < D("0.5") and quarters >= 5:
         stable = Ev(S.EVALUATED, NA, SV.GREEN, abs(raw), period_end=latest.period_end,
                     period_label=f"{prior.period_end} to {latest.period_end}", trace=trace,
@@ -315,6 +427,13 @@ def promoter_selling(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple
 
 def equity_dilution(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
     counts = sorted(ctx.request.share_counts, key=lambda c: c.as_of)
+    disputed = conflicted(ctx, "share_counts")
+    if disputed:
+        last = max([c.as_of for c in counts] + [x.as_of for c in disputed for x in c.records])
+        window = [c for c in disputed if any(
+            x.as_of >= years_before(last, 3) - timedelta(days=45) for x in c.records)]
+        if window:
+            return conflict_ev(ctx, NA, window, what=" - share counts")
     trace = Trace()
     if counts:
         latest = counts[-1]
@@ -401,8 +520,9 @@ def cheap_insider_allotment(ctx: Ctx, box12: MarketIntelligenceDataset | None) -
 
 def related_party(ctx: Ctx) -> tuple[RelatedParty, list[UUID]]:
     items = ctx.request.related_party
+    disputes = conflicted(ctx, "related_party")
     ids: list[UUID] = []
-    if not items:
+    if not items and not disputes:
         for code in ("RELATED_PARTY_DEPENDENCE", "RELATED_PARTY_LOANS"):
             ids.append(ctx.emit(code, unavailable(NA, "RELATED_PARTY_DATA_NOT_SUPPLIED")))
         return RelatedParty(fiscal_year=None, basis=NA, totals=(), record_ids=(),
@@ -410,7 +530,8 @@ def related_party(ctx: Ctx) -> tuple[RelatedParty, list[UUID]]:
     bases = [b for b in (ctx.analytical, ctx.control) if b is not None]
     chosen = None
     for b in bases:
-        years = sorted({i.fiscal_year for i in items if i.basis == b.value})
+        years = sorted({i.fiscal_year for i in items if i.basis == b.value} | {
+            r.fiscal_year for c in disputes for r in c.records if r.basis == b.value})
         if years:
             chosen = (b, years[-1])
             break
@@ -422,6 +543,16 @@ def related_party(ctx: Ctx) -> tuple[RelatedParty, list[UUID]]:
     basis, year = chosen
     sb = SignalBasis(basis.value)
     rows = [i for i in items if i.basis == basis.value and i.fiscal_year == year]
+    open_here = [c for c in disputes if c.first.basis == basis.value
+                 and c.first.fiscal_year == year]
+    if open_here:  # one counterparty line is disputed: no total is graded
+        for code in ("RELATED_PARTY_DEPENDENCE", "RELATED_PARTY_LOANS"):
+            ids.append(ctx.emit(code, conflict_ev(ctx, sb, open_here)))
+        return RelatedParty(
+            fiscal_year=year, basis=sb, totals=(),
+            record_ids=tuple(sorted({fid("related_party", r) for r in rows}
+                                    | {i for c in open_here for i in c.record_ids()}, key=str)),
+            signal_ids=ctx.present(ids)), ids
     totals: dict[RelatedPartyKind, Decimal] = {}
     for r in rows:
         totals[r.kind] = totals.get(r.kind, D(0)) + r.amount_crore
@@ -539,6 +670,13 @@ def auditor_signal(ctx: Ctx) -> Ev:
     reports = sorted(ctx.request.auditor_reports, key=lambda r: (r.fiscal_year, r.basis))
     changes = [c for c in ctx.request.auditor_changes
                if start < c.change_date <= ctx.request.as_of]
+    disputed_reports = conflicted(ctx, "auditor_reports")
+    years = [r.fiscal_year for r in reports] + [c.first.fiscal_year for c in disputed_reports]
+    disputes = [c for c in disputed_reports if years and c.first.fiscal_year == max(years)]
+    disputes += conflicted(ctx, "auditor_changes",
+                           lambda c: start < c.change_date <= ctx.request.as_of)
+    if disputes:
+        return conflict_ev(ctx, NA, disputes)
     trace = Trace()
     reasons: list[str] = []
     severity = SV.GREEN
@@ -595,9 +733,15 @@ def executive_pay(ctx: Ctx) -> Ev:
     for p in ctx.request.executive_pay:
         by_scope.setdefault(p.scope, []).append(p)
     if not by_scope:
+        if conflicted(ctx, "executive_pay"):
+            return conflict_ev(ctx, NA, conflicted(ctx, "executive_pay"))
         return unavailable(NA, "PAY_HISTORY_NOT_SUPPLIED", status=S.NOT_APPLICABLE)
     scope, pays = max(by_scope.items(), key=lambda i: (len(i[1]), i[0]))
-    pays = sorted({p.fiscal_year: p for p in pays}.values(), key=lambda p: p.fiscal_year)[-4:]
+    pays = sorted(pays, key=lambda p: p.fiscal_year)[-4:]  # one per year and scope (the policy)
+    disputes = conflicted(ctx, "executive_pay", lambda p: norm(p.scope) == norm(scope)
+                          and p.fiscal_year >= pays[0].fiscal_year)
+    if disputes:
+        return conflict_ev(ctx, NA, disputes)
     if len(pays) < 2:
         return unavailable(NA, "FEWER_THAN_2_YEARS_OF_PAY", status=S.INSUFFICIENT_SAMPLE)
     first, last = pays[0], pays[-1]
@@ -756,6 +900,12 @@ def management_churn(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
                if start < c.change_date <= ctx.request.as_of]
     auditors = [c for c in ctx.request.auditor_changes
                 if start < c.change_date <= ctx.request.as_of]
+    disputes = conflicted(ctx, "management_changes",
+                          lambda c: start < c.change_date <= ctx.request.as_of)
+    disputes += conflicted(ctx, "auditor_changes",
+                           lambda c: start < c.change_date <= ctx.request.as_of)
+    if disputes:
+        return conflict_ev(ctx, NA, disputes)
     if not ctx.request.management_changes and not ctx.request.auditor_changes:
         return unavailable(NA, "MANAGEMENT_CHANGES_NOT_SUPPLIED")
     trace = Trace()
@@ -792,9 +942,14 @@ def management_churn(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
 
 
 def board_independence(ctx: Ctx) -> Ev:
+    disputes = conflicted(ctx, "board")
+    latest = max([b.as_of for b in ctx.request.board] + [c.first.as_of for c in disputes],
+                 default=None)
+    if any(c.first.as_of == latest for c in disputes):
+        return conflict_ev(ctx, NA, [c for c in disputes if c.first.as_of == latest])
     if not ctx.request.board:
         return unavailable(NA, "BOARD_DATA_NOT_SUPPLIED")
-    b = max(ctx.request.board, key=lambda x: (x.as_of, x.directors))
+    b = max(ctx.request.board, key=lambda x: x.as_of)  # one record per date (the policy)
     trace = Trace()
     pct = q(D(b.independent_directors) * HUNDRED / D(b.directors))
     ctx.explicit(trace, "independent share", pct, "PERCENT", fid("board", b), b.source,
@@ -848,6 +1003,23 @@ GRADED_EVENTS = {
     EventType.REGULATORY: "MATERIAL_REGULATORY_ACTION",
     EventType.EXCHANGE_PENALTY: "MATERIAL_REGULATORY_ACTION",
 }
+#: the event type itself is a loss to, or a levy on, the company
+ADVERSE_BY_TYPE = {EventType.ORDER_CANCELLATION, EventType.EXCHANGE_PENALTY}
+#: a topic, not an outcome (an award in the company's favour is LITIGATION too): graded only
+#: with a cited ADVERSE direction
+DIRECTION_NEEDED = {EventType.LITIGATION, EventType.REGULATORY}
+MATERIAL_EVENT_PCT = D(1)
+
+
+def event_direction(ctx: Ctx, event_id: UUID) -> tuple[str, ExchangeEventAssessment | None]:
+    """The cited direction of an exchange event (the input policy has already resolved or
+    withheld disagreeing assessments)."""
+    if conflicted(ctx, "event_assessments", lambda a: a.event_id == event_id):
+        return "CONFLICTING", None
+    cited = next((a for a in ctx.request.event_assessments if a.event_id == event_id), None)
+    if cited is None:
+        return "NOT_ESTABLISHED", None
+    return cited.direction.value, cited
 SALE_WORDS = re.compile(r"\b(sell|sale|sold|disposal|dispose)\b", re.I)
 PROMOTER_WORDS = re.compile(r"promoter", re.I)
 
@@ -867,21 +1039,36 @@ def exchange_events(
                 e.materiality.status == MetricStatus.AVAILABLE else None
             severity = None
             rule = "INFORMATIONAL: no numeric materiality (wording is never graded)"
+            direction: str = "NOT_ASSESSED"
+            cited: ExchangeEventAssessment | None = None
+            if e.event_type in ADVERSE_BY_TYPE:
+                direction = "ADVERSE_BY_EVENT_TYPE"
+            elif e.event_type in DIRECTION_NEEDED:
+                direction, cited = event_direction(ctx, e.event_id)
             if e.event_type in GRADED_EVENTS and ratio is not None:
-                severity = SV.RED if ratio >= 5 else SV.YELLOW if ratio >= 1 else SV.GREEN
-                rule = "EVENT_MATERIALITY/1: stated value / reference revenue (>= 1 % YELLOW, " \
-                       ">= 5 % RED)"
+                if direction in ("ADVERSE_BY_EVENT_TYPE", "ADVERSE"):
+                    severity = SV.RED if ratio >= 5 else SV.YELLOW if ratio >= 1 else SV.GREEN
+                    rule = "EVENT_MATERIALITY/2: adverse event; stated value / reference " \
+                           "revenue (>= 1 % YELLOW, >= 5 % RED)"
+                else:
+                    rule = f"INFORMATIONAL: direction {direction} - a {e.event_type.value} " \
+                           "event and its size never establish an adverse outcome"
             source = event_source(box12, e.event_id)
             entries.append(ExchangeEventRisk(
                 event_id=e.event_id, event_date=e.event_date, event_type=e.event_type.value,
                 category=category, title=e.title[:1000], value_crore=e.financial_value_crore,
                 materiality_pct=ratio, status="EVALUATED" if severity else "INFORMATIONAL",
-                severity=severity, rule=rule, source_ids=(source[:1000],) if source else ()))
+                severity=severity, rule=rule, source_ids=(source[:1000],) if source else (),
+                direction=direction))  # type: ignore[arg-type]
             if severity in (SV.YELLOW, SV.RED):
                 trace = Trace()
                 ctx.record(trace, f"{e.event_type.value} {e.event_date}", ratio, "PERCENT",
                            Layer.BOX12, e.event_id, source, period_end=e.event_date,
                            evidence=[e.event_id], detail=e.title)
+                if cited is not None:
+                    ctx.explicit(trace, f"direction of {e.event_type.value} {e.event_date}",
+                                 None, "ADVERSE", fid("event_assessment", cited),
+                                 cited.source, period_end=e.event_date)
                 ids.append(ctx.emit(GRADED_EVENTS[e.event_type], Ev(
                     S.EVALUATED, NA, severity, ratio, period_label=str(e.event_date),
                     period_end=e.event_date, trace=trace, discriminator=str(e.event_id),
@@ -909,7 +1096,8 @@ def exchange_events(
                 category=RiskCategory.OWNERSHIP, title=f"{t.person}: {t.transaction_type}"[:1000],
                 value_crore=q(t.value_inr / D(10_000_000)) if t.value_inr is not None else None,
                 materiality_pct=ratio, status="EVALUATED" if severity else "INFORMATIONAL",
-                severity=severity, rule=rule, source_ids=(source[:1000],) if source else ()))
+                severity=severity, rule=rule, source_ids=(source[:1000],) if source else (),
+                direction="ADVERSE_BY_EVENT_TYPE"))  # a promoter-category sale disclosure
             if severity in (SV.YELLOW, SV.RED):
                 trace = Trace()
                 ctx.record(trace, f"promoter sale {when}", ratio, "PERCENT", Layer.BOX12,

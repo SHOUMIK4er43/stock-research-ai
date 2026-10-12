@@ -1059,7 +1059,7 @@ def _module_paths() -> list[Path]:
     return [root / "domain" / "due_diligence.py"] + [
         root / "application" / f"{m}.py" for m in (
             "due_diligence", "red_flags", "earnings_quality", "governance_risk", "credit_risk",
-            "order_book_risk", "data_quality")]
+            "order_book_risk", "data_quality", "diligence_inputs")]
 
 
 def test_box13_modules_are_offline_and_clock_free():

@@ -45,8 +45,8 @@ from stock_research_ai.domain.financial_canonical import (
 )
 
 DUE_DILIGENCE_SCHEMA: Literal["DUE_DILIGENCE_DATASET_V1"] = "DUE_DILIGENCE_DATASET_V1"
-DUE_DILIGENCE_ENGINE_VERSION = "due-diligence/1"
-RULE_REGISTRY_VERSION = "risk-rules/1"
+DUE_DILIGENCE_ENGINE_VERSION = "due-diligence/2"  # /2: one input conflict / dedup policy
+RULE_REGISTRY_VERSION = "risk-rules/2"  # /2: event severity needs an adverse direction
 FORMULA_REGISTRY_VERSION = "dd-formulas/1"
 RISK_MAP_RULES_VERSION = "risk-map/1"
 
@@ -604,6 +604,23 @@ class ReconciliationReview(BaseModel):
     source: DiligenceSource
 
 
+class EventDirection(StrEnum):
+    ADVERSE = "ADVERSE"  # e.g. a claim filed against the company, a liability imposed on it
+    FAVOURABLE = "FAVOURABLE"  # e.g. an arbitral award in the company's favour
+    NEUTRAL = "NEUTRAL"
+
+
+class ExchangeEventAssessment(BaseModel):
+    """Whether a Box 12 exchange event is adverse to the company, as a cited source states it
+    (the order, award or notice itself). Box 13 never reads direction from a filing's wording:
+    'court', 'tribunal' or 'arbitration' name a topic, not an outcome."""
+
+    model_config = _model()
+    event_id: UUID  # a Box 12 event
+    direction: EventDirection
+    source: DiligenceSource
+
+
 def _bounded() -> object:
     return Field(default=(), max_length=MAX_EXPLICIT_INPUTS)
 
@@ -647,6 +664,7 @@ class DueDiligenceRequest(BaseModel):
         _bounded()  # type: ignore[assignment]
     )
     reconciliation_reviews: tuple[ReconciliationReview, ...] = _bounded()  # type: ignore[assignment]
+    event_assessments: tuple[ExchangeEventAssessment, ...] = _bounded()  # type: ignore[assignment]
 
     @model_validator(mode="after")
     def declared(self) -> Self:
@@ -956,11 +974,18 @@ class ExchangeEventRisk(BaseModel):
     severity: Severity | None
     rule: Label
     source_ids: tuple[Label, ...]
+    #: ADVERSE_BY_EVENT_TYPE (a cancellation, an exchange fine) or the cited direction; a
+    #: litigation / regulatory event without a cited ADVERSE direction is never graded
+    direction: Literal["ADVERSE_BY_EVENT_TYPE", "ADVERSE", "FAVOURABLE", "NEUTRAL",
+                       "CONFLICTING", "NOT_ESTABLISHED", "NOT_ASSESSED"] = "NOT_ASSESSED"
 
     @model_validator(mode="after")
     def graded(self) -> Self:
         if (self.status == "EVALUATED") != (self.severity is not None):
             raise ValueError("Only a numerically material event carries a severity")
+        if self.severity in (Severity.YELLOW, Severity.RED) and self.direction not in (
+                "ADVERSE_BY_EVENT_TYPE", "ADVERSE"):
+            raise ValueError("Only an event adverse to the company is a risk flag")
         return self
 
 

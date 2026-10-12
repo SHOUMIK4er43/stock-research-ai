@@ -1,6 +1,8 @@
 """DETAILED_RESEARCH_V1 Box 13: Boxes 3-12 + explicit cited inputs -> DueDiligenceDataset.
 
 Pipeline:
+  input policy (diligence_inputs: exact duplicates once, conflicting cited inputs resolved by
+  authority or withheld, every family in canonical order; upstream record IDs unique) ->
   integrity (every input re-validates; the Box 4 / Box 5 / Box 3 / Box 10 hashes each later box
   recorded must match the datasets supplied; one company; no period after as_of; one currency;
   every cited Box 3 evidence ID exists) ->
@@ -38,6 +40,11 @@ from stock_research_ai.application.data_quality import (
     risk_map,
     source_disagreements,
 )
+from stock_research_ai.application.diligence_inputs import (
+    conflicted,
+    normalize,
+    unique_by_id,
+)
 from stock_research_ai.application.document_intelligence import canonical_bundle_json
 from stock_research_ai.application.earnings_quality import build_forensics, positive_controls
 from stock_research_ai.application.financial_analytics import (
@@ -57,6 +64,7 @@ from stock_research_ai.application.financial_reconciliation import canonical_dat
 from stock_research_ai.application.forecasting import canonical_forecast_json
 from stock_research_ai.application.fundamental_valuation import canonical_valuation_json
 from stock_research_ai.application.governance_risk import (
+    MATERIAL_EVENT_PCT,
     build_auditor,
     build_governance,
     build_ownership,
@@ -90,6 +98,7 @@ from stock_research_ai.domain.due_diligence import (
     DueDiligenceDataset,
     DueDiligenceIssue,
     DueDiligenceRequest,
+    ExchangeEventRisk,
     Layer,
     PeerContext,
     ReconciliationExplanation,
@@ -304,7 +313,8 @@ def _market_cap(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple[Deci
         return None
     day = snap.market_date
     counts = [c for c in r.share_counts if abs((c.as_of - day).days) <= SHARE_COUNT_WINDOW_DAYS]
-    if not counts:
+    if not counts or conflicted(ctx, "share_counts", lambda c: abs(
+            (c.as_of - day).days) <= SHARE_COUNT_WINDOW_DAYS):
         return None
     count = min(counts, key=lambda c: (abs((c.as_of - day).days), c.as_of))
     return q(snap.last_price * count.shares / D(10_000_000)), snap.snapshot_id, \
@@ -452,17 +462,25 @@ def _explicit_comparisons(
     """Contingent liabilities and related-party balances stated on both bases."""
     out: list[BasisComparison] = []
     period = ctx.periods.pit(end)
-    for code, rows in (
+    def balance(r: Any) -> bool:
+        return bool(r.fiscal_year == period.fiscal_year and r.kind.value in (
+            "BALANCE_RECEIVABLE", "BALANCE_PAYABLE"))
+
+    for code, rows, disputed in (
         ("ORDER_BOOK", [(r.basis, r.value_crore, r) for r in ctx.request.order_book_reports
-                        if r.as_of == end]),
+                        if r.as_of == end],
+         conflicted(ctx, "order_book_reports", lambda r: r.as_of == end)),
         ("CONTINGENT_LIABILITIES", [(c.basis, c.amount_crore, c) for c in
                                    ctx.request.contingent_liabilities
-                                   if c.as_of == end and c.category.value == "TOTAL"]),
+                                   if c.as_of == end and c.category.value == "TOTAL"],
+         conflicted(ctx, "contingent_liabilities",
+                    lambda c: c.as_of == end and c.category.value == "TOTAL")),
         ("RELATED_PARTY_BALANCES", [(r.basis, r.amount_crore, r) for r in
-                                   ctx.request.related_party
-                                   if r.fiscal_year == period.fiscal_year and r.kind.value in
-                                   ("BALANCE_RECEIVABLE", "BALANCE_PAYABLE")]),
+                                   ctx.request.related_party if balance(r)],
+         conflicted(ctx, "related_party", balance)),
     ):
+        if disputed:  # a disputed line never enters a comparison total
+            continue
         totals: dict[str, Decimal] = {}
         records: list[UUID] = []
         for basis, amount, item in rows:
@@ -566,6 +584,21 @@ def build_due_diligence(
             "CURRENCY_MISMATCH", f"explicit inputs in {sorted(c.value for c in foreign)}; the "
             f"analytical currency is {currency.value}")
     evidence_index, unverified = _evidence(request, bundle)
+    if box12 is not None:
+        box12 = box12.model_copy(update={
+            "shareholding": unique_by_id(box12.shareholding, "filing_id",
+                                         "Box 12 shareholding filing"),
+            "insider_trades": unique_by_id(box12.insider_trades, "record_id",
+                                           "Box 12 insider trade"),
+            "corporate_actions": unique_by_id(box12.corporate_actions, "action_id",
+                                              "Box 12 corporate action"),
+            "filings": unique_by_id(box12.filings, "document_id", "Box 12 filing"),
+        })
+    known_events = {e.event_id for e in box12.events} if box12 is not None else set()
+    if any(a.event_id not in known_events for a in request.event_assessments):
+        raise DueDiligenceInputError("BROKEN_REFERENCE", "an event assessment cites an event "
+                                     "that is not in the supplied Box 12 dataset")
+    inputs = normalize(request)
     control = ReportingBasis.STANDALONE if (
         analytical == ReportingBasis.CONSOLIDATED and ReportingBasis.STANDALONE in currencies
     ) else None
@@ -584,17 +617,17 @@ def build_due_diligence(
     }
     dd_key = (
         f"{box4_sha}|{box5_sha}|{'|'.join(f'{k.value}:{v or "-"}' for k, v in shas.items())}|"
-        f"{request.model_dump_json()}|{DUE_DILIGENCE_ENGINE_VERSION}|{RULE_REGISTRY_VERSION}|"
+        f"{inputs.echo.model_dump_json()}|{DUE_DILIGENCE_ENGINE_VERSION}|{RULE_REGISTRY_VERSION}|"
         f"{FORMULA_REGISTRY_VERSION}|{RISK_MAP_RULES_VERSION}"
     )
     ctx = Ctx(
-        box4=box4, box5=box5, request=request, frames=frames, currency=currency,
+        box4=box4, box5=box5, request=inputs.request, frames=frames, currency=currency,
         analytical=analytical, control=control, periods=Periods(box4.fiscal_year_end_month),
         latest={b: _latest(box5, b) for b in frames}, financial=box4.industry in
         FINANCIAL_INDUSTRIES, b5=Box5View(box5),
         obs_source={o.observation_id: f"{o.source.source_url}#{o.source.locator}"[:1000]
                     for o in box4.observations},
-        dd_key=dd_key, evidence_index=evidence_index,
+        dd_key=dd_key, evidence_index=evidence_index, inputs=inputs,
     )
     latest = ctx.latest.get(analytical)
     market_cap = _market_cap(ctx, box12)
@@ -627,7 +660,7 @@ def build_due_diligence(
                            disagreements=disagreements, unverified_evidence=unverified,
                            order_book=orders)
     extra.extend(_extra_items(ctx, box12, contingent.total_method == "STATED_TOTAL"
-                              and len(contingent.by_category) == 1))
+                              and len(contingent.by_category) == 1, events.entries))
     items = open_items(ctx, box12=box12, extra=extra)
     present = ctx.present
 
@@ -667,7 +700,7 @@ def build_due_diligence(
         generated_at=generated_at,
         sources=tuple(_upstream(box4, box4_sha, box5, box5_sha, bundle, box7, box8, box9, box10,
                                 box11, box12, shas)),
-        request=request,
+        request=inputs.echo,
         financial_forensics=forensics,
         earnings_quality=earnings,
         accounting_risks=tuple(accounting) + present([cwip_id, basis_id]),
@@ -697,9 +730,19 @@ def build_due_diligence(
     )
 
 
-def _extra_items(ctx: Ctx, box12: MarketIntelligenceDataset | None,
-                 total_only: bool) -> list[tuple[str, str, str, tuple[UUID, ...]]]:
+def _extra_items(ctx: Ctx, box12: MarketIntelligenceDataset | None, total_only: bool,
+                 events: Iterable[ExchangeEventRisk] = ()) -> list[tuple[
+                     str, str, str, tuple[UUID, ...]]]:
     out: list[tuple[str, str, str, tuple[UUID, ...]]] = []
+    for e in events:
+        if e.direction in ("NOT_ESTABLISHED", "CONFLICTING") and e.materiality_pct is not None \
+                and e.materiality_pct >= MATERIAL_EVENT_PCT:
+            out.append((f"Is the {e.event_type.lower()} filed on {e.event_date} adverse to the "
+                        f"company? ({e.title[:200]})", f"stated value = {e.materiality_pct} % of "
+                        f"reference revenue; direction {e.direction.lower().replace('_', ' ')} "
+                        "(an event category or its size never establishes it)",
+                        "The order / award / notice itself (cite it as an event assessment)",
+                        ()))
     latest = ctx.latest.get(ctx.analytical)
     frame = ctx.frames[ctx.analytical]
     quarters = [d for d in frame.periods(PeriodType.QUARTER) if latest and d > latest]

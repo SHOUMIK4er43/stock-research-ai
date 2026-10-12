@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.diligence_inputs import conflict_ev, conflicted, fid
 from stock_research_ai.application.earnings_quality import (
     box5_metric,
     canonical_value,
@@ -24,7 +25,7 @@ from stock_research_ai.application.earnings_quality import (
     pit,
 )
 from stock_research_ai.application.financial_metrics import Fact
-from stock_research_ai.application.governance_risk import fid, years_before
+from stock_research_ai.application.governance_risk import years_before
 from stock_research_ai.application.red_flags import (
     NS,
     RULES,
@@ -168,6 +169,9 @@ def rating_observations(
 
 def credit_deterioration(ctx: Ctx, ratings: list[RatingObservation]) -> tuple[Ev, Ev | None]:
     start, end = years_before(ctx.request.as_of, 3), ctx.request.as_of
+    disputes = conflicted(ctx, "ratings", lambda r: r.action_date <= end)
+    if disputes:  # one rating action stated two ways: no notch move is measured from either
+        return conflict_ev(ctx, NA, disputes, what=" - rating actions"), None
     if not ratings:
         return unavailable(NA, "NO_RATING_DATA", explanation="no rating action supplied or "
                            "filed"), None
@@ -207,14 +211,20 @@ def credit_deterioration(ctx: Ctx, ratings: list[RatingObservation]) -> tuple[Ev
                 cite(cur, "rating")
     if worst_delta:
         severity = worse(severity, grade(D(worst_delta), RULES["CREDIT_DETERIORATION"].thresholds))
-    # the latest rating per agency and instrument (the exchange feed states no instrument:
-    # its rows are one series per agency)
-    latest: dict[tuple[str, str], RatingObservation] = {}
+    # the latest rating per agency and instrument (the exchange feed states no instrument: its
+    # rows are one series per agency, and every row of its latest date is read - same-day rows
+    # may cover different instruments, so none is picked over another)
+    latest: dict[tuple[str, str], list[RatingObservation]] = {}
     for o in ratings:
         if o.action_date <= end:
-            latest[(norm(o.agency), norm(o.instrument) if o.instrument else "#EXCHANGE_FEED")] = o
+            key = (norm(o.agency), norm(o.instrument) if o.instrument else "#EXCHANGE_FEED")
+            rows = latest.setdefault(key, [])
+            if rows and rows[0].action_date < o.action_date:
+                rows.clear()
+            if not rows or rows[0].action_date == o.action_date:
+                rows.append(o)
     withdrawn = False
-    for o in latest.values():
+    for o in (row for rows in latest.values() for row in rows):
         if o.action == RatingActionKind.WITHDRAWN:
             withdrawn = True
             continue
@@ -278,13 +288,21 @@ def contingent_liabilities(ctx: Ctx) -> tuple[ContingentLiabilities, Ev]:
     empty = ContingentLiabilities(as_of=None, basis=NA, by_category=(), total_crore=None,
                                   total_method="UNAVAILABLE", capital_commitments_crore=None,
                                   record_ids=(), issues=(), signal_ids=())
-    chosen = _latest_basis(ctx, rows)
+    disputes = conflicted(ctx, "contingent_liabilities")
+    chosen = _latest_basis(ctx, rows + [r for c in disputes for r in c.records])
     if chosen is None:
         reason = "CONTINGENT_DATA_NOT_SUPPLIED" if not rows else "BASIS_NOT_IN_BOX4"
         return empty, unavailable(NA, reason)
     basis, day = chosen
     sb = SignalBasis(basis.value)
     rows = [r for r in rows if r.basis == basis.value and r.as_of == day]
+    here = [c for c in disputes if c.first.basis == basis.value and c.first.as_of == day]
+    if here:  # a line of the note is stated two ways: no total is graded
+        return empty.model_copy(update={
+            "as_of": day, "basis": sb, "issues": ("INPUT_CONFLICT",),
+            "record_ids": tuple(sorted({fid("contingent", r) for r in rows}
+                                       | {i for c in here for i in c.record_ids()}, key=str))}), \
+            conflict_ev(ctx, sb, here, what=" - contingent liabilities")
     trace = Trace()
     issues: list[str] = []
     for r in rows:
@@ -344,11 +362,15 @@ def contingent_liabilities(ctx: Ctx) -> tuple[ContingentLiabilities, Ev]:
 
 def stalled_cwip(ctx: Ctx) -> Ev:
     rows = list(ctx.request.cwip_ageing)
-    chosen = _latest_basis(ctx, rows)
+    disputes = conflicted(ctx, "cwip_ageing")
+    chosen = _latest_basis(ctx, rows + [r for c in disputes for r in c.records])
     if chosen is None:
         return unavailable(NA, "CWIP_AGEING_NOT_SUPPLIED")
     basis, day = chosen
     sb = SignalBasis(basis.value)
+    here = [c for c in disputes if c.first.basis == basis.value and c.first.as_of == day]
+    if here:
+        return conflict_ev(ctx, sb, here, what=" - CWIP ageing")
     rows = [r for r in rows if r.basis == basis.value and r.as_of == day]
     trace = Trace()
     for r in rows:

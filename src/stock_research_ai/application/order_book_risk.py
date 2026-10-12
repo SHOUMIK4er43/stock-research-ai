@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from stock_research_ai.application.diligence_inputs import conflicted
 from stock_research_ai.application.governance_risk import years_before
 from stock_research_ai.application.red_flags import (
     RULES,
@@ -81,8 +82,11 @@ def reported_book(ctx: Ctx, box7: BusinessIntelligenceDataset | None) -> dict[st
                     "reported_order_book_definition": fact.definition,
                     "reported_order_book_layer": Layer.BOX7}
     reports = [r for r in ctx.request.order_book_reports if r.currency == ctx.currency]
-    if reports:
-        r = max(reports, key=lambda x: (x.as_of, x.basis == ctx.analytical.value, x.value_crore))
+    # one report per date and basis (the input policy): never a tie-break on the value
+    r = max(reports, key=lambda x: (x.as_of, x.basis == ctx.analytical.value)) \
+        if reports else None
+    if r is not None and not conflicted(ctx, "order_book_reports",
+                                        lambda x: x.as_of >= r.as_of):
         return {"reported_order_book_crore": q(r.value_crore),
                 "reported_order_book_as_of": r.as_of,
                 "reported_order_book_tax_basis": r.tax_basis,

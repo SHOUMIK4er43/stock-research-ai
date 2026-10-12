@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.financial_metrics import (
@@ -58,6 +59,9 @@ from stock_research_ai.domain.financial_canonical import (
     FinancialPeriod,
     ReportingBasis,
 )
+
+if TYPE_CHECKING:
+    from stock_research_ai.application.diligence_inputs import NormalizedInputs
 
 NS = UUID("6d3c1a9e-58b2-4f17-a0c4-9e2b7d5f13a8")
 D = Decimal
@@ -185,9 +189,12 @@ _rule("PROMOTER_PLEDGE", "Promoter pledge", C.OWNERSHIP, ("PledgePoint (cited)",
       ALL, (T(R, "GT", 20), T(Y, "GT", 5)), "PERCENT", L.HIGH)
 _rule("PROMOTER_SELLING", "Promoter holding decline", C.OWNERSHIP,
       ("Box 12 shareholding filings", "HoldingPoint PROMOTER (cited)", "ShareCount (cited)"),
-      "promoter % (4 quarters earlier) - promoter % (latest), percentage points; dilution "
-      "is excluded when share counts separate it, and the decline is graded unadjusted only "
-      "when dilution is ruled out", "all sectors", ALL,
+      "promoter % (4 quarters earlier) - promoter % (latest), percentage points; with "
+      "comparable share counts: (promoter shares earlier - promoter shares latest) / shares "
+      "latest x 100, promoter shares = total shares x promoter % (a fall in promoter shares "
+      "stays visible through dilution); unadjusted only when dilution is ruled out",
+      "all sectors; share counts compare only when both are bonus / split adjusted, or both "
+      "unadjusted with no bonus / split in the window; otherwise DILUTION_NOT_SEPARABLE", ALL,
       (T(R, "GE", 5), T(Y, "GE", 2)), "PERCENTAGE_POINTS", L.MEDIUM)
 _rule("EQUITY_DILUTION", "Equity dilution over 3 years", C.OWNERSHIP,
       ("ShareCount (cited, bonus/split adjusted)", "Box 4 EQUITY_SHARE_CAPITAL",
@@ -295,15 +302,18 @@ _rule("MATERIAL_ORDER_CANCELLATION", "Material order cancellation filed", C.ORDE
       "stated value / reference annual revenue x 100 (Box 12)",
       "all sectors; only with a stated value and a cited revenue", ALL,
       (T(R, "GE", 5), T(Y, "GE", 1)), "PERCENT", L.MEDIUM)
-_rule("MATERIAL_LITIGATION", "Material litigation filed", C.LEGAL,
-      ("Box 12 LITIGATION event materiality",),
+_rule("MATERIAL_LITIGATION", "Material adverse litigation filed", C.LEGAL,
+      ("Box 12 LITIGATION event materiality", "ExchangeEventAssessment ADVERSE (cited)"),
       "stated value / reference annual revenue x 100 (Box 12)",
-      "all sectors; only with a stated value and a cited revenue", ALL,
+      "all sectors; only with a stated value, a cited revenue and a cited ADVERSE direction "
+      "(an award in the company's favour or an unknown direction is information only)", ALL,
       (T(R, "GE", 5), T(Y, "GE", 1)), "PERCENT", L.MEDIUM)
 _rule("MATERIAL_REGULATORY_ACTION", "Material regulatory / exchange action filed",
-      C.REGULATORY, ("Box 12 REGULATORY / EXCHANGE_PENALTY event materiality",),
+      C.REGULATORY, ("Box 12 REGULATORY / EXCHANGE_PENALTY event materiality",
+                     "ExchangeEventAssessment ADVERSE (cited, REGULATORY only)"),
       "stated value / reference annual revenue x 100 (Box 12)",
-      "all sectors; only with a stated value and a cited revenue", ALL,
+      "all sectors; only with a stated value and a cited revenue; an exchange penalty is "
+      "adverse by type, a regulatory event only with a cited ADVERSE direction", ALL,
       (T(R, "GE", 5), T(Y, "GE", 1)), "PERCENT", L.MEDIUM)
 _rule("LARGE_PROMOTER_SALE", "Large promoter-category sale", C.OWNERSHIP,
       ("Box 12 insider-trading disclosures", "market capitalisation"),
@@ -477,9 +487,20 @@ POLICIES: tuple[tuple[str, str], ...] = (
     ("RISK_MAP_IMPACT", "the impact registered with the rule (static, documented)"),
     ("RECONCILIATION_MATERIALITY", "a standalone / consolidated difference is material above "
      "10 % of the consolidated value"),
-    ("EVENT_MATERIALITY", "an exchange event is graded only from Box 12's numeric materiality "
-     "(stated value / reference revenue): >= 1 % YELLOW, >= 5 % RED for cancellations, "
-     "litigation, regulatory and penalty events; otherwise INFORMATIONAL"),
+    ("EVENT_MATERIALITY", "an exchange event is graded only when it is adverse to the company "
+     "AND numerically material (Box 12 stated value / reference revenue: >= 1 % YELLOW, >= 5 % "
+     "RED). Adverse by type: order cancellations and exchange penalties. Litigation and "
+     "regulatory events need a cited ADVERSE direction (an event category and a large value "
+     "never establish one); awards, orders, dividends, fund raises, buybacks, M&A / JV are "
+     "never graded. Otherwise INFORMATIONAL, with a diligence item when material"),
+    ("INPUT_CONFLICTS", "explicit inputs: exact duplicates count once; records are keyed by "
+     "the fact they state (period, basis, category, instrument ..., never the value); equal "
+     "content from several sources is one observation; different content is resolved by "
+     "AUTHORITY_RANK only when one content holds the best rank (not an analyst input), with "
+     "every value preserved; otherwise the disagreement stays OPEN and the rules that need "
+     "it are UNAVAILABLE (INPUT_CONFLICT). Input order never matters"),
+    ("RECORD_IDENTITY", "an upstream record ID seen twice with identical content is one "
+     "record; with different content the build is refused (RECORD_ID_CONFLICT)"),
     ("GUIDANCE_SAMPLE", "management reliability needs >= 5 completed quantitative targets"),
     ("RATINGS", "Indian long-term scale only (AAA..D, +/-), agency prefixes stripped; "
      "structured / credit-enhanced (SO / CE) and short-term grades are not mapped"),
@@ -668,6 +689,7 @@ class Ctx:
     persistence: dict[UUID, list[Severity | None]] = field(default_factory=dict)
     issues: list[DueDiligenceIssue] = field(default_factory=list)
     gated: set[str] = field(default_factory=set)
+    inputs: "NormalizedInputs | None" = None  # the input policy's conflicts (diligence_inputs)
 
     # facts --------------------------------------------------------------------------------
 

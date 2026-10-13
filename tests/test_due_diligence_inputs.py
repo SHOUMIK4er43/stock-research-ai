@@ -1,10 +1,14 @@
 """Box 13 input policy: conflicts, duplicates, promoter selling vs dilution, event direction."""
 
 import hashlib
+import os
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -33,7 +37,7 @@ from stock_research_ai.domain.due_diligence import (
     Severity,
     SignalStatus,
 )
-from stock_research_ai.domain.financial_canonical import Currency
+from stock_research_ai.domain.financial_canonical import Currency, ReportingBasis
 from stock_research_ai.domain.market_intelligence import (
     Authority,
     Citation,
@@ -590,3 +594,225 @@ def test_input_policy_is_bounded(n):
     assert sig(data, "CONTINGENT_LIABILITY").value == expected
     reordered = run(pair=pair, **{k: tuple(v[::-1]) for k, v in families.items()})
     assert canon(reordered) == canon(data)
+
+
+# --- standalone / consolidated: an explanation conflict is a data limitation, not a risk ------
+
+RECON_FY = 2026
+
+
+def why(kind: str, text: str, *, metric: str = "REVENUE", year: int = RECON_FY,
+        authority: str = "COMPANY_DOCUMENT", ref: str = "AR FY2026 note 45") -> \
+        dd.ReconciliationExplanation:
+    return dd.ReconciliationExplanation(metric=metric, fiscal_year=year, kind=kind,  # type: ignore[arg-type]
+                                        explanation=text, source=src(authority, ref))
+
+
+REVIEW = dd.ReconciliationReview(fiscal_year=RECON_FY, sources_checked=("note 45",),
+                                 source=src(ref="AR FY2026 consolidation schedule"))
+SUBSIDIARY = why("GROUP_STRUCTURE", "subsidiary revenue explains the difference", ref="AR note 45")
+CLASSIFICATION = why("OTHER", "accounting classification explains the difference",
+                     ref="Investor presentation Q4 p.9")
+PAT_WHY = why("OTHER", "minority share of profit", metric="PAT")  # leaves REVENUE the only gap
+
+
+def recon_pair(*, debt: object = 1000) -> Any:
+    """Consolidated vs a standalone ledger 40 % smaller on revenue (and so PAT)."""
+    return datasets(rows_for() + rows_for(revenue=[600, 660, 726, 798, 878, 966],
+                                          debt=debt, basis=ReportingBasis.STANDALONE))
+
+
+def latest(data: DueDiligenceDataset, metric: str = "REVENUE") -> dd.BasisComparison:
+    return next(c for c in data.standalone_consolidated_reconciliation
+                if c.metric == metric and c.period_end == FY_END)
+
+
+def company_risk(data: DueDiligenceDataset) -> list[tuple[str, str]]:
+    return sorted((data.signal(i).code, data.signal(i).severity.value)  # type: ignore[union-attr]
+                  for i in data.red_flags)
+
+
+def assert_conflict_is_a_limitation(data: DueDiligenceDataset, metric: str = "REVENUE") -> None:
+    c = latest(data, metric)
+    assert c.status == dd.ReconciliationStatus.UNAVAILABLE and c.reason == "INPUT_CONFLICT"
+    assert c.explanation is None and c.explanation_record_id is None
+    assert c.percentage_difference is not None  # the difference itself is still shown
+    s = sig(data, "UNEXPLAINED_BASIS_DIFFERENCE")
+    assert s.risk_id not in data.red_flags
+    assert s.risk_id not in {e.risk_id for e in data.risk_map}
+    (entry,) = entries(data, "RECONCILIATION_EXPLANATION")
+    assert entry.status == "OPEN" and entry.canonical_source is None and len(entry.values) == 2
+    assert ("INPUT_CONFLICT", 1) in data.data_quality_summary.counts
+    asks = [i.question for i in data.open_diligence_items
+            if "conflicting explanations" in i.question]
+    assert asks == [f"Resolve the conflicting explanations for the standalone / consolidated "
+                    f"difference in {metric} FY{RECON_FY}"]
+
+
+def test_explanation_conflict_with_review_is_never_material_unexplained():
+    """The Medium: a review plus two equal-authority explanations used to read as YELLOW."""
+    pair = recon_pair()
+    revenue_only = run(pair=pair, reconciliation_reviews=(REVIEW,),
+                       reconciliation_explanations=(SUBSIDIARY, CLASSIFICATION, PAT_WHY))
+    assert_conflict_is_a_limitation(revenue_only)
+    s = sig(revenue_only, "UNEXPLAINED_BASIS_DIFFERENCE")
+    assert s.status == ST.UNAVAILABLE and s.reason == "INPUT_CONFLICT" and s.severity is None
+    assert s.risk_id not in revenue_only.red_flags
+    assert {i.value for i in s.inputs if i.role.startswith("conflicting")} == {None}
+    assert len([i for i in s.inputs if i.role.startswith("conflicting")]) == 2
+    # a separately unexplained PAT is still counted; the disputed REVENUE never is
+    both = run(pair=pair, reconciliation_reviews=(REVIEW,),
+               reconciliation_explanations=(SUBSIDIARY, CLASSIFICATION))
+    assert latest(both).reason == "INPUT_CONFLICT"
+    assert latest(both, "PAT").status == dd.ReconciliationStatus.MATERIAL_UNEXPLAINED
+    s = sig(both, "UNEXPLAINED_BASIS_DIFFERENCE")
+    assert s.severity == SV.YELLOW and s.value == 1
+
+
+def test_explanation_conflict_without_review_is_still_a_conflict():
+    data = run(pair=recon_pair(),
+               reconciliation_explanations=(SUBSIDIARY, CLASSIFICATION, PAT_WHY))
+    assert_conflict_is_a_limitation(data)
+    assert sig(data, "UNEXPLAINED_BASIS_DIFFERENCE").reason == "SOURCES_NOT_REVIEWED"
+
+
+def test_same_kind_different_text_is_a_conflict():
+    x = why("GROUP_STRUCTURE", "subsidiary X consolidation explains difference", ref="AR p.1")
+    y = why("GROUP_STRUCTURE", "JV Y consolidation explains difference", ref="AR p.2")
+    data = run(pair=recon_pair(), reconciliation_reviews=(REVIEW,),
+               reconciliation_explanations=(x, y, PAT_WHY))
+    assert_conflict_is_a_limitation(data)
+
+
+def test_single_and_identical_explanations_explain_the_difference():
+    pair = recon_pair()
+    other = why("OTHER", "inter-segment eliminations")
+    for explanations in ((other,), (other, why("OTHER", "inter-segment eliminations",
+                                               ref="Investor presentation Q4 p.9"))):
+        data = run(pair=pair, reconciliation_reviews=(REVIEW,),
+                   reconciliation_explanations=explanations)
+        assert latest(data).status == dd.ReconciliationStatus.MATERIAL_EXPLAINED
+        assert latest(data).explanation == "inter-segment eliminations"
+        assert not entries(data, "RECONCILIATION_EXPLANATION")  # agreement, not a conflict
+    grouped = run(pair=pair, reconciliation_reviews=(REVIEW,),
+                  reconciliation_explanations=(SUBSIDIARY,))
+    assert latest(grouped).status == dd.ReconciliationStatus.EXPECTED_GROUP_DIFFERENCE
+
+
+def test_higher_authority_explanation_is_selected_in_either_order():
+    filed = why("GROUP_STRUCTURE", "subsidiary revenue", authority="EXCHANGE_FILING",
+                ref="Reg 33 results")
+    screener = why("OTHER", "classification", authority="SCREENER", ref="screener.in")
+    runs = [run(pair=recon_pair(), reconciliation_reviews=(REVIEW,),
+                reconciliation_explanations=order) for order in ((filed, screener),
+                                                                 (screener, filed))]
+    assert canon(runs[0]) == canon(runs[1])
+    data = runs[0]
+    assert latest(data).status == dd.ReconciliationStatus.EXPECTED_GROUP_DIFFERENCE
+    assert latest(data).explanation == "subsidiary revenue"
+    (entry,) = entries(data, "RECONCILIATION_EXPLANATION")
+    assert entry.status == "RESOLVED" and "EXCHANGE_FILING" in (entry.canonical_source or "")
+    assert {v.authority for v in entry.values} == {"EXCHANGE_FILING", "SCREENER"}
+    assert not any("conflicting explanations" in i.question for i in data.open_diligence_items)
+
+
+def test_no_review_and_reviewed_unexplained_keep_their_states():
+    pair = recon_pair()
+    unreviewed = run(pair=pair)
+    assert latest(unreviewed).status == dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED
+    assert sig(unreviewed, "UNEXPLAINED_BASIS_DIFFERENCE").risk_id not in unreviewed.red_flags
+    reviewed = run(pair=pair, reconciliation_reviews=(REVIEW,))
+    assert latest(reviewed).status == dd.ReconciliationStatus.MATERIAL_UNEXPLAINED
+    s = sig(reviewed, "UNEXPLAINED_BASIS_DIFFERENCE")
+    assert s.severity == SV.YELLOW and s.risk_id in reviewed.red_flags
+    assert s.risk_id in {e.risk_id for e in reviewed.risk_map}
+
+
+def test_each_metric_is_reconciled_independently():
+    data = run(pair=recon_pair(debt=500), reconciliation_reviews=(REVIEW,),
+               reconciliation_explanations=(SUBSIDIARY, CLASSIFICATION, PAT_WHY))
+    assert latest(data, "REVENUE").reason == "INPUT_CONFLICT"
+    assert latest(data, "PAT").status == dd.ReconciliationStatus.MATERIAL_EXPLAINED
+    assert latest(data, "GROSS_DEBT").status == dd.ReconciliationStatus.MATERIAL_UNEXPLAINED
+    s = sig(data, "UNEXPLAINED_BASIS_DIFFERENCE")
+    assert s.severity == SV.YELLOW and s.value == 1 and s.risk_id in data.red_flags
+
+
+def test_explanation_key_is_metric_and_year():
+    """A REVENUE FY2026 conflict never touches PAT FY2026 or REVENUE FY2025."""
+    pat = PAT_WHY
+    prior = why("OTHER", "FY2025 eliminations", year=RECON_FY - 1)
+    data = run(pair=recon_pair(), reconciliation_reviews=(REVIEW,),
+               reconciliation_explanations=(SUBSIDIARY, CLASSIFICATION, pat, prior))
+    assert latest(data).reason == "INPUT_CONFLICT"
+    assert latest(data, "PAT").status == dd.ReconciliationStatus.MATERIAL_EXPLAINED
+    earlier = next(c for c in data.standalone_consolidated_reconciliation
+                   if c.metric == "REVENUE" and c.period_end == date(2025, 3, 31))
+    assert earlier.status == dd.ReconciliationStatus.MATERIAL_EXPLAINED
+    assert earlier.explanation == "FY2025 eliminations"
+    pat_2025 = next(c for c in data.standalone_consolidated_reconciliation
+                    if c.metric == "PAT" and c.period_end == date(2025, 3, 31))
+    assert pat_2025.status == dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED
+
+
+def test_conflicting_data_never_adds_company_risk():
+    """Core invariant: B = A + a conflicting equal-authority explanation."""
+    pair = recon_pair()
+    clean = (SUBSIDIARY, PAT_WHY)
+    a = run(pair=pair, reconciliation_reviews=(REVIEW,), reconciliation_explanations=clean)
+    b = run(pair=pair, reconciliation_reviews=(REVIEW,),
+            reconciliation_explanations=(*clean, CLASSIFICATION))
+    rank = {"GREEN": 0, "YELLOW": 1, "RED": 2}
+    assert company_risk(b) == company_risk(a)
+    assert sum(rank[s] for _, s in company_risk(b)) <= sum(rank[s] for _, s in company_risk(a))
+    assert [e.risk_id for e in b.risk_map] == list(b.red_flags)  # risk map mirrors red flags
+    assert {e.code for e in b.risk_map} == {e.code for e in a.risk_map}
+    assert sig(a, "UNEXPLAINED_BASIS_DIFFERENCE").severity == SV.GREEN
+    assert sig(b, "UNEXPLAINED_BASIS_DIFFERENCE").risk_id not in b.red_flags
+    assert b.source_disagreements.open_count > a.source_disagreements.open_count
+    assert len(b.open_diligence_items) > len(a.open_diligence_items)
+
+
+def test_explanation_conflict_is_deterministic_and_inputs_are_untouched():
+    pair = recon_pair()
+    items = [SUBSIDIARY, CLASSIFICATION]
+    first = run(pair=pair, reconciliation_reviews=(REVIEW,),
+                reconciliation_explanations=tuple(items))
+    for variant in [items] * 10 + variants(items)[1:] + [[SUBSIDIARY, CLASSIFICATION, SUBSIDIARY]]:
+        assert canon(run(pair=pair, reconciliation_reviews=(REVIEW,),
+                         reconciliation_explanations=tuple(variant))) == canon(first)
+    box4, box5 = pair
+    request = DueDiligenceRequest(as_of=AS_OF, company_key=box4.company_key,
+                                  reconciliation_reviews=(REVIEW,),
+                                  reconciliation_explanations=tuple(items))
+    before = _hash(box4, box5, request)
+    build_due_diligence(box4, box5, request=request, generated_at=NOW)
+    assert _hash(box4, box5, request) == before
+
+
+def test_explanation_conflict_is_independent_of_hash_seed():
+    here = Path(__file__).parent
+    script = (
+        f"import sys, hashlib; sys.path.insert(0, {str(here)!r})\n"
+        "import test_due_diligence_inputs as t\n"
+        "d = t.run(pair=t.recon_pair(), reconciliation_reviews=(t.REVIEW,), "
+        "reconciliation_explanations=(t.CLASSIFICATION, t.SUBSIDIARY))\n"
+        "print(hashlib.sha256(t.canon(d).encode()).hexdigest())\n")
+    out = {subprocess.run([sys.executable, "-c", script], check=True, capture_output=True,
+                          text=True, env={**os.environ, "PYTHONHASHSEED": seed},
+                          cwd=here.parent).stdout.strip() for seed in ("0", "1", "4242")}
+    assert len(out) == 1
+
+
+def test_many_explanations_stay_bounded():
+    pair = recon_pair()
+    metrics = [f"METRIC_{i}" for i in range(dd.MAX_EXPLICIT_INPUTS // 2)]
+    items = [why("OTHER", f"text {i % 2}", metric=m, ref=f"r{i % 2}")
+             for m in metrics for i in range(2)][:dd.MAX_EXPLICIT_INPUTS]
+    items[:2] = [SUBSIDIARY, CLASSIFICATION]
+    started = time.perf_counter()
+    data = run(pair=pair, reconciliation_reviews=(REVIEW,),
+               reconciliation_explanations=tuple(items))
+    assert time.perf_counter() - started < 60
+    assert latest(data).reason == "INPUT_CONFLICT"
+    assert sig(data, "UNEXPLAINED_BASIS_DIFFERENCE").risk_id in data.red_flags  # PAT, reviewed

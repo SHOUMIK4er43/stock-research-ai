@@ -41,6 +41,7 @@ from stock_research_ai.application.data_quality import (
     source_disagreements,
 )
 from stock_research_ai.application.diligence_inputs import (
+    conflict_ev,
     conflicted,
     normalize,
     unique_by_id,
@@ -325,6 +326,30 @@ def _market_cap(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple[Deci
 
 Item = tuple[str, str, str, tuple[UUID, ...]]
 EXPECTED_DIFFERENCE = {"MINORITY_INTEREST", "SHARE_OF_ASSOCIATES_JV"}
+Explained = tuple[dict[tuple[str, int], ReconciliationExplanation], set[tuple[str, int]]]
+
+
+def _explained(code: str, year: int, explanations: Explained, reviewed: set[int],
+               extra: list[Item]) -> tuple[ReconciliationExplanation | None,
+                                           ReconciliationStatus, str]:
+    """A material difference: explained, disputed, unexplained or not yet reviewed.
+
+    An explanation withheld by the input policy (an OPEN conflict) is not a missing one: the
+    sources disagree on why, so the comparison is UNAVAILABLE (INPUT_CONFLICT) - never
+    MATERIAL_UNEXPLAINED, whatever review is recorded."""
+    selected, disputed = explanations
+    explanation = selected.get((code, year))
+    if explanation is not None:
+        return explanation, ReconciliationStatus.MATERIAL_EXPLAINED, "EXPLAINED_BY_CITED_SOURCE"
+    if (code, year) in disputed:
+        extra.append((f"Resolve the conflicting explanations for the standalone / consolidated "
+                      f"difference in {code} FY{year}", "cited explanations of equal authority "
+                      "disagree; none was selected", "The consolidation note or filing both "
+                      "explanations cite", ()))
+        return None, ReconciliationStatus.UNAVAILABLE, "INPUT_CONFLICT"
+    if year in reviewed:
+        return None, ReconciliationStatus.MATERIAL_UNEXPLAINED, "REVIEWED_NOT_EXPLAINED"
+    return None, ReconciliationStatus.MATERIAL_NOT_REVIEWED, "SOURCES_NOT_YET_CHECKED"
 
 
 def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
@@ -332,7 +357,7 @@ def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
     out: list[BasisComparison] = []
     extra: list[tuple[str, str, str, tuple[UUID, ...]]] = []
     trace = Trace()
-    unexplained = 0
+    unexplained, disputed_latest = 0, 0
     latest = ctx.latest.get(ReportingBasis.CONSOLIDATED)
     standalone_latest = ctx.latest.get(ReportingBasis.STANDALONE)
     if ctx.control is None or latest is None or standalone_latest is None:
@@ -340,7 +365,10 @@ def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
             S.UNAVAILABLE, SignalBasis.NOT_APPLICABLE, reason="ONE_BASIS_ONLY",
             explanation="standalone and consolidated statements are not both available"))
         return out, extra, rid
-    explanations = {(e.metric, e.fiscal_year): e for e in ctx.request.reconciliation_explanations}
+    disputed = conflicted(ctx, "reconciliation_explanations")
+    explanations: Explained = (
+        {(e.metric, e.fiscal_year): e for e in ctx.request.reconciliation_explanations},
+        {(str(c.key[0]), int(str(c.key[1]))) for c in disputed})
     reviewed = {r.fiscal_year for r in ctx.request.reconciliation_reviews}
     same_currency = ctx.frames[ReportingBasis.STANDALONE].currency == ctx.currency
     for k in range(RECONCILIATION_YEARS):
@@ -359,6 +387,8 @@ def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
             out.append(_comparison(ctx, code, period, cons, stand, same_currency, explanations,
                                    reviewed, extra))
             last = out[-1]
+            if k == 0 and last.reason == "INPUT_CONFLICT":
+                disputed_latest += 1
             if k == 0 and last.status == ReconciliationStatus.MATERIAL_UNEXPLAINED:
                 unexplained += 1
                 for basis, got in ((ReportingBasis.CONSOLIDATED, cons),
@@ -383,7 +413,13 @@ def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
                 period_label=p0.label, period_end=p0.period_end, trace=trace,
                 calculation=f"{unexplained} material unexplained differences",
                 explanation=f"{unexplained} material standalone / consolidated differences "
-                "remain unexplained after the recorded source review")
+                "remain unexplained after the recorded source review"
+                + (f"; {disputed_latest} more have conflicting cited explanations and are "
+                   "not counted" if disputed_latest else ""))
+        if disputed_latest and not unexplained:  # GREEN would claim every difference explained
+            ev = conflict_ev(ctx, SignalBasis.NOT_APPLICABLE, [
+                c for c in disputed if c.key[1] == p0.fiscal_year], trace,
+                " (standalone / consolidated explanation)")
     rid = ctx.emit("UNEXPLAINED_BASIS_DIFFERENCE", ev)
     return out, extra, rid
 
@@ -395,7 +431,7 @@ def _basis_value(ctx: Ctx, source: Any, period: FinancialPeriod, basis: Reportin
 
 
 def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: Got,
-                same_currency: bool, explanations: dict[tuple[str, int], ReconciliationExplanation],
+                same_currency: bool, explanations: Explained,
                 reviewed: set[int], extra: list[Item]) -> BasisComparison:
     records = tuple(sorted({i.canonical_value_id for g in (cons, stand) for i in g.inputs}
                            | {d for g in (cons, stand) for d in g.derived_from}, key=str))
@@ -408,7 +444,7 @@ def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: 
         "consolidated_value": q(cv) if cv is not None else None, "record_ids": records,
     }
     year = period.fiscal_year or (period.period_end.year if period.period_end else 0)
-    explanation = explanations.get((code, year))
+    explanation: ReconciliationExplanation | None = None
     if code in EXPECTED_DIFFERENCE and cv is not None:
         return BasisComparison(**common, absolute_difference=q(cv - (sv or D(0)))
                                if sv is not None else None, percentage_difference=None,
@@ -436,15 +472,11 @@ def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: 
     pct = q(abs(diff) * HUNDRED / abs(cv))
     if pct <= MATERIAL_BASIS_DIFFERENCE_PCT:
         status, reason = ReconciliationStatus.IMMATERIAL, "WITHIN_10_PERCENT"
-    elif explanation is not None:
-        status = (ReconciliationStatus.EXPECTED_GROUP_DIFFERENCE
-                  if explanation.kind == "GROUP_STRUCTURE"
-                  else ReconciliationStatus.MATERIAL_EXPLAINED)
-        reason = "EXPLAINED_BY_CITED_SOURCE"
-    elif year in reviewed:
-        status, reason = ReconciliationStatus.MATERIAL_UNEXPLAINED, "REVIEWED_NOT_EXPLAINED"
     else:
-        status, reason = ReconciliationStatus.MATERIAL_NOT_REVIEWED, "SOURCES_NOT_YET_CHECKED"
+        explanation, status, reason = _explained(code, year, explanations, reviewed, extra)
+        if explanation is not None and explanation.kind == "GROUP_STRUCTURE":
+            status = ReconciliationStatus.EXPECTED_GROUP_DIFFERENCE
+    if status == ReconciliationStatus.MATERIAL_NOT_REVIEWED:
         extra.append((f"Why does {code} differ between standalone and consolidated in "
                       f"{period.label}?", f"{pct} % difference, explaining sources not yet "
                       "checked", "Consolidation notes: subsidiaries, JVs, eliminations", ()))
@@ -456,8 +488,7 @@ def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: 
 
 
 def _explicit_comparisons(
-    ctx: Ctx, end: date, explanations: dict[tuple[str, int], ReconciliationExplanation],
-    reviewed: set[int], extra: list[Item],
+    ctx: Ctx, end: date, explanations: Explained, reviewed: set[int], extra: list[Item],
 ) -> list[BasisComparison]:
     """Contingent liabilities and related-party balances stated on both bases."""
     out: list[BasisComparison] = []
@@ -493,15 +524,12 @@ def _explicit_comparisons(
             continue
         diff = q(cons - stand)
         pct = q(abs(diff) * HUNDRED / cons) if cons else None
-        explanation = explanations.get((code, period.fiscal_year or end.year))
+        explanation: ReconciliationExplanation | None = None
         if pct is None or pct <= MATERIAL_BASIS_DIFFERENCE_PCT:
             status, reason = ReconciliationStatus.IMMATERIAL, "WITHIN_10_PERCENT"
-        elif explanation is not None:
-            status, reason = ReconciliationStatus.MATERIAL_EXPLAINED, "EXPLAINED_BY_CITED_SOURCE"
-        elif (period.fiscal_year or end.year) in reviewed:
-            status, reason = ReconciliationStatus.MATERIAL_UNEXPLAINED, "REVIEWED_NOT_EXPLAINED"
         else:
-            status, reason = ReconciliationStatus.MATERIAL_NOT_REVIEWED, "SOURCES_NOT_YET_CHECKED"
+            explanation, status, reason = _explained(
+                code, period.fiscal_year or end.year, explanations, reviewed, extra)
         out.append(BasisComparison(
             comparison_id=uuid5(NS, f"{ctx.dd_key}|basis|{code}|{end}"), metric=code,
             period=str(end), period_end=end, standalone_value=q(stand), consolidated_value=q(cons),

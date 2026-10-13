@@ -1162,3 +1162,490 @@ def test_period_type_vocabulary_is_upstream(report):
 
 
 _ = (replace,)
+
+
+# --- audit remediation M-1: upstream NOT_APPLICABLE is never a data gap ---------------------------
+
+GATED = "UNSUPPORTED_SECTOR_RULE"
+INDUSTRIAL_MONITORING = {"CFO_CONVERSION", "DEBTOR_DAYS", "MARGIN", "CAPEX"}
+_SECTOR_REPORTS: dict[Industry, tuple[dd.DueDiligenceDataset, FinalResearchReportDataset]] = {}
+
+
+def sector_report(industry: Industry) -> tuple[dd.DueDiligenceDataset,
+                                                FinalResearchReportDataset]:
+    if industry not in _SECTOR_REPORTS:
+        box4 = make(company(), industry)
+        box5 = build_financial_analytics(box4, generated_at=NOW)
+        d = build_due_diligence(box4, box5, request=dd.DueDiligenceRequest(
+            as_of=AS_OF, company_key=box4.company_key), generated_at=NOW)
+        _SECTOR_REPORTS[industry] = d, fr_build(
+            request=FinalReportRequest(as_of=AS_OF, company_key=box4.company_key),
+            generated_at=NOW, box4=box4, box5=box5, box13=d)
+    return _SECTOR_REPORTS[industry]
+
+
+FINANCIALS = pytest.mark.parametrize("industry", [Industry.BANK, Industry.NBFC,
+                                                  Industry.INSURANCE])
+
+
+def sector_inapplicable_metric_ids(d: dd.DueDiligenceDataset) -> set[UUID]:
+    """Box 13 metrics whose gap is a Box 5 metric typed UNSUPPORTED_SECTOR."""
+    out = set()
+    for f in (*d.earnings_quality.reported, *d.earnings_quality.derived,
+              *d.earnings_quality.adjusted, *d.financial_forensics.metrics,
+              *d.liquidity_credit_risks.metrics, *d.working_capital_risks.disclosures):
+        if f.status == "NOT_APPLICABLE" or (f.reason or "").startswith("UNSUPPORTED_SECTOR:"):
+            out.add(f.metric_id)
+    return out
+
+
+@FINANCIALS
+def test_financial_sector_inapplicable_items_never_become_data_unavailable(industry):
+    d, r = sector_report(industry)
+    assert d.sector_gate.value == "FINANCIAL"
+    gated = {s.risk_id: s for s in d.signals if s.status.value == GATED}
+    inapplicable = sector_inapplicable_metric_ids(d)
+    assert gated and inapplicable  # the fixture exercises both upstream paths
+    for c in r.claims:
+        refs = {u.record_id for u in c.upstream}
+        if c.claim_type == CT.DATA_LIMITATION:
+            assert not refs & (set(gated) | inapplicable), c.statement
+            assert "UNSUPPORTED_SECTOR" not in c.statement
+    # the upstream status survives unchanged, typed as not applicable, never as a risk or a gap
+    for entry in r.risks.risk_register:
+        if entry.risk_id in gated:
+            assert entry.status == GATED and entry.severity is None
+            claim = claims(r)[entry.claim_id]
+            assert claim.claim_type == CT.CALCULATION and claim.value is None
+            assert "NOT_APPLICABLE" in claim.limitations
+            assert claim.polarity == fr.Polarity.NEUTRAL
+    assert not set(gated) & {*r.risks.red, *r.risks.yellow}
+    assert not any(e.kind == GATED or set(e.affects) & {s.code for s in gated.values()}
+                   for e in r.risks.data_limitations)
+    rows = {row.key: row for row in r.table("RISK_REGISTER").rows}
+    for rid in gated:
+        row = rows[str(rid)]
+        assert row.kind != fr.RowKind.DATA_LIMITATION
+        assert next(c for c in row.cells if c.column == "VALUE").status == \
+            fr.CellStatus.NOT_APPLICABLE
+
+
+@FINANCIALS
+def test_inapplicable_items_are_kept_as_section_metadata(industry):
+    d, r = sector_report(industry)
+    forensic = r.section(S.ACCOUNTING_FORENSICS)
+    for code in ("NOT_APPLICABLE_CFO_TO_PAT", "NOT_APPLICABLE_INVENTORY_DAYS",
+                 "NOT_APPLICABLE_HIGH_ACCRUALS", "NOT_APPLICABLE_CONTINGENT_LIABILITY"):
+        assert code in forensic.notes
+    assert "NOT_APPLICABLE_CUMULATIVE_CFO_TO_PAT_5Y" in r.section(S.CASH_FLOW_BALANCE_SHEET).notes
+    assert "NOT_APPLICABLE_CREDIT_DEBT_TO_EQUITY" in r.section(S.CREDIT_LIQUIDITY).notes
+    # a gated rule is not a core claim of any section; the full register keeps it
+    gated = {s.risk_id for s in d.signals if s.status.value == GATED}
+    gated_claims = {e.claim_id for e in r.risks.risk_register if e.risk_id in gated}
+    for s in r.sections:
+        if s.section_id != S.APPENDICES:
+            assert not gated_claims & set(s.claim_ids)
+    assert gated_claims <= set(r.table("RISK_REGISTER").claim_ids)
+    # industrial forensic models stay NOT_APPLICABLE cells (Altman / Beneish / Piotroski)
+    assert all(c.status == fr.CellStatus.NOT_APPLICABLE
+               for row in r.table("FORENSIC_MODELS").rows for c in row.cells)
+
+
+@FINANCIALS
+def test_unavailable_but_applicable_metric_stays_a_data_limitation(industry):
+    _, r = sector_report(industry)
+    missing = [c for c in r.claims if c.claim_type == CT.DATA_LIMITATION
+               and "INPUT_MISSING" in c.statement]
+    assert missing  # e.g. exceptional items not reported: a real gap, still surfaced
+    assert all("DATA_UNAVAILABLE" in c.limitations for c in missing)
+
+
+@FINANCIALS
+def test_no_diligence_or_data_quality_item_from_inapplicability(industry):
+    d, r = sector_report(industry)
+    gated = {s.risk_id for s in d.signals if s.status.value == GATED}
+    assert len(r.risks.open_diligence) == len(d.open_diligence_items)
+    assert not any(set(o.related_risk_ids) & gated for o in r.risks.open_diligence)
+    dq = [e for e in r.risks.data_limitations if e.layer != "BOX13" or e.entry_id in
+          {i.item_id for i in d.data_quality_summary.items}]
+    assert len(dq) == len(d.data_quality_summary.items)
+    assert set(r.due_diligence_status.open_diligence_item_ids) == {
+        i.item_id for i in d.open_diligence_items if i.importance.value in ("HIGH", "MEDIUM")}
+
+
+@FINANCIALS
+def test_executive_summary_states_no_gap_for_an_inapplicable_topic(industry):
+    _, r = sector_report(industry)
+    points = {p.kind: p for p in r.executive_summary.points}
+    order = points[fr.SummaryKind.ORDER_BOOK]
+    assert order.status == "NOT_APPLICABLE" and order.reason.startswith("NOT_APPLICABLE")
+    assert not order.claim_ids
+    assert "ORDER_BOOK" not in r.section(S.EXECUTIVE_SUMMARY).status_reason
+    by_id = claims(r)
+    for i in (*r.executive_summary.limitation_claim_ids,
+              *r.due_diligence_status.unavailable_information_claim_ids):
+        assert "UNSUPPORTED_SECTOR" not in by_id[i].statement
+        assert GATED not in by_id[i].limitations
+
+
+@FINANCIALS
+def test_industrial_monitoring_items_are_not_applicable(industry):
+    _, r = sector_report(industry)
+    topics = {m.topic for m in r.monitoring}
+    assert not topics & INDUSTRIAL_MONITORING
+    assert "NEXT_RESULTS" in topics
+    notes = set(r.section(S.MONITORING).notes)
+    assert {f"NOT_APPLICABLE_{t}" for t in INDUSTRIAL_MONITORING} <= notes
+
+
+@FINANCIALS
+def test_wholly_inapplicable_order_book_section(industry):
+    _, r = sector_report(industry)
+    order = r.section(S.ORDER_BOOK)
+    assert order.status == SectionStatus.NOT_APPLICABLE
+    assert order.status_reason.startswith("NOT_APPLICABLE")
+    c = order.completeness
+    assert c.missing == () and c.available == () and c.not_applicable == c.required
+
+
+def test_non_financial_industrial_keeps_every_rule_and_section():
+    d, r = sector_report(Industry.GENERAL)
+    assert d.sector_gate.value == "NON_FINANCIAL"
+    assert not any(s.status.value == GATED for s in d.signals)
+    assert not any(n.startswith("NOT_APPLICABLE_") for s in r.sections
+                   for n in s.notes if s.section_id != S.ORDER_BOOK)
+    assert INDUSTRIAL_MONITORING <= {m.topic for m in r.monitoring}
+    models = r.table("FORENSIC_MODELS")
+    assert any(c.status == fr.CellStatus.AVAILABLE for row in models.rows for c in row.cells)
+    assert r.section(S.ACCOUNTING_FORENSICS).status == SectionStatus.COMPLETE
+
+
+def test_epc_order_book_stays_applicable(report, d13):
+    assert d13.sector_gate.value == "NON_FINANCIAL" and report.order_book.applicable
+    order = report.section(S.ORDER_BOOK)
+    assert order.status == SectionStatus.COMPLETE and order.completeness.not_applicable == ()
+    point = next(p for p in report.executive_summary.points
+                 if p.kind == fr.SummaryKind.ORDER_BOOK)
+    assert point.status == "AVAILABLE"
+    assert not any(n.startswith("NOT_APPLICABLE_") for s in report.sections for n in s.notes)
+
+
+def _status_of(draft: Any, section: SectionId = S.ACCOUNTING_FORENSICS,
+               missing: tuple[fr.InputFamily, ...] = ()) -> Any:
+    from types import SimpleNamespace
+
+    from stock_research_ai.application.final_report_composer import REQUIRED, _status
+    families = {f: fr.FamilyCheck(family=f, status=fr.FamilyStatus.MISSING if f in missing
+                                  else fr.FamilyStatus.AVAILABLE) for f in fr.InputFamily}
+    assert set(missing) <= set(REQUIRED[section])
+    return _status(SimpleNamespace(drafts={section: draft}), section,  # type: ignore[arg-type]
+                   families)
+
+
+def test_wholly_inapplicable_section_is_not_applicable_not_partial():
+    from stock_research_ai.application.report_sections import Draft
+    status, reason, completeness = _status_of(Draft(inapplicable=["ALTMAN_Z", "INVENTORY"]))
+    assert status == SectionStatus.NOT_APPLICABLE and reason.startswith("NOT_APPLICABLE")
+    assert completeness.missing == () and completeness.available == ()
+    assert completeness.not_applicable == completeness.required
+
+
+def test_mixed_section_counts_only_applicable_requirements():
+    from stock_research_ai.application.report_sections import Draft
+    uid = uuid4()
+    mixed = Draft(claims=[uid], inapplicable=["INVENTORY_DAYS"])
+    status, _, completeness = _status_of(mixed)
+    assert status == SectionStatus.COMPLETE and completeness.missing == ()
+    # an inapplicable required family leaves the denominator; a missing applicable one stays
+    gated = Draft(claims=[uid], not_applicable={fr.InputFamily.RATINGS})
+    status, _, completeness = _status_of(gated, S.CREDIT_LIQUIDITY,
+                                         missing=(fr.InputFamily.RATINGS,))
+    assert status == SectionStatus.COMPLETE
+    assert completeness.not_applicable == (fr.InputFamily.RATINGS,)
+    assert completeness.missing == ()
+    status, reason, completeness = _status_of(Draft(claims=[uid]), S.CREDIT_LIQUIDITY,
+                                              missing=(fr.InputFamily.RATINGS,))
+    assert status == SectionStatus.PARTIAL and completeness.missing == (fr.InputFamily.RATINGS,)
+
+
+def test_inapplicability_needs_the_typed_box5_status_not_reason_text():
+    from types import SimpleNamespace
+
+    from stock_research_ai.application.report_sections import Ctx
+    from stock_research_ai.domain.financial_analytics import CalculationStatus as CS
+    d, _ = sector_report(Industry.BANK)
+    f = next(m for m in d.earnings_quality.derived
+             if (m.reason or "").startswith("UNSUPPORTED_SECTOR:") and m.record_ids)
+    box5 = build_financial_analytics(make(company(), Industry.BANK), generated_at=NOW)
+    metrics = {m.metric_id: m for m in (*box5.cash_flow_quality, *box5.working_capital,
+                                         *box5.accruals, *box5.profitability,
+                                         *box5.building_blocks, *box5.leverage)}
+    assert any(metrics[r].status == CS.UNSUPPORTED_SECTOR for r in f.record_ids if r in metrics)
+    fake = SimpleNamespace(res=SimpleNamespace(metrics=metrics))
+    assert Ctx.inapplicable(fake, f)  # type: ignore[arg-type]
+    # the same reason text over a Box 5 record that is merely missing is still a gap
+    missing = {r: m.model_copy(update={"status": CS.INPUT_MISSING}) for r, m in metrics.items()}
+    assert not Ctx.inapplicable(SimpleNamespace(res=SimpleNamespace(metrics=missing)), f)
+    assert not Ctx.inapplicable(fake, f.model_copy(update={"reason": "INPUT_MISSING: x"}))
+
+
+def test_not_applicable_summary_point_cites_nothing():
+    fr.SummaryPoint(kind=fr.SummaryKind.ORDER_BOOK, claim_ids=(), status="NOT_APPLICABLE",
+                    reason="NOT_APPLICABLE: bank")
+    with pytest.raises(ValidationError):
+        fr.SummaryPoint(kind=fr.SummaryKind.ORDER_BOOK, claim_ids=(uuid4(),),
+                        status="NOT_APPLICABLE", reason="NOT_APPLICABLE: bank")
+    with pytest.raises(ValidationError):
+        fr.SummaryPoint(kind=fr.SummaryKind.ORDER_BOOK, claim_ids=(), status="NOT_APPLICABLE")
+
+
+# --- audit remediation M-2: risk evidence reaches the core event timeline -------------------------
+
+KMP_DESC = "Change in Key Managerial Personnel"
+
+
+def kmp_rows(n: int) -> list[dict[str, Any]]:
+    """n always-material, lower-priority events, newer than every penalty below."""
+    return [tm.announcement((date(2026, 1, 1) + timedelta(days=i)).strftime(
+        "%d-%b-%Y 10:00:00"), KMP_DESC, f"{KMP_DESC} - appointment of Company Secretary {i}",
+        seq=str(5000 + i)) for i in range(n)]
+
+
+def penalty_row(day: date, seq: int, crore: int | None = None) -> dict[str, Any]:
+    amount = f" of Rs. {crore} crore" if crore is not None else ""
+    return tm.announcement(day.strftime("%d-%b-%Y 10:00:00"), "Updates",
+                           f"Imposition of fine by NSE{amount}", seq=str(seq))
+
+
+def reference_revenue(crore: int) -> Any:
+    from stock_research_ai.domain.market_intelligence import (
+        Authority,
+        Citation,
+        FinancialBasis,
+        Provider,
+        ReferenceRevenue,
+    )
+    return ReferenceRevenue(fiscal_year=2026, value_crore=Decimal(crore),
+                            basis=FinancialBasis.CONSOLIDATED,
+                            citation=Citation(provider=Provider.CALLER,
+                                              authority=Authority.EXPLICIT_INPUT,
+                                              reference="Box 4 FY26 consolidated revenue"))
+
+
+def event_report(st: Stack, rows: list[dict[str, Any]], *, cap: int = 10,
+                 revenue: int | None = None, **kw13: Any) -> tuple[Any, dd.DueDiligenceDataset,
+                                                                   FinalResearchReportDataset]:
+    extra = {"reference_revenue": reference_revenue(revenue)} if revenue else {}
+    ledger = tm.build([*tm.base_payloads(), tm.nse_announcements(*rows)], **extra)
+    d = box13(st, box12=ledger, **kw13)
+    return ledger, d, compose(st, d, box12=ledger, limits=ReportLimits(max_core_events=cap))
+
+
+def core_rows(r: FinalResearchReportDataset) -> dict[str, fr.TableRow]:
+    return {row.key: row for row in r.table("MATERIAL_EVENTS").rows}
+
+
+def signal_of(d: dd.DueDiligenceDataset, code: str) -> Any:
+    return next(s for s in d.signals if s.code == code)
+
+
+def penalty_events(ledger: Any) -> list[Any]:
+    return [e for e in ledger.events if e.event_type.value == "EXCHANGE_PENALTY"]
+
+
+@pytest.fixture(scope="module")
+def yellow_linked(stack):
+    return event_report(stack, [*kmp_rows(30), penalty_row(date(2024, 6, 3), 7001)])
+
+
+def test_yellow_risk_evidence_survives_cap_pressure(yellow_linked):
+    ledger, d, r = yellow_linked
+    (penalty,) = penalty_events(ledger)
+    s = signal_of(d, "EXCHANGE_PENALTIES")
+    assert s.severity == dd.Severity.YELLOW and penalty.event_id in s.record_ids
+    # Box 13 did not grade the event itself: only the aggregate risk cites it
+    assert not any(e.severity for e in d.exchange_event_risks.entries)
+    core = core_rows(r)
+    assert len(core) == 10 and str(penalty.event_id) in core  # 30 newer KMP events lose
+    claim = claims(r)[core[str(penalty.event_id)].claim_id]
+    assert claim.risk_ids == (s.risk_id,)  # traceable to the risk that cites it
+    assert claim.polarity == fr.Polarity.NEUTRAL and claim.claim_type == CT.FACT
+    assert "YELLOW" not in claim.statement and "RED" not in claim.statement
+    assert sum(1 for k in core if k != str(penalty.event_id)) == 9
+    assert "CORE_RISK_EVIDENCE_EVENTS_1_OF_1" in r.section(S.CORPORATE_EVENTS).notes
+
+
+def test_red_risk_evidence_survives_cap_pressure(stack):
+    ledger, d, r = event_report(stack, [*kmp_rows(45), penalty_row(date(2024, 6, 3), 7001,
+                                                                   crore=50)], cap=40)
+    (penalty,) = penalty_events(ledger)
+    s = signal_of(d, "EXCHANGE_PENALTIES")
+    assert s.severity == dd.Severity.RED and penalty.event_id in s.record_ids
+    core = core_rows(r)
+    assert len(core) == 40 and str(penalty.event_id) in core
+    assert claims(r)[core[str(penalty.event_id)].claim_id].risk_ids == (s.risk_id,)
+    # the full ledger still lists every event, the penalty with the same claim
+    ledger_rows = {row.key: row for row in r.table("EVENT_LEDGER").rows}
+    assert len(ledger_rows) == len(ledger.events)
+    assert ledger_rows[str(penalty.event_id)].claim_id == core[str(penalty.event_id)].claim_id
+
+
+def test_one_event_cited_by_a_red_and_a_yellow_risk_is_one_row(stack):
+    # stated 50 crore: >= 1 % of PAT (aggregate RED) and 2.5 % of revenue (event YELLOW)
+    ledger, d, r = event_report(stack, [*kmp_rows(20), penalty_row(date(2024, 6, 3), 7001,
+                                                                   crore=50)], revenue=2000)
+    (penalty,) = penalty_events(ledger)
+    aggregate = signal_of(d, "EXCHANGE_PENALTIES")
+    single = signal_of(d, "MATERIAL_REGULATORY_ACTION")
+    assert aggregate.severity == dd.Severity.RED and single.severity == dd.Severity.YELLOW
+    assert penalty.event_id in aggregate.record_ids and penalty.event_id in single.record_ids
+    rows = [row for row in r.table("MATERIAL_EVENTS").rows if row.key == str(penalty.event_id)]
+    assert len(rows) == 1
+    claim = claims(r)[rows[0].claim_id]
+    assert set(claim.risk_ids) == {aggregate.risk_id, single.risk_id}  # both kept
+    assert claim.polarity == fr.Polarity.NEUTRAL
+    # the summary still lists each risk once; event selection adds no risk statement
+    summary = r.executive_summary.risk_claim_ids
+    assert len(summary) == len(set(summary))
+    assert claim.claim_id not in summary
+
+
+def test_more_risk_evidence_than_the_cap_is_bounded_and_surfaced(stack):
+    days = [date(2024, 1, 1) + timedelta(days=7 * i) for i in range(14)]
+    ledger, d, r = event_report(stack, [*kmp_rows(5), *(penalty_row(day, 7000 + i)
+                                                        for i, day in enumerate(days))])
+    penalties = penalty_events(ledger)
+    s = signal_of(d, "EXCHANGE_PENALTIES")
+    assert len(penalties) == 14 and all(e.event_id in s.record_ids for e in penalties)
+    core = core_rows(r)
+    assert len(core) == 10  # the cap holds
+    newest = sorted(penalties, key=lambda e: (e.event_date, str(e.event_id)), reverse=True)
+    assert set(core) == {str(e.event_id) for e in newest[:10]}
+    limits = [claims(r)[i] for i in r.section(S.CORPORATE_EVENTS).limitation_claim_ids]
+    limit = next(c for c in limits if c.topic == "CORE_EVENT_SELECTION")
+    assert "CORE_EVENT_LIMIT_REACHED" in limit.limitations
+    assert {u.record_id for u in limit.upstream} == {e.event_id for e in newest[10:]}
+    assert len(r.table("EVENT_LEDGER").rows) == len(ledger.events)
+
+
+def test_unlinked_events_follow_the_ordinary_rules(yellow_linked, stack):
+    _, _, r = yellow_linked
+    by_id = claims(r)
+    kmp = [row for row in r.table("MATERIAL_EVENTS").rows if row.label == "KMP_CHANGE"]
+    assert kmp and all(by_id[row.claim_id].risk_ids == () for row in kmp)
+    # the newest KMP events win the remaining slots (type priority, then date)
+    dates = sorted((by_id[row.claim_id].period_end for row in kmp), reverse=True)
+    assert dates[0] == date(2026, 1, 30)
+
+
+def test_core_selection_ignores_insertion_order(stack, yellow_linked):
+    _, _, first = yellow_linked
+    rows = [*kmp_rows(30), penalty_row(date(2024, 6, 3), 7001)]
+    _, _, reversed_ = event_report(stack, rows[::-1])
+    assert list(core_rows(first)) == list(core_rows(reversed_))
+
+
+@pytest.mark.parametrize("name,desc,body", [
+    ("favourable", "Outcome of arbitration",
+     "Arbitral award in favour of the Company for Rs. 500 crore"),
+    ("unknown", "Litigation", "Claim of Rs. 500 crore filed against the Company before the "
+     "arbitral tribunal"),
+    ("award", "Bagging/Receiving of orders/contracts",
+     "Letter of Award from NMDC Limited worth Rs. 500 crore"),
+])
+def test_neutral_or_favourable_events_are_never_described_adversely(stack, name, desc, body):
+    row = tm.announcement("01-Sep-2026 10:00:00", desc, body, seq="8101")
+    kw: dict[str, Any] = {}
+    ledger = tm.build([*tm.base_payloads(), tm.nse_announcements(row)],
+                      reference_revenue=reference_revenue(5000))
+    if name == "favourable":
+        kw["event_assessments"] = (dd.ExchangeEventAssessment(
+            event_id=ledger.events[0].event_id, direction="FAVOURABLE", source=SRC),)
+    _, d, r = event_report(stack, [row], revenue=5000, **kw)
+    (event,) = [e for e in ledger.events]
+    assert not any(e.severity for e in d.exchange_event_risks.entries)
+    assert not any(event.event_id in s.record_ids for s in d.signals
+                   if s.severity in (dd.Severity.RED, dd.Severity.YELLOW))
+    core = core_rows(r)
+    assert str(event.event_id) in core  # material context, selected by the neutral rules
+    claim = claims(r)[core[str(event.event_id)].claim_id]
+    assert claim.risk_ids == () and claim.polarity == fr.Polarity.NEUTRAL
+    for word in ("adverse", "risk", "penalt", "RED", "YELLOW"):
+        assert word not in claim.statement
+    assert not {*r.risks.red, *r.risks.yellow}.intersection(
+        e.risk_id for e in r.risks.risk_register if e.code in (
+            "MATERIAL_LITIGATION", "MATERIAL_REGULATORY_ACTION"))
+
+
+# --- the ranking itself: pure, total, order-independent -------------------------------------------
+
+
+def fake_event(n: int, kind: str, day: date, ratio: str | None = None,
+               status: str = "ACTIVE") -> Any:
+    from types import SimpleNamespace
+    m = None if ratio is None else SimpleNamespace(status=SimpleNamespace(value="AVAILABLE"),
+                                                   ratio_pct=Decimal(ratio))
+    return SimpleNamespace(event_id=UUID(int=n), event_type=SimpleNamespace(value=kind),
+                           event_date=day, status=SimpleNamespace(value=status), materiality=m)
+
+
+def fake_signal(n: int, severity: dd.Severity) -> Any:
+    from types import SimpleNamespace
+    return SimpleNamespace(risk_id=UUID(int=10_000 + n), severity=severity, code=f"R{n}")
+
+
+def selection_case() -> tuple[list[Any], dict[UUID, list[Any]], set[UUID]]:
+    base = date(2025, 1, 1)
+    events = [fake_event(i, "AUDITOR_CHANGE", base + timedelta(days=i)) for i in range(60)]
+    events += [fake_event(100, "EXCHANGE_PENALTY", date(2023, 1, 1)),  # RED evidence, oldest
+               fake_event(101, "EXCHANGE_PENALTY", date(2023, 2, 1)),  # YELLOW evidence
+               fake_event(102, "LITIGATION", date(2023, 3, 1), ratio="9"),  # graded alone
+               fake_event(103, "DIVIDEND", date(2026, 1, 1), ratio="0.1"),  # immaterial
+               fake_event(104, "OTHER_MATERIAL_EVENT", date(2026, 2, 1))]  # no rule
+    red, yellow = fake_signal(1, dd.Severity.RED), fake_signal(2, dd.Severity.YELLOW)
+    linked = {UUID(int=100): [yellow, red], UUID(int=101): [yellow]}
+    return events, linked, {UUID(int=102)}
+
+
+def test_ranking_puts_red_then_yellow_evidence_then_graded_then_type_rules():
+    from stock_research_ai.application.report_sections import select_core_events
+    events, linked, graded = selection_case()
+    core, dropped = select_core_events(events, linked, graded, 40)
+    assert [e.event_id.int for e in core[:3]] == [100, 101, 102]
+    assert len(core) == 40 and dropped == []
+    assert {e.event_id.int for e in core[3:]} == set(range(59, 59 - 37, -1))  # newest first
+    assert not {103, 104} & {e.event_id.int for e in core}
+
+
+def test_ranking_is_independent_of_order_duplicates_and_hash_seed():
+    import random
+
+    from stock_research_ai.application.report_sections import select_core_events
+    events, linked, graded = selection_case()
+    expected = [e.event_id for e in select_core_events(events, linked, graded, 40)[0]]
+    shuffled = events[:]
+    random.Random(20261013).shuffle(shuffled)
+    for variant in (events[::-1], shuffled, events + events[:30], events[:30] + events):
+        assert [e.event_id for e in select_core_events(variant, linked, graded, 40)[0]] == \
+            expected
+    reordered = {k: v[::-1] for k, v in reversed(list(linked.items()))}
+    assert [e.event_id for e in select_core_events(events, reordered, graded, 40)[0]] == \
+        expected
+
+
+def test_ranking_over_the_cap_keeps_the_most_material_evidence():
+    from stock_research_ai.application.report_sections import select_core_events
+    red = fake_signal(1, dd.Severity.RED)
+    base = date(2024, 1, 1)
+    events = [fake_event(i, "EXCHANGE_PENALTY", base + timedelta(days=i),
+                         ratio=str(i % 7) if i % 2 else None) for i in range(50)]
+    linked = {e.event_id: [red] for e in events}
+    core, dropped = select_core_events(events, linked, set(), 40)
+    assert len(core) == 40 and len(dropped) == 10
+    assert {e.event_id for e in core} | {e.event_id for e in dropped} == \
+        {e.event_id for e in events}
+    sized = [e for e in core if e.materiality is not None]
+    assert len(sized) == 25  # every event with an upstream materiality ranks first
+    ratios = [e.materiality.ratio_pct for e in sized]
+    assert ratios == sorted(ratios, reverse=True)
+    assert all(e.materiality is None for e in dropped)

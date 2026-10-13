@@ -99,7 +99,7 @@ S = SectionId
 CT = ClaimType
 NA = ClaimBasis.NOT_APPLICABLE
 
-#: deterministic core-event selection (selection rules report-selection/1)
+#: deterministic core-event selection (selection rules report-selection/2)
 ALWAYS_MATERIAL_EVENTS = (
     "ORDER_CANCELLATION", "FUND_RAISE", "ACQUISITION", "DIVESTMENT", "JV", "AUDITOR_CHANGE",
     "CREDIT_RATING", "BUYBACK", "BONUS", "SPLIT", "RIGHTS", "KMP_CHANGE", "EXCHANGE_PENALTY",
@@ -144,6 +144,8 @@ LIMITATION_TEXT = {
     "PROVIDER_UNAVAILABLE": "Provider unavailable",
     "LAYER_NOT_SUPPLIED": "Data unavailable (upstream layer not supplied)",
     "APPENDIX_LIMIT_REACHED": "Appendix limit reached; the upstream ledger holds more entries",
+    "CORE_EVENT_LIMIT_REACHED": "Core event limit reached; the excluded events stay in the "
+                                "event ledger appendix",
 }
 
 
@@ -167,6 +169,8 @@ class Draft:
     reason: str | None = None
     missing: set[InputFamily] = field(default_factory=set)
     not_applicable: set[InputFamily] = field(default_factory=set)
+    #: upstream items that do not apply to this company (never counted as missing)
+    inapplicable: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -246,6 +250,26 @@ class Ctx:
             self.add(section, cid)
         return cid
 
+    def not_applicable(self, section: SectionId | None, code: str) -> None:
+        """An upstream item that does not apply here: section metadata, never a gap."""
+        if section is None:
+            return
+        d = self.drafts[section]
+        d.notes.append(f"NOT_APPLICABLE_{code}"[:80])
+        if code not in d.inapplicable:
+            d.inapplicable.append(code)
+
+    def inapplicable(self, f: ForensicMetric) -> bool:
+        """Box 13 NOT_APPLICABLE, or a gap Box 13 traces (reason code UNSUPPORTED_SECTOR) to
+        a Box 5 metric typed UNSUPPORTED_SECTOR: the metric does not apply to this sector."""
+        if f.status == "NOT_APPLICABLE":
+            return True
+        if f.status != "UNAVAILABLE" or (f.reason or "").split(":", 1)[0] != \
+                CalculationStatus.UNSUPPORTED_SECTOR.value:
+            return False
+        return any(m.status == CalculationStatus.UNSUPPORTED_SECTOR
+                   for m in (self.res.metrics.get(r) for r in f.record_ids) if m is not None)
+
     def dataset(self, layer: Layer) -> UUID | None:
         return self.book.dataset_sources.get(layer)
 
@@ -296,9 +320,8 @@ class Ctx:
     def forensic(self, f: ForensicMetric, section: SectionId | None = None) -> UUID | None:
         """A Box 13 forensic / credit metric: the Box 5 claim when Box 5 computed it."""
         if f.status != "AVAILABLE":
-            if f.status == "NOT_APPLICABLE":
-                if section is not None:  # kept visible as not applicable, never as missing
-                    self.drafts[section].notes.append(f"NOT_APPLICABLE_{f.code}"[:80])
+            if self.inapplicable(f):  # kept visible as not applicable, never as missing
+                self.not_applicable(section, f.code)
                 return None
             cid = self.limit(None, f.code, "DATA_UNAVAILABLE",
                              f"{f.label} ({f.period or 'no period'}): {f.reason or 'unavailable'}",
@@ -397,8 +420,9 @@ def build_signals(ctx: Ctx) -> None:
         elif s.severity in (Severity.YELLOW, Severity.RED):
             polarity = Polarity.NEGATIVE
         ups = (up(Layer.BOX13, "SIGNAL", s.risk_id),)
+        gated = s.status == SignalStatus.UNSUPPORTED_SECTOR_RULE
         if s.status in (SignalStatus.EVALUATED, SignalStatus.INFORMATIONAL,
-                        SignalStatus.NOT_APPLICABLE):
+                        SignalStatus.NOT_APPLICABLE) or gated:
             grade = s.severity.value if s.severity else s.status.value
             sources = ctx.signal_sources(s) if s.value is not None else ()
             value = s.value if sources else None
@@ -419,7 +443,7 @@ def build_signals(ctx: Ctx) -> None:
                 risk_ids=(s.risk_id,), confidence=s.confidence, polarity=polarity,
                 source_text=s.explanation,
                 limitations=(("NOT_APPLICABLE",) if s.status == SignalStatus.NOT_APPLICABLE
-                             else ()) + extra)
+                             else ("NOT_APPLICABLE", s.status.value) if gated else ()) + extra)
         else:
             code = "SOURCE_CONFLICT_UNRESOLVED" if s.reason == "INPUT_CONFLICT" else \
                 (s.reason or s.status.value)
@@ -443,7 +467,10 @@ def build_signals(ctx: Ctx) -> None:
             input_claim_ids=tuple(inputs), mitigating_risk_ids=s.mitigating_signal_ids,
             likelihood=m.likelihood.value if m else None, impact=m.impact.value if m else None))
         for section in CATEGORY_SECTIONS.get(s.category.value, ()):
-            ctx.add(section, cid)
+            if gated:  # the rule does not apply to this sector: section metadata only
+                ctx.not_applicable(section, s.code)
+            else:
+                ctx.add(section, cid)
 
 
 def signal_inputs(ctx: Ctx, s: RiskSignal) -> list[UUID]:
@@ -1383,6 +1410,72 @@ def guidance_tracker(ctx: Ctx, b8: ManagementIntelligenceDataset) -> list[Guidan
 # --- 10. corporate events -------------------------------------------------------------------------
 
 
+#: core-event tiers: Box 12 events a RED / YELLOW Box 13 company risk cites as its evidence,
+#: events Box 13 graded one by one, then the event-type rules (selection only, never severity)
+TIER_RED_EVIDENCE, TIER_YELLOW_EVIDENCE, TIER_GRADED, TIER_TYPE = 0, 1, 2, 3
+
+
+def risk_evidence(d13: DueDiligenceDataset, event_ids: set[UUID]) -> dict[UUID, list[RiskSignal]]:
+    """Box 12 event ID -> the RED / YELLOW company risks citing it by typed record / evidence
+    ID (an aggregate risk such as EXCHANGE_PENALTIES cites every event behind its count)."""
+    out: dict[UUID, list[RiskSignal]] = {}
+    for s in d13.signals:
+        if s.signal_class != SignalClass.COMPANY_RISK or s.severity not in (Severity.RED,
+                                                                            Severity.YELLOW):
+            continue
+        for x in dict.fromkeys((*s.record_ids, *s.evidence_ids)):
+            if x in event_ids:
+                out.setdefault(x, []).append(s)
+    return out
+
+
+def select_core_events(ledger: Iterable[Any], linked: dict[UUID, list[RiskSignal]],
+                       graded: set[UUID], cap: int) -> tuple[list[Any], list[Any]]:
+    """(core events, risk-evidence / graded events left out by the cap). Ranking is total
+    and independent of input order: tier, then upstream materiality (risk evidence) or the
+    event-type priority, then the newest date, then the event ID; one row per event ID."""
+    priority = {t: i for i, t in enumerate(ALWAYS_MATERIAL_EVENTS + SIZE_GATED_EVENTS)}
+
+    def tier(e: Any) -> int | None:
+        severities = {s.severity for s in linked.get(e.event_id, ())}
+        if Severity.RED in severities:
+            return TIER_RED_EVIDENCE
+        if Severity.YELLOW in severities:
+            return TIER_YELLOW_EVIDENCE
+        if e.event_id in graded:
+            return TIER_GRADED
+        if e.status.value != "ACTIVE":
+            return None
+        if e.event_type.value in ALWAYS_MATERIAL_EVENTS:
+            return TIER_TYPE
+        m = e.materiality
+        if e.event_type.value in SIZE_GATED_EVENTS and m is not None and \
+                m.status.value == "AVAILABLE" and m.ratio_pct is not None and \
+                m.ratio_pct >= MATERIAL_EVENT_PCT:
+            return TIER_TYPE
+        return None
+
+    def key(item: tuple[int, Any]) -> tuple[int, int, Decimal, int, str]:
+        t, e = item
+        if t == TIER_TYPE:
+            return t, priority.get(e.event_type.value, 99), Decimal(0), \
+                -e.event_date.toordinal(), str(e.event_id)
+        m = e.materiality
+        ratio = m.ratio_pct if m is not None and m.status.value == "AVAILABLE" and \
+            m.ratio_pct is not None else None
+        return t, 0 if ratio is not None else 1, -(ratio or Decimal(0)), \
+            -e.event_date.toordinal(), str(e.event_id)
+
+    unique: dict[UUID, Any] = {}
+    for e in ledger:
+        unique.setdefault(e.event_id, e)
+    tiers = ((tier(e), e) for e in unique.values())
+    ranked = sorted(((t, e) for t, e in tiers if t is not None), key=key)
+    core = [e for _, e in ranked[:cap]]
+    dropped = [e for t, e in ranked[cap:] if t < TIER_TYPE]
+    return core, dropped
+
+
 def events(ctx: Ctx) -> None:
     sec = S.CORPORATE_EVENTS
     b12 = ctx.box12
@@ -1394,32 +1487,18 @@ def events(ctx: Ctx) -> None:
     for p in b12.payloads:
         if p.status.value != "OK":
             ctx.res.payload(p.payload_id)  # a blocked / failed source stays in the register
-    graded = {e.event_id: e for e in ctx.box13.exchange_event_risks.entries
+    graded = {e.event_id for e in ctx.box13.exchange_event_risks.entries
               if e.severity in (Severity.YELLOW, Severity.RED)}
     ledger = sorted((e for e in b12.events if e.event_date <= ctx.as_of),
                     key=lambda e: (e.event_date, e.event_type.value, str(e.event_id)),
                     reverse=True)
-    priority = {t: i for i, t in enumerate(ALWAYS_MATERIAL_EVENTS + SIZE_GATED_EVENTS)}
-
-    def material(e: Any) -> bool:
-        if e.status.value != "ACTIVE":
-            return False
-        if e.event_type.value in ALWAYS_MATERIAL_EVENTS:
-            return True
-        m = e.materiality
-        return e.event_type.value in SIZE_GATED_EVENTS and m is not None and \
-            m.status.value == "AVAILABLE" and m.ratio_pct is not None and \
-            m.ratio_pct >= MATERIAL_EVENT_PCT
-
-    must = [e for e in ledger if e.event_id in graded]
-    rest = sorted((e for e in ledger if e.event_id not in graded and material(e)),
-                  key=lambda e: (priority.get(e.event_type.value, 99), -e.event_date.toordinal(),
-                                 str(e.event_id)))
-    core = must + rest[: max(0, ctx.limits.max_core_events - len(must))]
+    linked = risk_evidence(ctx.box13, {e.event_id for e in ledger})
+    cap = ctx.limits.max_core_events
+    core, dropped = select_core_events(ledger, linked, graded, cap)
     core_ids = {e.event_id for e in core}
 
     def event_row(e: Any) -> TableRow:
-        claim, ratio = event_claims(ctx, e)
+        claim, ratio = event_claims(ctx, e, tuple(s.risk_id for s in linked.get(e.event_id, ())))
         return row(str(e.event_id), e.event_type.value, RowKind.FACT, [
             text("DATE", str(e.event_date), origin="REPORT"), text("TITLE", e.title),
             cell("VALUE", ctx.book, claim, note="NOT_STATED"),
@@ -1433,17 +1512,28 @@ def events(ctx: Ctx) -> None:
         e.event_id)), reverse=True)]
     ctx_table(ctx, sec, "MATERIAL_EVENTS", "Material corporate / exchange events (selected "
               "deterministically)", NA, columns, core_rows,
-              footnotes=("Selection: every event Box 13 graded YELLOW / RED, then always-"
-                         "material event types, then size-gated types >= 1 % of reference "
-                         f"revenue; at most {ctx.limits.max_core_events} beyond graded ones.",))
-    cap = ctx.limits.max_appendix_rows
-    appendix_rows = [event_row(e) for e in ledger[:cap]]
+              footnotes=("Selection: events a RED Box 13 company risk cites as evidence, then "
+                         "those a YELLOW one cites, then events Box 13 graded YELLOW / RED, then "
+                         "always-material event types, then size-gated types >= 1 % of reference "
+                         f"revenue; at most {cap} events. Citation by a risk sets selection "
+                         "priority only; it is never a severity of the event itself.",))
+    if dropped:
+        ctx.limit(sec, "CORE_EVENT_SELECTION", "CORE_EVENT_LIMIT_REACHED",
+                  f"{len(dropped)} events cited by a RED / YELLOW risk or graded by Box 13 "
+                  f"exceed the {cap}-event core table",
+                  upstream=tuple(up(Layer.BOX12, "EVENT", e.event_id) for e in dropped[:500]))
+    cap_rows = ctx.limits.max_appendix_rows
+    appendix_rows = [event_row(e) for e in ledger[:cap_rows]]
     ctx_table(ctx, sec, "EVENT_LEDGER", "Full exchange event ledger (newest first)", NA,
               columns, appendix_rows, appendix=True, upstream=len(ledger))
     ctx.drafts[sec].notes.append(f"CORE_EVENTS_{len(core_ids)}_OF_{len(ledger)}"[:80])
+    cited = sum(1 for e in core if e.event_id in linked)
+    ctx.drafts[sec].notes.append(
+        f"CORE_RISK_EVIDENCE_EVENTS_{cited}_OF_{len(linked)}"[:80])
 
 
-def event_claims(ctx: Ctx, e: Any) -> tuple[UUID, UUID | None]:
+def event_claims(ctx: Ctx, e: Any, risk_ids: tuple[UUID, ...] = ()) -> tuple[UUID,
+                                                                              UUID | None]:
     sources = ctx.res.event_sources(e)
     if not sources:
         sources = (ctx.book.dataset_sources[Layer.BOX12],)
@@ -1456,7 +1546,8 @@ def event_claims(ctx: Ctx, e: Any) -> tuple[UUID, UUID | None]:
         basis=NA, upstream=(up(Layer.BOX12, "EVENT", e.event_id),), sources=sources,
         value=value if any(ctx.book.get_source_type(s) != SourceType.UPSTREAM_DATASET
                            for s in sources) else None, unit="INR CRORE" if value is not None
-        else None, period=str(e.event_date), period_end=e.event_date, source_text=e.title)
+        else None, period=str(e.event_date), period_end=e.event_date, source_text=e.title,
+        risk_ids=risk_ids)  # the risks citing it: traceability, never the event's severity
     ratio = None
     m = e.materiality
     if m is not None and m.status.value == "AVAILABLE" and m.ratio_pct is not None and \
@@ -2178,13 +2269,15 @@ def risks(ctx: Ctx) -> RiskPresentation:
     yellow = [i for i in d13.red_flags if d13.signal(i).severity == Severity.YELLOW]
     for i in (*red, *yellow, *d13.positive_controls):
         ctx.add(sec, ctx.signal_claims[i])
-    rows = [row(str(r.risk_id), r.code, RowKind.CALCULATION if r.status == "EVALUATED" else
-                RowKind.DATA_LIMITATION, [
+    gated = SignalStatus.UNSUPPORTED_SECTOR_RULE.value  # not applicable: never a data gap
+    rows = [row(str(r.risk_id), r.code, RowKind.CALCULATION if r.status in ("EVALUATED", gated)
+                else RowKind.DATA_LIMITATION, [
                     text("KIND", r.kind.value, origin="REPORT"),
                     text("STATUS", r.status, origin="REPORT"),
                     text("SEVERITY", r.severity, origin="REPORT"),
                     text("BASIS", ctx.book.get(r.claim_id).basis.value, origin="REPORT"),
-                    cell("VALUE", ctx.book, r.claim_id, note=r.reason or "NO_VALUE")],
+                    cell("VALUE", ctx.book, r.claim_id, note=r.reason or "NO_VALUE",
+                         not_applicable=r.status == gated)],
                 claim_id=r.claim_id) for r in ctx.risk_entries]
     ctx_table(ctx, sec, "RISK_REGISTER", "Risk register (every Box 13 signal)", NA, [
         col("KIND", "Kind", ColumnKind.TEXT), col("STATUS", "Status", ColumnKind.TEXT),
@@ -2476,6 +2569,9 @@ def monitoring(ctx: Ctx, tracker: list[GuidanceTrackerEntry], view: OrderBookVie
         if years:
             m = ctx.b5.get((code, ctx.analytical.value, "FY", years[-1])) or ctx.b5.get(
                 (code, ctx.analytical.value, "POINT_IN_TIME", years[-1]))
+            if m is not None and m.status == CalculationStatus.UNSUPPORTED_SECTOR:
+                ctx.not_applicable(S.MONITORING, topic)  # Box 5: not this sector's metric
+                continue
             claim = ctx.metric(m) if m else None
             if claim is not None:
                 latest.append(claim)

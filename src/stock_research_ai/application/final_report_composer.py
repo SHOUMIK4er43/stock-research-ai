@@ -536,6 +536,16 @@ def _status(ctx: Ctx, section: SectionId, families: dict[InputFamily, FamilyChec
         SectionStatus, str, SectionCompleteness]:
     draft = ctx.drafts[section]
     required = REQUIRED[section]
+    if draft.status is None and draft.inapplicable and not (
+            draft.claims or draft.limits or draft.tables or draft.charts):
+        # every upstream item of the section is typed not applicable to this company
+        draft.status = SectionStatus.NOT_APPLICABLE
+        draft.reason = (f"NOT_APPLICABLE: all {len(draft.inapplicable)} upstream items are "
+                        "not applicable to this company")
+    if draft.status == SectionStatus.NOT_APPLICABLE:  # nothing required, nothing missing
+        return SectionStatus.NOT_APPLICABLE, draft.reason or "NOT_APPLICABLE", \
+            SectionCompleteness(required=required, available=(), missing=(),
+                                not_applicable=required)
     na = tuple(f for f in required if families[f].status == FamilyStatus.NOT_APPLICABLE
                or f in draft.not_applicable)
     missing = tuple(f for f in required if f not in na and (
@@ -543,8 +553,6 @@ def _status(ctx: Ctx, section: SectionId, families: dict[InputFamily, FamilyChec
     available = tuple(f for f in required if f not in na and f not in missing)
     completeness = SectionCompleteness(required=required, available=available, missing=missing,
                                        not_applicable=na)
-    if draft.status == SectionStatus.NOT_APPLICABLE:
-        return SectionStatus.NOT_APPLICABLE, draft.reason or "NOT_APPLICABLE", completeness
     if not available:
         return SectionStatus.UNAVAILABLE, "required inputs missing: " + ", ".join(
             f.value for f in missing), completeness
@@ -624,13 +632,24 @@ def _summary(ctx: Ctx, risk_view: RiskPresentation, monitor: list[Any], orders: 
             SummaryKind.ORDER_BOOK: 2, SummaryKind.FORECAST_RANGE: 2,
             SummaryKind.VALUATION_RANGE: 2}
 
-    def point(kind: SummaryKind, ids: list[UUID], reason: str) -> None:
+    def point(kind: SummaryKind, ids: list[UUID], reason: str,
+              not_applicable: str | None = None) -> None:
         ids = list(dict.fromkeys(ids))
         if kind in caps:
             ids = ids[:caps[kind]]
+        if not ids and not_applicable is not None:  # does not apply: never a data gap
+            points.append(SummaryPoint(kind=kind, claim_ids=(), status="NOT_APPLICABLE",
+                                       reason=f"NOT_APPLICABLE: {not_applicable}"))
+            return
         points.append(SummaryPoint(kind=kind, claim_ids=tuple(ids),
                                    status="AVAILABLE" if ids else "UNAVAILABLE",
                                    reason=None if ids else reason))
+
+    def inapplicable(section: SectionId, topics: tuple[str, ...]) -> str | None:
+        """Every candidate topic is typed not applicable upstream for this company."""
+        if all(t in ctx.drafts[section].inapplicable for t in topics):
+            return "every candidate metric is not applicable to this company"
+        return None
 
     point(SummaryKind.WHAT_THE_COMPANY_DOES, _pick(
         ctx, S.COMPANY_OVERVIEW, ("BUSINESS_BUSINESS_DESCRIPTION", "CLASSIFICATION",
@@ -648,10 +667,10 @@ def _summary(ctx: Ctx, risk_view: RiskPresentation, monitor: list[Any], orders: 
                 limit=1, latest_only=True), "no annual history")
     point(SummaryKind.STRENGTHS, [ctx.signal_claims[i] for i in risk_view.positive_controls],
           "no evidence-backed positive control upstream")
-    point(SummaryKind.BALANCE_SHEET_LIQUIDITY, _pick(
-        ctx, S.CREDIT_LIQUIDITY, ("CREDIT_GROSS_DEBT", "CREDIT_NET_DEBT", "CREDIT_CFO",
-                                  "CREDIT_DEBT_TO_EQUITY", "CREDIT_INTEREST_COVERAGE"),
-        limit=2), "no balance-sheet metric available")
+    credit = ("CREDIT_GROSS_DEBT", "CREDIT_NET_DEBT", "CREDIT_CFO", "CREDIT_DEBT_TO_EQUITY",
+              "CREDIT_INTEREST_COVERAGE")
+    point(SummaryKind.BALANCE_SHEET_LIQUIDITY, _pick(ctx, S.CREDIT_LIQUIDITY, credit, limit=2),
+          "no balance-sheet metric available", inapplicable(S.CREDIT_LIQUIDITY, credit))
     management = _pick(ctx, S.MANAGEMENT_GOVERNANCE, ("GUIDANCE_ACCURACY",), limit=1)
     if not management:
         management = [i for i in ctx.drafts[S.MANAGEMENT_GOVERNANCE].limits
@@ -659,7 +678,8 @@ def _summary(ctx: Ctx, risk_view: RiskPresentation, monitor: list[Any], orders: 
     point(SummaryKind.MANAGEMENT_GUIDANCE, management, "no Box 8 / Box 13 guidance record")
     order_ids = list(orders.reported_order_book_claim_ids[:1]) + [
         b.count_claim_id for b in orders.buckets if b.count_claim_id is not None][:2]
-    point(SummaryKind.ORDER_BOOK, order_ids, "order book not applicable or unavailable")
+    point(SummaryKind.ORDER_BOOK, order_ids, "order book unavailable",
+          None if orders.applicable else orders.applicability)
     first = sorted({ctx.book.get(i).period_end for i in ctx.drafts[S.FORECASTS].claims
                     if ctx.book.get(i).topic == "FORECAST_REVENUE"
                     and ctx.book.get(i).period_end is not None}, key=str)

@@ -42,7 +42,7 @@ FINAL_REPORT_SCHEMA: Literal["FINAL_RESEARCH_REPORT_DATASET_V1"] = (
     "FINAL_RESEARCH_REPORT_DATASET_V1"
 )
 FINAL_REPORT_ENGINE_VERSION = "final-report/1"
-SELECTION_RULES_VERSION = "report-selection/1"
+SELECTION_RULES_VERSION = "report-selection/2"
 
 MAX_CLAIMS = 25_000
 MAX_TABLES = 600
@@ -545,7 +545,8 @@ class SummaryPoint(BaseModel):
     model_config = _model()
     kind: SummaryKind
     claim_ids: tuple[UUID, ...]  # existing claims only; the summary writes no claim of its own
-    status: Literal["AVAILABLE", "UNAVAILABLE"]
+    #: NOT_APPLICABLE: upstream says the topic does not apply to this company (never a gap)
+    status: Literal["AVAILABLE", "UNAVAILABLE", "NOT_APPLICABLE"]
     reason: Label | None = None
     monitoring_item_ids: tuple[UUID, ...] = ()
 
@@ -553,8 +554,10 @@ class SummaryPoint(BaseModel):
     def referenced(self) -> Self:
         if self.status == "AVAILABLE" and not (self.claim_ids or self.monitoring_item_ids):
             raise ValueError("An available summary point references existing claims")
-        if self.status == "UNAVAILABLE" and self.reason is None:
+        if self.status != "AVAILABLE" and self.reason is None:
             raise ValueError("An unavailable summary point says why")
+        if self.status == "NOT_APPLICABLE" and (self.claim_ids or self.monitoring_item_ids):
+            raise ValueError("A not-applicable summary point cites no claim")
         return self
 
 

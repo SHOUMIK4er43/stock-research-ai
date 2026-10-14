@@ -188,6 +188,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     full_research_cmd.add_argument("--source-url", required=True)
     full_research_cmd.add_argument("--output", type=Path, required=True)
+    from stock_research_ai.adapters.rendering import cli as final_report_cli
+
+    final_report_cli.add_parser(commands)
+    final_report_cli.add_stage_parser(commands)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
@@ -301,6 +305,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(f"warning [{warning.stage}] {warning.code}: {warning.message}", file=sys.stderr)
         print(f"Full research exported: {args.output}")
         raise SystemExit(0)
+    elif args.command == "detailed-research-stage":
+        try:
+            exit_code = final_report_cli.run_stage(args)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        raise SystemExit(exit_code)
+    elif args.command == "detailed-research":
+        try:
+            exit_code = final_report_cli.run(args, settings)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        raise SystemExit(exit_code)
     elif args.command == "evaluate-valuation":
         from stock_research_ai.bootstrap import evaluate_valuation
         from stock_research_ai.domain.valuation import ValuationRequest

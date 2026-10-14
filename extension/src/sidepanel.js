@@ -11,6 +11,7 @@ import { States, deriveState, stageLabel, failureLabel } from "./state.js";
 import { storageActionsForJobUpdate, interpretJobFetchError, isReportForCurrentPage } from "./job_flow.js";
 import { clear } from "./report/dom.js";
 import { SummaryStatus, parseSummaryResult, renderSummaryResult, summaryErrorLabel } from "./summary.js";
+import { finalReportFilename, finalReportLabel, latestFinalReport } from "./final_report.js";
 import { findSection } from "./report/view_model.js";
 import {
   groupSections,
@@ -112,7 +113,22 @@ const els = {
   summaryLoading: document.getElementById("summary-loading"),
   summaryError: document.getElementById("summary-error"),
   summaryResult: document.getElementById("summary-result"),
+  finalReportButton: document.getElementById("final-report-button"),
+  finalReportStatus: document.getElementById("final-report-status"),
+  finalReportDownloads: document.getElementById("final-report-downloads"),
+  finalReportError: document.getElementById("final-report-error"),
+  finalReportFormats: {
+    PDF: document.getElementById("final-report-pdf"),
+    HTML: document.getElementById("final-report-html"),
+    MARKDOWN: document.getElementById("final-report-markdown"),
+    JSON: document.getElementById("final-report-json"),
+  },
 };
+
+// Box 15 Detailed Research dossier: user-initiated lookup only (boot makes no extra
+// request), bound to the page URL it was looked up for, like SUMMARY_V1.
+let finalReport = { sourceUrl: null, report: null };
+let finalReportSeq = 0;
 
 els.startCommand.textContent = START_COMMAND;
 els.pairingStartCommand.textContent = START_COMMAND;
@@ -159,6 +175,7 @@ function renderState(state, data = {}) {
     }
     els.viewLastResearchButton.hidden = !data.lastReportForThisPage;
     renderSummaryView();
+    renderFinalReportView();
   }
 
   if (state === States.RUNNING) {
@@ -235,6 +252,7 @@ async function boot() {
   await refreshPage(isCurrent);
   if (!isCurrent()) return;
   resetSummaryIfPageChanged();
+  resetFinalReportIfPageChanged();
 
   const facts = {
     serviceReachable: false,
@@ -434,6 +452,87 @@ async function onResearchClick() {
         },
       },
     });
+  }
+}
+
+function resetFinalReportIfPageChanged() {
+  if (finalReport.sourceUrl !== null && finalReport.sourceUrl !== page.sourceUrl) {
+    finalReport = { sourceUrl: null, report: null };
+    finalReportSeq += 1;
+    els.finalReportError.hidden = true;
+    els.finalReportStatus.hidden = true;
+  }
+}
+
+function renderFinalReportView() {
+  const shown = finalReport.sourceUrl !== null && finalReport.sourceUrl === page.sourceUrl;
+  const report = shown ? finalReport.report : null;
+  els.finalReportDownloads.hidden = !report;
+  for (const [format, button] of Object.entries(els.finalReportFormats)) {
+    button.disabled = !report || !report.formats.includes(format);
+  }
+}
+
+async function onFinalReportClick() {
+  if (!page.pageIdentity) return;
+  const requestedUrl = page.sourceUrl;
+  const requestId = ++finalReportSeq;
+  els.finalReportError.hidden = true;
+  els.finalReportStatus.textContent = "Looking for a Detailed Research dossier…";
+  els.finalReportStatus.hidden = false;
+  const client = new ApiClient(await storage.getServiceBaseUrl());
+  const token = await storage.getToken();
+  let report = null;
+  try {
+    const payload = await client.listFinalReports(token, page.pageIdentity.page_identifier.toUpperCase());
+    report = latestFinalReport(payload);
+  } catch (error) {
+    if (requestId !== finalReportSeq || page.sourceUrl !== requestedUrl) return;
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
+    if (!(error instanceof ApiError && error.status === 422)) {
+      els.finalReportStatus.hidden = true;
+      els.finalReportError.textContent =
+        error instanceof ApiError ? "Could not look up the dossier." : "The local service is not reachable.";
+      els.finalReportError.hidden = false;
+      return;
+    }
+  }
+  if (requestId !== finalReportSeq || page.sourceUrl !== requestedUrl) return;
+  finalReport = { sourceUrl: requestedUrl, report };
+  els.finalReportStatus.textContent = finalReportLabel(report);
+  renderFinalReportView();
+}
+
+async function downloadFinalReport(format) {
+  const report = finalReport.sourceUrl === page.sourceUrl ? finalReport.report : null;
+  if (!report || !report.formats.includes(format)) return;
+  els.finalReportError.hidden = true;
+  const client = new ApiClient(await storage.getServiceBaseUrl());
+  const token = await storage.getToken();
+  try {
+    const { blob } = await client.getFinalReportFile(token, report.artifactId, format);
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = finalReportFilename(report, format);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
+    els.finalReportError.textContent =
+      error instanceof ApiError ? "Could not retrieve this dossier file." : "The local service is not reachable.";
+    els.finalReportError.hidden = false;
   }
 }
 
@@ -689,6 +788,10 @@ async function downloadArtifact(artifactKind) {
 
 els.researchButton.addEventListener("click", onResearchClick);
 els.generateSummaryButton.addEventListener("click", onGenerateSummaryClick);
+els.finalReportButton.addEventListener("click", onFinalReportClick);
+for (const [format, button] of Object.entries(els.finalReportFormats)) {
+  button.addEventListener("click", () => downloadFinalReport(format));
+}
 els.viewLastResearchButton.addEventListener("click", async () => {
   const report = await storage.getLastReport();
   if (report && report.reportId) {

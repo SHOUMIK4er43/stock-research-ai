@@ -35,8 +35,10 @@ from stock_research_ai.adapters.http.browser_schemas import (
     PairingCompleteResponse,
     VersionResponse,
 )
+from stock_research_ai.adapters.http.final_reports import register_final_report_routes
 from stock_research_ai.adapters.http.rate_limit import RateLimited, SummaryRateLimiter
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
+from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
 from stock_research_ai.adapters.screener.source import validate_url
 from stock_research_ai.application.browser_jobs import (
@@ -280,6 +282,7 @@ def create_app(
     report_repository: ReportRepository | None = None,
     summary_model_factory: Callable[[], SummaryModel] | None = None,
     summary_rate_limiter: SummaryRateLimiter | None = None,
+    final_report_store: FileFinalReportStore | None = None,
 ) -> FastAPI:
     """Create an HTTP adapter, owning resources only when none are supplied.
 
@@ -646,5 +649,10 @@ def create_app(
         report = await _resolve_report(report_id)
         content = render_artifact(report, artifact_kind)
         return Response(content=content, media_type=media_type_for(artifact_kind))
+
+    # --- Box 15: stored final research reports (Detailed Research; protected) -------
+    reports_store = final_report_store or FileFinalReportStore(
+        final_report_root(runtime_settings))
+    register_final_report_routes(app, lambda: reports_store, protected)
 
     return app

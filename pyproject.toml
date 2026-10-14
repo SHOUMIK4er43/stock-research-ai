@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "pypdf>=6.19.0",
     "python-dotenv>=1.2.3",
+    "reportlab>=5.0.1",
     "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.52.4",
 ]
@@ -36,6 +37,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.6",
+    "types-reportlab>=5.0.0.20261008",
 ]
 
 [tool.pytest.ini_options]

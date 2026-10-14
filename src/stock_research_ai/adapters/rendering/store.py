@@ -53,6 +53,7 @@ MANIFEST = "manifest.json"
 SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9&_.-]{0,19}$")
 COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 AS_OF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+PAGE = re.compile(r"^[A-Z0-9_-]{1,40}$")
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_LISTED = 50
 MAX_FILE_BYTES = {
@@ -229,6 +230,32 @@ class FileFinalReportStore:
     def verified_formats(self, manifest: ReportManifest) -> set[RenderFormat]:
         return {f.format for f in manifest.files if self.read_file(manifest, f.format)
                 is not None}
+
+    def list_for_page(self, page: str) -> list[ReportManifest]:
+        """Runs whose acquired primary Screener page is `page` (the manifest records the page
+        key taken from the acquired dataset, never from a caller); newest as_of first, at
+        most MAX_LISTED. `page` must already be a validated page key."""
+        if not PAGE.fullmatch(page):
+            raise UnsafePathError("Not a Screener company page key")
+        root = self._root(create=False)
+        if not root.is_dir():
+            return []
+        found: list[ReportManifest] = []
+        for company in sorted(os.scandir(root), key=lambda e: e.name):
+            if not company.is_dir(follow_symlinks=False) or not COMPONENT.fullmatch(
+                    company.name):
+                continue
+            for day in os.scandir(company.path):
+                if not day.is_dir(follow_symlinks=False) or not AS_OF.fullmatch(day.name):
+                    continue
+                for run in os.scandir(day.path):
+                    if run.is_dir(follow_symlinks=False):
+                        manifest = self._manifest_at(Path(run.path))
+                        if manifest is not None and manifest.screener_page == page:
+                            found.append(manifest)
+        found.sort(key=lambda m: (m.as_of, m.box14_generated_at, str(m.artifact_id)),
+                   reverse=True)
+        return found[:MAX_LISTED]
 
     def list_for_symbol(self, symbol: str) -> list[ReportManifest]:
         """Newest as_of first; at most MAX_LISTED runs."""

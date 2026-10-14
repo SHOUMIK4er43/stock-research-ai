@@ -66,8 +66,12 @@ async def test_http_company_round_trip(engine: ResearchEngine, tmp_path: Path) -
         ("/v1/final-reports", "GET"),
         ("/v1/final-reports/{artifact_id}", "GET"),
         ("/v1/final-reports/{artifact_id}/files/{fmt}", "GET"),
+        # Box 15 remediation: Detailed Research generation from the extension (paired only)
+        ("/v1/final-reports", "POST"),
+        ("/v1/final-report-jobs/{job_id}", "GET"),
+        ("/v1/final-reports/{artifact_id}/view", "GET"),
     }
-    assert len(app.routes) == 14
+    assert len(app.routes) == 17
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"

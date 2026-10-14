@@ -493,3 +493,41 @@ details summary {
   line-height: 1.45;
   white-space: pre-wrap;
 }
+
+/* Final three-view navigation: Summary / Detailed Research / Negatives / Risks. */
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 12px;
+  border-bottom: 1px solid currentColor;
+}
+
+.view-tabs button {
+  border-radius: 6px 6px 0 0;
+}
+
+.view-tabs button[aria-selected="true"] {
+  font-weight: 700;
+}
+
+.final-report-block h3 {
+  margin: 14px 0 4px;
+  font-size: 1em;
+}
+
+.final-report-items {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.4;
+}
+
+.final-report-items li {
+  margin-bottom: 6px;
+}
+
+.risk-red h3 { color: #b42318; }
+.risk-yellow h3 { color: #a15c07; }
+
+.legacy {
+  margin-top: 16px;
+}

@@ -38,6 +38,7 @@ from stock_research_ai.adapters.http.browser_schemas import (
 from stock_research_ai.adapters.http.final_reports import register_final_report_routes
 from stock_research_ai.adapters.http.rate_limit import RateLimited, SummaryRateLimiter
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
+from stock_research_ai.adapters.rendering.generate import LiveFinalReportGenerator
 from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
 from stock_research_ai.adapters.screener.source import validate_url
@@ -49,6 +50,7 @@ from stock_research_ai.application.browser_jobs import (
     UnsupportedResearchPlanError,
 )
 from stock_research_ai.application.engine import Capabilities, ResearchEngine
+from stock_research_ai.application.final_report_jobs import FinalReportJobManager
 from stock_research_ai.application.ports import ReportRepository
 from stock_research_ai.application.summary import project_summary_input
 from stock_research_ai.application.summary_generation import SummaryModel, generate_summary
@@ -283,6 +285,7 @@ def create_app(
     summary_model_factory: Callable[[], SummaryModel] | None = None,
     summary_rate_limiter: SummaryRateLimiter | None = None,
     final_report_store: FileFinalReportStore | None = None,
+    final_report_jobs: FinalReportJobManager | None = None,
 ) -> FastAPI:
     """Create an HTTP adapter, owning resources only when none are supplied.
 
@@ -299,6 +302,12 @@ def create_app(
     runtime_settings = settings if settings is not None else Settings()
     active_pairing_store = pairing_store or PairingStore(runtime_settings.browser_auth_path)
     summary_limiter = summary_rate_limiter or SummaryRateLimiter()
+    # Box 15 Detailed Research: the report store and the generation jobs (the live
+    # generator acquires through the existing adapters; tests inject their own manager)
+    reports_store = final_report_store or FileFinalReportStore(
+        final_report_root(runtime_settings))
+    final_jobs = final_report_jobs or FinalReportJobManager(LiveFinalReportGenerator(
+        reports_store, runtime_settings.database_path.parent / "final-report-work"))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -316,6 +325,8 @@ def create_app(
             try:
                 yield
             finally:
+                if final_report_jobs is None:
+                    await final_jobs.aclose()
                 if engine is None:
                     active_engine = None
                 if job_manager is None and owned is not None:
@@ -650,9 +661,7 @@ def create_app(
         content = render_artifact(report, artifact_kind)
         return Response(content=content, media_type=media_type_for(artifact_kind))
 
-    # --- Box 15: stored final research reports (Detailed Research; protected) -------
-    reports_store = final_report_store or FileFinalReportStore(
-        final_report_root(runtime_settings))
-    register_final_report_routes(app, lambda: reports_store, protected)
+    # --- Box 15: Detailed Research generation + stored final reports (protected) ------
+    register_final_report_routes(app, lambda: reports_store, protected, lambda: final_jobs)
 
     return app

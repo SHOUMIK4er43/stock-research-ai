@@ -17,7 +17,10 @@
  *   GET  /v1/reports/{report_id}
  *   GET  /v1/reports/{report_id}/artifacts/{artifact_kind}
  *   POST /v1/summaries
- *   GET  /v1/final-reports?symbol={page identifier}          (Box 15, Detailed Research)
+ *   POST /v1/final-reports                                    (Detailed Research: generate)
+ *   GET  /v1/final-report-jobs/{job_id}
+ *   GET  /v1/final-reports?page={Screener page key}           (the acquired page's reports)
+ *   GET  /v1/final-reports/{artifact_id}/view
  *   GET  /v1/final-reports/{artifact_id}/files/{format}
  */
 
@@ -163,12 +166,33 @@ export class ApiClient {
   }
 
   /**
-   * Box 15: locally generated Detailed Research dossiers whose VERIFIED NSE symbol (Box 14
-   * metadata, server-side) equals this page identifier. The identifier is only a lookup
-   * key; the extension never treats it as a company identity.
+   * Detailed Research reports whose ACQUIRED primary Screener page is this page. The key is
+   * the opaque Screener path segment - never sent or treated as an exchange symbol.
    */
-  listFinalReports(token, pageIdentifier) {
-    return this._request(`/v1/final-reports?symbol=${encodeURIComponent(pageIdentifier)}`, { token });
+  listFinalReportsForPage(token, pageKey) {
+    if (typeof pageKey !== "string" || !/^[A-Z0-9_-]{1,40}$/.test(pageKey)) {
+      return Promise.reject(new ApiError("INVALID_FINAL_REPORT_PAGE", "Unknown company page", 0));
+    }
+    return this._request(`/v1/final-reports?page=${encodeURIComponent(pageKey)}`, { token });
+  }
+
+  /** Start (or join) Detailed Research generation for this Screener page. */
+  createFinalReport(token, sourceUrl) {
+    return this._request("/v1/final-reports", { method: "POST", token, body: { source_url: sourceUrl } });
+  }
+
+  getFinalReportJob(token, jobId) {
+    if (typeof jobId !== "string" || !ARTIFACT_ID_PATTERN.test(jobId)) {
+      return Promise.reject(new ApiError("INVALID_FINAL_REPORT_JOB", "Unknown job", 0));
+    }
+    return this._request(`/v1/final-report-jobs/${jobId}`, { token });
+  }
+
+  getFinalReportView(token, artifactId) {
+    if (typeof artifactId !== "string" || !ARTIFACT_ID_PATTERN.test(artifactId)) {
+      return Promise.reject(new ApiError("INVALID_FINAL_REPORT_ID", "Unknown report", 0));
+    }
+    return this._request(`/v1/final-reports/${artifactId}/view`, { token });
   }
 
   /**

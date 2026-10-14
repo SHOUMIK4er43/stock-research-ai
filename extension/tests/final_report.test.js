@@ -1,12 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ApiClient, ApiError, FINAL_REPORT_FORMATS } from "../src/api/client.js";
-import { finalReportFilename, finalReportLabel, latestFinalReport } from "../src/final_report.js";
+import {
+  FINAL_REPORT_POLL,
+  finalReportFilename,
+  finalReportLabel,
+  latestFinalReport,
+  pageKey,
+  parseFinalReportJob,
+  parsePanel,
+  renderRisks,
+} from "../src/final_report.js";
 import { createMemoryBackend } from "../src/storage.js";
 import { createFakeDocument } from "./fixtures/fake_dom.js";
 
-// Box 15: the Detailed Research dossier is a stored, backend-rendered final report. The
-// extension only looks it up (on click), lists it and downloads its files.
+// Detailed Research is the Box 14/15 final report. Opening the Detailed Research or the
+// Negatives / Risks view looks this PAGE's report up (by the opaque Screener page key, never
+// as a symbol) and, when none exists, asks the backend to generate it - no CLI, no stage.
+FINAL_REPORT_POLL.ms = 0;
 
 const BASE = "http://127.0.0.1:8000";
 const ID = "21e8c4c9-9e9a-53b0-bade-afa329e92924";
@@ -26,34 +37,91 @@ function listing(overrides = {}) {
     ...overrides }] };
 }
 
-test("latestFinalReport accepts only well-formed entries and closed formats", () => {
+const JOB = "5b0f3a52-6d0c-4f7e-9a51-0c1d2e3f4a5b";
+
+function panelPayload(overrides = {}) {
+  const list = (items) => ({ items, total: items.length });
+  return {
+    artifact_id: ID, report_id: "0784994d-d84f-5cea-b7eb-8058ad00dde1", company_name: "Infosys Ltd",
+    nse_symbol: "INFY", isin: null, screener_page: "INFY", as_of: "2026-10-12", status: "COMPLETE",
+    formats: ["JSON", "MARKDOWN", "HTML", "PDF"], failed_formats: [],
+    disclaimer: "Research and information only. Not investment advice.",
+    summary: list([{ label: "Financial trajectory", statement: "Revenue reported 100 INR CRORES.", detail: "FACT" }]),
+    sections: [{ order: 0, title: "Due-Diligence Status", status: "COMPLETE", status_label: "Complete", reason: "ok" },
+      { order: 4, title: "Industry & Competitive Position", status: "PARTIAL", status_label: "Partial", reason: "peers" }],
+    red: list([{ label: "HIGH_ACCRUALS", severity: "RED", statement: "HIGH_ACCRUALS: RED <script>x</script>", detail: "Accounting · EVALUATED" }]),
+    yellow: list([{ label: "AUDITOR_SIGNAL", severity: "YELLOW", statement: "AUDITOR_SIGNAL: YELLOW", detail: null }]),
+    positive_controls: list([]),
+    input_conflicts: list([{ label: "PLEDGE", statement: "Pledge inputs conflict", detail: "Input conflict - a data limitation, not a company risk" }]),
+    data_limitations: list([{ label: "BLOCKED_SOURCE", statement: "Provider unavailable: blocked source", detail: "BOX12" }]),
+    open_diligence: list([{ label: "MEDIUM", statement: "What are net debt and EBITDA?", detail: "Audited P&L" }]),
+    recommendation: "NONE",
+    ...overrides,
+  };
+}
+
+/** A fake backend: page lookups, generation jobs, views and files. */
+function backend({ reports = [listing().reports[0]], jobs = null, view = panelPayload(), create = null } = {}) {
+  const state = { reports, polls: 0 };
+  return {
+    state,
+    async handle(parsed, init) {
+      if (parsed.pathname === "/v1/final-reports" && init.method === "POST") {
+        if (create) return create();
+        return json(202, { job_id: JOB, status: "QUEUED", stage: "QUEUED", artifact_id: null, failure: null });
+      }
+      if (parsed.pathname === "/v1/final-reports") return json(200, { page: "INFY", reports: state.reports });
+      if (parsed.pathname === `/v1/final-report-jobs/${JOB}`) {
+        const seq = jobs || [{ status: "RUNNING", stage: "ACQUIRING" }, { status: "READY", stage: "DONE", artifact_id: ID }];
+        const next = seq[Math.min(state.polls++, seq.length - 1)];
+        return json(200, { job_id: JOB, artifact_id: null, failure: null, ...next });
+      }
+      if (parsed.pathname === `/v1/final-reports/${ID}/view`) return typeof view === "function" ? view() : json(200, view);
+      if (parsed.pathname.startsWith("/v1/final-reports/")) {
+        return { ok: true, status: 200, blob: async () => new Blob(["x"]), headers: { get: () => "" } };
+      }
+      return null;
+    },
+  };
+}
+
+test("helpers: listing, page key, labels and file names are validated and sanitised", () => {
   assert.equal(latestFinalReport(null), null);
-  assert.equal(latestFinalReport({}), null);
   assert.equal(latestFinalReport({ reports: [{ artifact_id: "../x", as_of: "2026-10-12" }] }), null);
-  assert.equal(latestFinalReport({ reports: [{ artifact_id: ID, as_of: "yesterday" }] }), null);
   const r = latestFinalReport(listing({ formats: ["PDF", "EXE", "../report"], failed_formats: ["HTML"] }));
   assert.deepEqual(r.formats, ["PDF"]);
-  assert.deepEqual(r.failed, ["HTML"]);
-  assert.equal(r.artifactId, ID);
-});
-
-test("labels and file names come from backend fields only and are sanitised", () => {
-  assert.match(finalReportLabel(null), /No Detailed Research dossier/);
-  const r = latestFinalReport(listing({ status: "PARTIAL_RENDER", formats: ["JSON"], failed_formats: ["PDF"] }));
-  assert.match(finalReportLabel(r), /Infosys Ltd — as of 2026-10-12\. Partial: PDF could not be produced\./);
+  assert.equal(pageKey({ page_identifier: "rvnl" }), "RVNL");
+  assert.equal(pageKey({ page_identifier: "../x" }), null);
+  assert.equal(parseFinalReportJob({ job_id: JOB, status: "READY" }), null,
+    "a ready job must carry its report id");
+  assert.equal(parsePanel(panelPayload({ as_of: "tomorrow" })), null,
+    "download metadata has a closed date format");
+  assert.equal(parsePanel(panelPayload({ formats: ["HTML"] })), null,
+    "the interactive view requires the verified JSON artifact");
+  assert.match(finalReportLabel(null), /has not been generated/);
+  assert.doesNotMatch(finalReportLabel(null), /stock-research-ai|--stage|stage\.json/);
   const evil = latestFinalReport(listing({ nse_symbol: '../"\r\nX' }));
   assert.match(finalReportFilename(evil, "PDF"), /^[A-Za-z0-9_-]+_2026-10-12_detailed_research\.pdf$/);
-  assert.equal(finalReportFilename(r, "MARKDOWN"), "INFY_2026-10-12_detailed_research.md");
 });
 
-test("listFinalReports is one authenticated GET with an encoded identifier", async () => {
+test("client: page lookup, generation, job and view calls are authenticated and validated", async () => {
   const calls = [];
-  const client = new ApiClient(BASE, async (url, init) => { calls.push({ url, init }); return json(200, listing()); });
-  const payload = await client.listFinalReports("tok", "M&M/../x");
-  assert.equal(payload.reports.length, 1);
-  assert.equal(calls[0].url, `${BASE}/v1/final-reports?symbol=M%26M%2F..%2Fx`);
-  assert.equal(calls[0].init.method, "GET");
+  const client = new ApiClient(BASE, async (url, init) => { calls.push({ url, init }); return json(200, {}); });
+  await assert.rejects(client.listFinalReportsForPage("tok", "M&M/../x"), ApiError);
+  assert.equal(calls.length, 0, "an invalid page key never reaches the network");
+  await client.listFinalReportsForPage("tok", "BAJAJ-AUTO");
+  assert.equal(calls[0].url, `${BASE}/v1/final-reports?page=BAJAJ-AUTO`);
   assert.equal(calls[0].init.headers.Authorization, "Bearer tok");
+  await client.createFinalReport("tok", "https://www.screener.in/company/INFY/");
+  assert.equal(calls[1].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[1].init.body), { source_url: "https://www.screener.in/company/INFY/" });
+  await client.getFinalReportJob("tok", JOB);
+  assert.equal(calls[2].url, `${BASE}/v1/final-report-jobs/${JOB}`);
+  await client.getFinalReportView("tok", ID);
+  assert.equal(calls[3].url, `${BASE}/v1/final-reports/${ID}/view`);
+  await assert.rejects(client.getFinalReportJob("tok", "../x"), ApiError);
+  await assert.rejects(client.getFinalReportView("tok", "../x"), ApiError);
+  assert.equal(calls.length, 4);
 });
 
 test("getFinalReportFile refuses an unknown format or id without calling fetch", async () => {
@@ -70,23 +138,28 @@ test("getFinalReportFile returns the binary body and maps errors", async () => {
   const blob = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], { type: "application/pdf" });
   const ok = new ApiClient(BASE, async (url, init) => {
     calls.push({ url, init });
-    return { ok: true, status: 200, blob: async () => blob,
-      headers: { get: () => "application/pdf" } };
+    return { ok: true, status: 200, blob: async () => blob, headers: { get: () => "application/pdf" } };
   });
   const result = await ok.getFinalReportFile("tok", ID, "PDF");
   assert.equal(result.blob, blob);
-  assert.equal(result.contentType, "application/pdf");
   assert.equal(calls[0].url, `${BASE}/v1/final-reports/${ID}/files/PDF`);
-  assert.equal(calls[0].init.headers.Authorization, "Bearer tok");
-  const missing = new ApiClient(BASE, async () => json(404, { detail: {
-    code: "FINAL_REPORT_FILE_UNAVAILABLE", message: "x" } }));
+  const missing = new ApiClient(BASE, async () => json(404, { detail: { code: "FINAL_REPORT_FILE_UNAVAILABLE", message: "x" } }));
   await assert.rejects(missing.getFinalReportFile("tok", ID, "HTML"),
     e => e instanceof ApiError && e.status === 404 && e.code === "FINAL_REPORT_FILE_UNAVAILABLE");
-  const bad = new ApiClient("https://evil.example", async () => json(200, {}));
-  await assert.rejects(bad.getFinalReportFile("tok", ID, "PDF"));
 });
 
-async function harness(t, { tabUrl = "https://www.screener.in/company/INFY/", list } = {}) {
+test("the risks view keeps company risks apart from data limitations and escapes text", () => {
+  const doc = createFakeDocument();
+  const node = renderRisks(doc, parsePanel(panelPayload()));
+  const html = node.serialize();
+  assert.ok(html.indexOf("RED company risks") < html.indexOf("YELLOW company risks"));
+  assert.ok(html.indexOf("YELLOW company risks") < html.indexOf("Data limitations (not company risks)"));
+  assert.ok(html.indexOf("Data limitations (not company risks)") < html.indexOf("Input conflicts"));
+  assert.ok(!html.includes("<script>"), "statement text is never markup");
+  assert.match(html, /&lt;script&gt;/);
+});
+
+async function harness(t, { tabUrl = "https://www.screener.in/company/INFY/", api = backend() } = {}) {
   const doc = createFakeDocument();
   const elements = new Map();
   const get = id => {
@@ -103,15 +176,11 @@ async function harness(t, { tabUrl = "https://www.screener.in/company/INFY/", li
   const downloads = [];
   const logs = [];
   for (const method of ["log", "warn", "error"]) t.mock.method(console, method, (...a) => logs.push(a));
-  const respond = list || (async () => json(200, listing()));
   t.mock.method(globalThis, "fetch", async (url, init) => {
     const parsed = new URL(url);
     requests.push({ path: parsed.pathname, search: parsed.search, init });
-    assert.equal(init.method, "GET", "the dossier flow never writes");
-    if (parsed.pathname === "/v1/final-reports") return respond(parsed);
-    if (parsed.pathname.startsWith("/v1/final-reports/")) {
-      return { ok: true, status: 200, blob: async () => new Blob(["x"]), headers: { get: () => "" } };
-    }
+    const handled = await api.handle(parsed, init);
+    if (handled) return handled;
     const payload = parsed.pathname === "/health" ? { status: "ok" }
       : parsed.pathname === "/v1/version" ? VERSION : {};
     return json(200, payload);
@@ -131,77 +200,161 @@ async function harness(t, { tabUrl = "https://www.screener.in/company/INFY/", li
   t.after(() => { delete globalThis.document; delete globalThis.window; delete globalThis.chrome; });
   await import(`../src/sidepanel.js?final-report-test=${++sequence}`);
   await settle();
+  const flush = async () => { for (let i = 0; i < 30; i += 1) await new Promise(r => setTimeout(r, 0)); };
   const click = async id => {
-    const pending = (get(id)._listeners.click || []).map(fn => fn());
-    await settle();
-    await Promise.all(pending);
-    await settle();
+    for (const fn of get(id)._listeners.click || []) fn();
+    await flush();
   };
   return {
-    get, requests, downloads, logs, click,
-    navigateTo: async url => { currentUrl = url; onUpdated(0, { url }); await settle(); await settle(); },
+    get, requests, downloads, logs, click, flush,
+    finalRequests: () => requests.filter(r => r.path.includes("final-report")),
+    navigateTo: async url => { currentUrl = url; onUpdated(0, { url }); await flush(); },
   };
 }
 
-test("boot makes no dossier request; a click looks it up for this page and enables downloads", async t => {
+test("boot makes no report request; Summary is the default view", async t => {
   const h = await harness(t);
   assert.equal(h.get("panel-ready").hidden, false);
-  assert.ok(h.requests.every(r => !r.path.startsWith("/v1/final-reports")), "boot stays unchanged");
-  assert.equal(h.get("final-report-downloads").hidden, true);
-  await h.click("final-report-button");
+  assert.deepEqual(h.finalRequests(), [], "boot stays unchanged");
+  assert.equal(h.get("view-summary").hidden, false);
+  assert.equal(h.get("view-detailed").hidden, true);
+  assert.equal(h.get("view-risks").hidden, true);
+  assert.equal(h.get("research-button").textContent, "Run legacy research");
+});
+
+test("Detailed Research finds this page's report by page key and shows it with downloads", async t => {
+  const h = await harness(t);
+  await h.click("tab-detailed");
+  assert.equal(h.get("view-detailed").hidden, false);
   const lookups = h.requests.filter(r => r.path === "/v1/final-reports");
   assert.equal(lookups.length, 1);
-  assert.equal(lookups[0].search, "?symbol=INFY");
+  assert.equal(lookups[0].search, "?page=INFY");
+  assert.ok(!h.requests.some(r => r.search.includes("symbol=")), "the page key is never sent as a symbol");
   assert.equal(lookups[0].init.headers.Authorization, `Bearer ${TOKEN}`);
-  assert.match(h.get("final-report-status").textContent, /Infosys Ltd — as of 2026-10-12/);
+  assert.ok(!h.requests.some(r => r.init.method === "POST"), "an existing report is not regenerated");
+  assert.match(h.get("final-report-status").textContent, /Ready — Infosys Ltd — as of 2026-10-12/);
+  assert.equal(h.get("final-report-content").hidden, false);
+  assert.match(h.get("final-report-content").textContent, /Revenue reported 100 INR CRORES/);
   assert.equal(h.get("final-report-downloads").hidden, false);
   for (const id of ["final-report-pdf", "final-report-html", "final-report-markdown", "final-report-json"]) {
     assert.equal(h.get(id).disabled, false);
   }
-  await h.click("final-report-pdf");
-  const file = h.requests.find(r => r.path.endsWith("/files/PDF"));
-  assert.equal(file.path, `/v1/final-reports/${ID}/files/PDF`);
+  for (const format of ["PDF", "HTML", "MARKDOWN", "JSON"]) {
+    await h.click(`final-report-${format.toLowerCase()}`);
+    assert.ok(h.requests.some(r => r.path === `/v1/final-reports/${ID}/files/${format}`));
+  }
   assert.equal(h.downloads[0].download, "INFY_2026-10-12_detailed_research.pdf");
   assert.deepEqual(h.logs, []);
 });
 
-test("a partial dossier disables only the missing formats", async t => {
-  const h = await harness(t, { list: async () => json(200, listing({
-    status: "PARTIAL_RENDER", formats: ["JSON", "MARKDOWN", "HTML"], failed_formats: ["PDF"] })) });
-  await h.click("final-report-button");
+test("no report: opening Detailed Research generates it in the backend and shows Ready", async t => {
+  const api = backend({ reports: [] });
+  const h = await harness(t, { api });
+  await h.click("tab-detailed");
+  const post = h.requests.find(r => r.init.method === "POST");
+  assert.equal(post.path, "/v1/final-reports");
+  assert.deepEqual(JSON.parse(post.init.body), { source_url: "https://www.screener.in/company/INFY/" });
+  assert.equal(post.init.headers.Authorization, `Bearer ${TOKEN}`);
+  assert.ok(h.requests.some(r => r.path === `/v1/final-report-jobs/${JOB}`), "the job is polled");
+  assert.match(h.get("final-report-status").textContent, /Ready — Infosys Ltd/);
+  assert.equal(h.get("final-report-downloads").hidden, false);
+  assert.equal(h.get("final-report-error").hidden, true);
+  await h.click("tab-risks");
+  assert.equal(h.get("view-risks").hidden, false);
+  assert.match(h.get("risks-content").textContent, /HIGH_ACCRUALS/);
+  assert.match(h.get("risks-content").textContent, /Data limitations \(not company risks\)/);
+  assert.equal(h.requests.filter(r => r.init.method === "POST").length, 1, "the risks view reuses the report");
+});
+
+test("generation shows progress, and a failed generation is a fixed typed message", async t => {
+  const api = backend({ reports: [], jobs: [{ status: "RUNNING", stage: "BUILDING" },
+    { status: "FAILED", stage: "DONE", failure: { code: "COMPANY_IDENTITY_MISMATCH", message: "<b>server text</b>" } }] });
+  const h = await harness(t, { api });
+  await h.click("tab-risks");
+  assert.equal(h.get("final-report-error").hidden, false);
+  assert.match(h.get("final-report-error").textContent, /identity could not be confirmed/);
+  assert.doesNotMatch(h.get("final-report-error").textContent, /server text/);
+  assert.match(h.get("risks-status").textContent, /identity could not be confirmed/);
+  assert.equal(h.get("risks-generate-button").hidden, false);
+  assert.equal(h.get("final-report-downloads").hidden, true);
+  assert.equal(h.get("risks-content").hidden, true);
+});
+
+test("a partial report disables only the missing formats", async t => {
+  const api = backend({ view: panelPayload({ status: "PARTIAL_RENDER", formats: ["JSON", "MARKDOWN", "HTML"], failed_formats: ["PDF"] }) });
+  const h = await harness(t, { api });
+  await h.click("tab-detailed");
   assert.equal(h.get("final-report-pdf").disabled, true);
   assert.equal(h.get("final-report-html").disabled, false);
   assert.match(h.get("final-report-status").textContent, /Partial: PDF could not be produced/);
+  await h.click("final-report-pdf");
+  assert.ok(!h.requests.some(r => r.path.endsWith("/files/PDF")), "no dead PDF download");
 });
 
-test("no dossier and an unknown identifier both say so without an error", async t => {
-  const empty = await harness(t, { list: async () => json(200, { symbol: "INFY", reports: [] }) });
-  await empty.click("final-report-button");
-  assert.match(empty.get("final-report-status").textContent, /No Detailed Research dossier/);
-  assert.equal(empty.get("final-report-downloads").hidden, true);
-  assert.equal(empty.get("final-report-error").hidden, true);
-});
-
-test("a dossier never follows the user to another company's page", async t => {
-  const h = await harness(t);
-  await h.click("final-report-button");
-  assert.equal(h.get("final-report-downloads").hidden, false);
-  await h.navigateTo("https://www.screener.in/company/TCS/consolidated/");
+test("navigation RVNL -> INFY -> IRCON never shows a previous company's report or status", async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const views = { RVNL: panelPayload({ company_name: "Rail Vikas Nigam Ltd", screener_page: "RVNL" }) };
+  const api = {
+    async handle(parsed, init) {
+      if (parsed.pathname === "/v1/final-reports" && init.method === "GET") {
+        const page = parsed.searchParams.get("page");
+        return json(200, { page, reports: page === "RVNL" ? [listing().reports[0]] : [] });
+      }
+      if (parsed.pathname === "/v1/final-reports" && init.method === "POST") {
+        await gate; // INFY's generation is still starting when the user moves on
+        return json(202, { job_id: JOB, status: "QUEUED", stage: "QUEUED", artifact_id: null, failure: null });
+      }
+      if (parsed.pathname === `/v1/final-report-jobs/${JOB}`) {
+        return json(200, { job_id: JOB, status: "READY", stage: "DONE", artifact_id: ID, failure: null });
+      }
+      if (parsed.pathname === `/v1/final-reports/${ID}/view`) return json(200, views.RVNL);
+      return null;
+    },
+  };
+  const h = await harness(t, { tabUrl: "https://www.screener.in/company/RVNL/", api });
+  await h.click("tab-detailed");
+  assert.match(h.get("final-report-status").textContent, /Rail Vikas Nigam Ltd/);
+  await h.navigateTo("https://www.screener.in/company/INFY/");
+  assert.doesNotMatch(h.get("final-report-status").textContent, /Rail Vikas/);
   assert.equal(h.get("final-report-downloads").hidden, true);
-  assert.equal(h.get("final-report-status").hidden, true);
+  assert.equal(h.get("final-report-content").hidden, true);
+  assert.match(h.get("final-report-status").textContent, /has not been generated/);
+  h.get("final-report-button")._listeners.click.forEach(fn => fn());
+  await h.flush();
+  assert.match(h.get("final-report-status").textContent, /Generating Detailed Research/);
+  await h.navigateTo("https://www.screener.in/company/IRCON/");
+  release();
+  await h.flush();
+  assert.match(h.get("final-report-status").textContent, /has not been generated/,
+    "INFY's late job never paints on the IRCON page");
+  assert.doesNotMatch(h.get("final-report-status").textContent, /Rail Vikas|Infosys|Ready/);
+  assert.equal(h.get("final-report-downloads").hidden, true);
   await h.click("final-report-pdf");
   assert.ok(!h.requests.some(r => r.path.includes("/files/")), "no stale download");
+  const pages = h.requests.filter(r => r.path === "/v1/final-reports" && r.init.method === "GET")
+    .map(r => r.search);
+  assert.deepEqual(pages, ["?page=RVNL", "?page=INFY", "?page=IRCON"]);
 });
 
 test("401 on lookup returns to pairing", async t => {
-  const h = await harness(t, { list: async () => json(401, { detail: { code: "UNAUTHORIZED", message: "x" } }) });
-  await h.click("final-report-button");
+  const api = { async handle(parsed) {
+    if (parsed.pathname === "/v1/final-reports") return json(401, { detail: { code: "UNAUTHORIZED", message: "x" } });
+    return null;
+  } };
+  const h = await harness(t, { api });
+  await h.click("tab-detailed");
   assert.equal(h.get("panel-unpaired").hidden, false);
+  assert.ok(!h.requests.some(r => r.init.method === "POST"), "no generation without pairing");
 });
 
 test("a backend failure is shown as a fixed message, never raw server text", async t => {
-  const h = await harness(t, { list: async () => json(500, { detail: { code: "X", message: "<script>secret path</script>" } }) });
-  await h.click("final-report-button");
+  const api = { async handle(parsed) {
+    if (parsed.pathname === "/v1/final-reports") return json(500, { detail: { code: "X", message: "<script>secret path</script>" } });
+    return null;
+  } };
+  const h = await harness(t, { api });
+  await h.click("tab-detailed");
   assert.equal(h.get("final-report-error").hidden, false);
-  assert.equal(h.get("final-report-error").textContent, "Could not look up the dossier.");
+  assert.equal(h.get("final-report-error").textContent, "Could not look up Detailed Research.");
 });

@@ -24,11 +24,13 @@ Display rounding (the ONE policy every renderer uses; underlying values never ch
 The exact value always remains in report.json.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, NonNegativeInt, StringConstraints
@@ -101,6 +103,12 @@ class FailureCode(StrEnum):
     RENDER_FAILED = "RENDER_FAILED"
     PARTIAL_RENDER = "PARTIAL_RENDER"
     OUTPUT_IO_FAILED = "OUTPUT_IO_FAILED"
+    #: the declared NSE symbol / BSE code / ISIN is not the acquired Screener company's
+    COMPANY_IDENTITY_MISMATCH = "COMPANY_IDENTITY_MISMATCH"
+    #: no Screener company page (consolidated or standalone) could be acquired
+    SOURCE_ACQUISITION_FAILED = "SOURCE_ACQUISITION_FAILED"
+    #: a product generation job did not finish within its time bound
+    GENERATION_TIMEOUT = "GENERATION_TIMEOUT"
 
 
 class RenderError(Exception):
@@ -373,6 +381,29 @@ class ManifestFailure(BaseModel):
     detail: _Short
 
 
+ScreenerPage = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9_-]{1,40}$")]
+_SCREENER_COMPANY_PATH = re.compile(r"^/company/([A-Za-z0-9_-]{1,40})/(?:consolidated/)?$")
+
+
+def screener_page_key(url: str | None) -> str | None:
+    """The upper-case company path segment of a Screener company page URL, else None.
+    Screener serves /company/infy/ as /company/INFY/, so the segment is folded to upper case;
+    it is an opaque page key, never an exchange symbol."""
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if (parts.scheme != "https" or parts.hostname != "www.screener.in"
+            or parts.username or parts.password or port not in {None, 443}
+            or parts.query or parts.fragment):
+        return None
+    match = _SCREENER_COMPANY_PATH.fullmatch(parts.path)
+    return match.group(1).upper() if match else None
+
+
 class ReportManifest(BaseModel):
     """Deterministic: the same Box 14 dataset, renderer version and format set give the same
     manifest. It records no clock, host, path outside the report root or secret."""
@@ -397,4 +428,7 @@ class ReportManifest(BaseModel):
     failures: tuple[ManifestFailure, ...]
     warnings: tuple[_Short, ...]
     limitations: tuple[_Short, ...]
+    #: the acquired primary Screener page's company path segment (upper case), taken from the
+    #: acquired dataset - never from a caller - so the extension can find "this page's" report
+    screener_page: ScreenerPage | None = None
     recommendation: Literal["NONE"] = "NONE"

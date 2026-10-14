@@ -14,6 +14,7 @@ from pathlib import Path
 
 from stock_research_ai.adapters.rendering.pdf import render_pdf
 from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
+from stock_research_ai.adapters.screener.peers_api import PeerFetch
 from stock_research_ai.adapters.screener.research_dataset import build_screener_dataset
 from stock_research_ai.application.report_orchestrator import (
     ResearchStage,
@@ -29,6 +30,7 @@ from stock_research_ai.domain.final_research_report import FinalReportRequest
 from stock_research_ai.domain.forecasting import ForecastRequest
 from stock_research_ai.domain.fundamental_valuation import ValuationRequest
 from stock_research_ai.domain.market_intelligence import MarketIntelligenceRequest, RawPayload
+from stock_research_ai.domain.report_rendering import FailureCode
 from stock_research_ai.private_files import write_private_file
 
 MAX_STAGE_BYTES = 512 * 1024 * 1024
@@ -48,11 +50,14 @@ def build_research_stage(
     market_payloads: Sequence[RawPayload] = (),
     forecast_request: ForecastRequest | None = None,
     valuation_request: ValuationRequest | None = None,
+    peer_fetch: PeerFetch | None = None,
 ) -> ResearchStage:
     """Box 1 extraction + preserved page bytes -> Box 1B (the existing pure parser), plus the
-    other acquisition outputs, as one JSON-safe stage. `pages[0]` is the primary page."""
-    screeners = tuple(build_screener_dataset(extraction, content, None)
-                      for extraction, content in pages)
+    other acquisition outputs, as one JSON-safe stage. `pages[0]` is the primary page; the
+    optional peer fragment belongs to it only."""
+    screeners = tuple(build_screener_dataset(extraction, content,
+                                             peer_fetch if index == 0 else None)
+                      for index, (extraction, content) in enumerate(pages))
     return ResearchStage(
         generated_at=generated_at, screeners=screeners, catalogue=catalogue, bundle=bundle,
         market_request=market_request,
@@ -89,10 +94,18 @@ def add_stage_parser(commands: "argparse._SubParsersAction[argparse.ArgumentPars
     cmd.add_argument("--output", type=Path, required=True)
 
 
+def _stage_failure(code: str, message: str) -> int:
+    """A clean, typed acquisition failure: one JSON line, no traceback, no path."""
+    print(json.dumps({"status": "FAILED", "failure": {"code": code, "message": message}},
+                     indent=2))
+    return EXIT_CODES["FAILED"]
+
+
 def run_stage(args: argparse.Namespace) -> int:
     import asyncio
 
     from stock_research_ai.adapters.rendering.acquire import (
+        StageAcquisitionError,
         StageRequest,
         capture_stage,
         live_fetchers,
@@ -105,15 +118,23 @@ def run_stage(args: argparse.Namespace) -> int:
     if args.diligence_inputs is not None:
         diligence = DueDiligenceRequest.model_validate_json(args.diligence_inputs.read_text())
     now = datetime.now(UTC)
-    page, evidence, exchange = live_fetchers(args.work.resolve(), now=now)
-    stage = asyncio.run(capture_stage(StageRequest(
-        source_url=args.source_url, as_of=args.as_of, nse_symbol=args.nse_symbol,
-        isin=args.isin, bse_code=args.bse_code, diligence=diligence), now=now,
-        fetch_page=page, fetch_evidence=evidence, fetch_exchange=exchange))
+    page, evidence, exchange, peers = live_fetchers(args.work.resolve(), now=now)
+    try:
+        stage = asyncio.run(capture_stage(StageRequest(
+            source_url=args.source_url, as_of=args.as_of, nse_symbol=args.nse_symbol,
+            isin=args.isin, bse_code=args.bse_code, diligence=diligence), now=now,
+            fetch_page=page, fetch_evidence=evidence, fetch_exchange=exchange,
+            fetch_peers=peers))
+    except StageAcquisitionError as exc:
+        return _stage_failure(exc.code.value, exc.message)
+    except Exception as exc:  # noqa: BLE001 - an unexpected adapter failure, still typed
+        return _stage_failure(FailureCode.SOURCE_ACQUISITION_FAILED.value,
+                              f"Acquisition failed ({type(exc).__name__})")
     write_private_file(output, stage.model_dump_json())
-    print(json.dumps({"stage": str(output), "company_key": stage.screeners[0].company_key,
-                      "pages": len(stage.screeners), "market_payloads":
-                      len(stage.market_payloads), "documents": len(
+    print(json.dumps({"status": "STAGED", "stage": str(output),
+                      "company_key": stage.screeners[0].company_key,
+                      "pages": len(stage.screeners), "peer_pages": len(stage.peer_screeners),
+                      "market_payloads": len(stage.market_payloads), "documents": len(
                           stage.bundle.extractions) if stage.bundle else 0}, indent=2))
     return 0
 

@@ -37,6 +37,7 @@ from test_screener_dataset import FIXTURES, page
 from test_summary_input import INFY, YESBANK
 
 from stock_research_ai.adapters.http.final_reports import download_name
+from stock_research_ai.adapters.rendering import acquire as acquire_mod
 from stock_research_ai.adapters.rendering import pdf as pdf_mod
 from stock_research_ai.adapters.rendering.cli import build_research_stage
 from stock_research_ai.adapters.rendering.pdf import render_pdf
@@ -46,7 +47,14 @@ from stock_research_ai.adapters.rendering.store import (
     company_component,
     symbol_component,
 )
+from stock_research_ai.adapters.screener.peers_api import PeerFetch
+from stock_research_ai.adapters.screener.research_dataset import build_screener_dataset
 from stock_research_ai.application import report_orchestrator as orch
+from stock_research_ai.application.final_report_jobs import (
+    FinalReportGenerationError,
+    FinalReportJobManager,
+    FinalReportJobStatus,
+)
 from stock_research_ai.application.report_claims import ReportCompositionError
 from stock_research_ai.application.report_html import render_html
 from stock_research_ai.application.report_markdown import md, render_markdown
@@ -92,7 +100,8 @@ NEW_MODULES = ("domain/report_rendering.py", "application/report_presentation.py
                "application/report_markdown.py", "application/report_html.py",
                "application/report_orchestrator.py", "adapters/rendering/pdf.py",
                "adapters/rendering/store.py", "adapters/rendering/cli.py",
-               "adapters/http/final_reports.py")
+               "adapters/http/final_reports.py", "application/final_report_jobs.py",
+               "application/report_panel.py", "adapters/rendering/generate.py")
 EVIL = '<script>alert("x")</script> | pipe\nnew line ** _em_ [link](javascript:alert(1)) &amp;'
 NOW = datetime(2026, 10, 10, 6, 0, tzinfo=UTC)
 
@@ -897,6 +906,101 @@ async def test_final_report_routes_reject_bad_input(api):
     assert tampered.json()["detail"]["code"] == "FINAL_REPORT_FILE_UNAVAILABLE"
 
 
+async def test_final_report_generation_and_panel_routes_are_paired_and_page_bound(
+    tmp_path, engine, report
+):
+    store = store_for(tmp_path)
+    rendered = render_final_report(report, store=store, pdf=None, formats=(F.JSON, F.MARKDOWN),
+                                   screener_page="INFY")
+    calls: list[tuple[str, date]] = []
+
+    async def generate(source_url: str, as_of: date, progress):
+        calls.append((source_url, as_of))
+        progress("BUILDING")
+        return rendered
+
+    manager = FinalReportJobManager(generate)
+    settings = auth_settings(tmp_path)
+    app = http_interface.create_app(engine=engine, settings=settings,
+                                    final_report_store=store, final_report_jobs=manager)
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://127.0.0.1") as client:
+                source = "https://www.screener.in/company/INFY/"
+                assert (await client.post("/v1/final-reports",
+                                          json={"source_url": source})).status_code == 401
+                auth = await pair(client, settings)
+                rejected = await client.post("/v1/final-reports", headers=auth,
+                                             json={"source_url": source + "?echo=secret"})
+                assert rejected.status_code == 422
+                assert "secret" not in rejected.text
+                created = await client.post("/v1/final-reports", headers=auth,
+                                            json={"source_url": source})
+                assert created.status_code == 202
+                job_id = created.json()["job_id"]
+                for _ in range(50):
+                    status_response = await client.get(f"/v1/final-report-jobs/{job_id}",
+                                                       headers=auth)
+                    assert status_response.status_code == 200
+                    if status_response.json()["status"] in {"READY", "PARTIAL", "FAILED"}:
+                        break
+                    await asyncio.sleep(0)
+                assert status_response.json()["status"] == "READY"
+                assert status_response.json()["artifact_id"] == str(rendered.manifest.artifact_id)
+                assert calls and calls[0][0] == source
+
+                listed = await client.get("/v1/final-reports?page=INFY", headers=auth)
+                assert listed.status_code == 200
+                assert listed.json()["page"] == "INFY"
+                assert listed.json()["reports"][0]["artifact_id"] == str(
+                    rendered.manifest.artifact_id)
+
+                view = await client.get(
+                    f"/v1/final-reports/{rendered.manifest.artifact_id}/view", headers=auth)
+                assert view.status_code == 200
+                assert view.json()["artifact_id"] == str(rendered.manifest.artifact_id)
+                assert view.json()["screener_page"] == "INFY"
+                assert "disclaimer" in view.json()
+                assert (await client.get(
+                    f"/v1/final-reports/{rendered.manifest.artifact_id}/view")).status_code == 401
+    finally:
+        await manager.aclose()
+
+
+async def test_final_report_jobs_join_duplicates_and_return_fixed_failure_text():
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def fail_after_release(source_url: str, as_of: date, progress):
+        entered.set()
+        await gate.wait()
+        raise FinalReportGenerationError(rr.FailureCode.COMPANY_IDENTITY_MISMATCH,
+                                         "private source URL and secret")
+
+    manager = FinalReportJobManager(fail_after_release, max_active=1)
+    try:
+        first = manager.launch("https://www.screener.in/company/INFY/", "INFY")
+        duplicate = manager.launch("https://www.screener.in/company/INFY/consolidated/", "INFY")
+        assert duplicate.job_id == first.job_id
+        with pytest.raises(RuntimeError):
+            manager.launch("https://www.screener.in/company/TCS/", "TCS")
+        await entered.wait()
+        gate.set()
+        for _ in range(50):
+            current = manager.get(first.job_id)
+            if current and current.status == FinalReportJobStatus.FAILED:
+                break
+            await asyncio.sleep(0)
+        assert current is not None and current.status == FinalReportJobStatus.FAILED
+        assert current.failure is not None
+        assert current.failure.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+        assert "private" not in current.failure.message
+    finally:
+        gate.set()
+        await manager.aclose()
+
+
 def test_download_names_are_generated_from_validated_values():
     base = {"artifact_id": str(uuid4()), "location": "nse-X/2026-10-10/a", "company_key": "k",
             "company_name": "n", "nse_symbol": 'X"\r\nSet-Cookie: a=b', "isin": None,
@@ -915,6 +1019,7 @@ _ = (ORIGIN, box13, compose, SectionStatus)
 # --- acquisition stage capture (fake adapters; offline) -------------------------------------
 
 from stock_research_ai.adapters.rendering.acquire import (  # noqa: E402
+    StageAcquisitionError,
     StageRequest,
     capture_stage,
     page_urls,
@@ -929,6 +1034,11 @@ def test_page_urls_only_for_supported_screener_pages():
                 "https://www.screener.in/company/../x/"):
         with pytest.raises(ValueError):
             page_urls(bad)
+    assert rr.screener_page_key("https://www.screener.in/company/RVNL/consolidated/") == "RVNL"
+    for bad in ("https://user@www.screener.in/company/RVNL/",
+                "https://www.screener.in:444/company/RVNL/",
+                "https://www.screener.in/company/RVNL/?echo=secret"):
+        assert rr.screener_page_key(bad) is None
 
 
 async def test_capture_stage_chains_existing_adapters_and_renders_offline(tmp_path):
@@ -972,7 +1082,10 @@ async def test_capture_stage_chains_existing_adapters_and_renders_offline(tmp_pa
     assert {"BOX12_MARKET", "MARKET_DATA"} <= missing  # surfaced in Section 0
 
 
-async def test_capture_stage_never_invents_identity_or_inputs(tmp_path):
+async def test_capture_stage_binds_identity_to_the_acquired_page(tmp_path):
+    """H-2: the acquired Screener page defines the company; identity is never invented and
+    never taken from a caller. A declared value that disagrees fails before any evidence or
+    exchange acquisition."""
     infy = await page(tmp_path, FIXTURES, INFY)
 
     async def fetch_page(url: str):
@@ -981,23 +1094,534 @@ async def test_capture_stage_never_invents_identity_or_inputs(tmp_path):
     async def nothing(p):
         return None, None
 
+    seen: list[Any] = []
+
     async def exchange(req):
-        raise AssertionError("no declared identifier -> no exchange acquisition")
+        seen.append(req)
+        return ()
 
     stage = await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)),
                                 now=NOW, fetch_page=fetch_page, fetch_evidence=nothing,
                                 fetch_exchange=exchange)
-    assert stage.market_request is None and stage.report_request.nse_symbol is None
-    other = DueDiligenceRequest(as_of=date(2026, 10, 10), company_key="screener:999")
-    with pytest.raises(ValueError):
-        await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10),
-                                         diligence=other), now=NOW, fetch_page=fetch_page,
-                            fetch_evidence=nothing, fetch_exchange=None)
+    assert (seen[0].nse_symbol, seen[0].bse_code, seen[0].isin) == ("INFY", "500209", None)
+    assert stage.report_request.nse_symbol == "INFY" == stage.diligence_request.nse_symbol
+    for wrong in ({"nse_symbol": "IRCON"}, {"bse_code": "541956"},
+                  {"diligence": DueDiligenceRequest(as_of=date(2026, 10, 10),
+                                                    company_key="screener:999")}):
+        evidence: list[Any] = []
+
+        async def tracked(p, evidence=evidence):
+            evidence.append(p)
+            return None, None
+
+        async def refuse(req):
+            raise AssertionError("no exchange acquisition under a mismatched identity")
+
+        with pytest.raises(StageAcquisitionError) as err:
+            await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10),
+                                             **wrong), now=NOW, fetch_page=fetch_page,
+                                fetch_evidence=tracked, fetch_exchange=refuse)
+        assert err.value.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+        assert evidence == []
 
     async def failing(url: str):
         raise OSError("offline")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(StageAcquisitionError) as err:
         await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)),
                             now=NOW, fetch_page=failing, fetch_evidence=nothing,
                             fetch_exchange=None)
+    assert err.value.code == rr.FailureCode.SOURCE_ACQUISITION_FAILED
+
+
+async def test_capture_stage_refuses_a_different_acquired_screener_page(tmp_path):
+    yesbank = await page(tmp_path, FIXTURES, YESBANK)
+    calls: list[str] = []
+
+    async def wrong_page(url: str):
+        calls.append(url)
+        return yesbank
+
+    async def should_not_run(_):
+        raise AssertionError("identity is checked before evidence acquisition")
+
+    with pytest.raises(StageAcquisitionError) as err:
+        await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)),
+                            now=NOW, fetch_page=wrong_page, fetch_evidence=should_not_run,
+                            fetch_exchange=should_not_run)
+    assert err.value.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+    assert calls[0].endswith("/company/INFY/consolidated/")
+
+
+async def test_capture_stage_acquires_only_peer_pages_named_by_the_subject_table(
+    tmp_path, monkeypatch
+):
+    infy = await page(tmp_path, FIXTURES, INFY)
+    peer_content = (FIXTURES / "peers_infy.html").read_bytes()
+    peer_fetch = PeerFetch("RETRIEVED", None,
+                           "https://www.screener.in/api/company/1143/peers/",
+                           NOW, peer_content)
+    primary = build_screener_dataset(*infy, peer_fetch)
+    assert primary.peers is not None
+    rows = [r for r in primary.peers.peers if not r.is_subject_company
+            and r.company_url is not None and r.screener_company_id is not None]
+    by_url = {str(row.company_url): row for row in rows}
+    acquired: list[str] = []
+    original_build = acquire_mod.build_screener_dataset
+
+    def peer_dataset(extraction, content, fetched=None):
+        if content.startswith(b"peer:"):
+            company_id = content.removeprefix(b"peer:").decode()
+            row = next(row for row in rows if row.screener_company_id == company_id)
+            page_url = str(row.company_url)
+            profile = primary.profile.model_copy(update={
+                "name": row.name, "page_url": page_url,
+                "source_company_key": company_id,
+            })
+            source = primary.source.model_copy(update={"page_url": page_url})
+            return primary.model_copy(update={
+                "company_key": f"screener:{company_id}", "profile": profile, "source": source,
+            })
+        return original_build(extraction, content, fetched)
+
+    monkeypatch.setattr(acquire_mod, "build_screener_dataset", peer_dataset)
+
+    async def fetch_page(url: str):
+        if url.endswith("/company/INFY/consolidated/"):
+            raise OSError("standalone fixture only")
+        if url == INFY[1]:
+            return infy
+        acquired.append(url)
+        row = by_url[url]
+        return infy[0], b"peer:" + row.screener_company_id.encode()
+
+    async def fetch_evidence(_):
+        return None, None
+
+    async def fetch_peers(warehouse_id: str):
+        assert warehouse_id == "1143"
+        return peer_fetch
+
+    stage = await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)),
+                                now=NOW, fetch_page=fetch_page, fetch_evidence=fetch_evidence,
+                                fetch_exchange=None, fetch_peers=fetch_peers)
+    assert stage.screeners[0].peer_status.status == "RETRIEVED"
+    expected = [str(row.company_url) for row in rows][:orch.MAX_PEER_PAGES]
+    assert acquired == expected
+    assert [p.company_key for p in stage.peer_screeners] == [
+        f"screener:{row.screener_company_id}" for row in rows[:orch.MAX_PEER_PAGES]
+    ]
+    assert all(peer.company_key != stage.screeners[0].company_key for peer in stage.peer_screeners)
+
+
+# --- final release-blocker remediation (H-1 / H-2 / M-1 / M-2) ------------------------------
+
+from test_screener_dataset import peer_fetch  # noqa: E402
+
+import stock_research_ai.bootstrap as bootstrap_mod  # noqa: E402
+from stock_research_ai.adapters.http.browser_auth import PairingStore  # noqa: E402
+from stock_research_ai.adapters.rendering import acquire as acquire_mod  # noqa: E402
+from stock_research_ai.adapters.rendering.acquire import (  # noqa: E402
+    PageUnavailableError,
+    live_fetchers,
+)
+from stock_research_ai.adapters.rendering.generate import LiveFinalReportGenerator  # noqa: E402
+from stock_research_ai.adapters.screener.peers_api import PeerFetch, peers_url  # noqa: E402
+from stock_research_ai.application.final_report_jobs import (  # noqa: E402
+    FinalReportGenerationError,
+    FinalReportJobManager,
+    FinalReportJobStatus,
+)
+from stock_research_ai.application.report_orchestrator import (  # noqa: E402
+    MAX_PEER_PAGES,
+    verify_isin,
+)
+
+TCS_URL = "https://www.screener.in/company/TCS/consolidated/"
+INFY_CONS = "https://www.screener.in/company/INFY/consolidated/"
+
+
+def peer_html() -> str:
+    """A peer company page for the fragment's TCS row (id 3365): the INFY fixture with the
+    company identity rewritten - only the identity fields change."""
+    html = (FIXTURES / INFY[0]).read_text()
+    return (html.replace('data-company-id="1489"', 'data-company-id="3365"')
+            .replace("/company/INFY/", "/company/TCS/").replace("Infosys Ltd", "TCS Peer Ltd")
+            .replace("symbol=INFY", "symbol=TCS").replace("/INFY/500209/", "/TCS/532540/"))
+
+
+@pytest.fixture(scope="module")
+def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    async def build() -> dict[str, Any]:
+        root = tmp_path_factory.mktemp("pages")
+        (root / "infy").mkdir()
+        (root / "tcs").mkdir()
+        infy = await page(root / "infy", FIXTURES, INFY)
+        tcs = await page(root / "tcs", FIXTURES, ("tcs.html", TCS_URL), html=peer_html())
+        return {INFY[1]: infy, TCS_URL: tcs}
+    return asyncio.run(build())
+
+
+def fakes(pages: dict[str, Any], *, fail: set[str] = frozenset(), peers: bool = True,
+          exchange_calls: list[Any] | None = None) -> Any:
+    """Offline stand-ins for live_fetchers: the same signatures, fixture pages only."""
+    def factory(work: Path, *, now: datetime) -> Any:
+        async def fetch_page(url: str):
+            if url in fail or url not in pages:
+                raise PageUnavailableError("not available offline")
+            return pages[url]
+
+        async def fetch_evidence(p):
+            return None, None
+
+        async def fetch_exchange(req):
+            if exchange_calls is not None:
+                exchange_calls.append(req)
+            return ()
+
+        async def fetch_peers(warehouse_id: str) -> PeerFetch:
+            if not peers:
+                return PeerFetch("BLOCKED", "HTTP_403", peers_url(warehouse_id), NOW, None)
+            return peer_fetch(warehouse_id)
+
+        return fetch_page, fetch_evidence, fetch_exchange, fetch_peers
+    return factory
+
+
+async def generated_stage(pages: dict[str, Any], **kw: Any) -> ResearchStage:
+    page_fn, evidence, exchange, peers = fakes(pages, **kw)(Path("/unused"), now=NOW)
+    return await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)),
+                               now=NOW, fetch_page=page_fn, fetch_evidence=evidence,
+                               fetch_exchange=exchange, fetch_peers=peers)
+
+
+# --- M-2: acquisition failures are typed; standalone fallback --------------------------------
+
+
+async def test_live_fetch_page_never_indexes_an_empty_retrieval(tmp_path, pages, monkeypatch):
+    extraction, _ = pages[INFY[1]]
+
+    async def no_db(settings: Any) -> None:
+        return None
+
+    async def failed_snapshot(*a: Any, **k: Any) -> Any:
+        return extraction.model_copy(update={"raw_artifacts": (), "retrievals": ()})
+
+    monkeypatch.setattr(bootstrap_mod, "initialize_database", no_db)
+    monkeypatch.setattr(bootstrap_mod, "extract_snapshot", failed_snapshot)
+    fetch_page, *_ = live_fetchers(tmp_path, now=NOW)
+    with pytest.raises(PageUnavailableError):  # was IndexError: tuple index out of range
+        await fetch_page(INFY_CONS)
+
+
+async def test_consolidated_failure_falls_back_to_standalone_and_both_failing_is_typed(pages):
+    stage = await generated_stage(pages, fail={INFY_CONS})  # no consolidated page
+    assert len(stage.screeners) == 1
+    assert stage.screeners[0].profile.reporting_basis == "standalone"
+    with pytest.raises(StageAcquisitionError) as err:
+        await generated_stage(pages, fail=set(pages) | {INFY_CONS})
+    assert err.value.code == rr.FailureCode.SOURCE_ACQUISITION_FAILED
+
+
+async def test_empty_or_malformed_page_results_are_skipped_not_crashed(pages):
+    extraction, content = pages[INFY[1]]
+
+    for broken in ((extraction, b""), (extraction.model_copy(update={"company": None}), content)):
+        async def fetch(url: str, broken=broken):
+            return broken
+
+        async def nothing(p):
+            return None, None
+
+        with pytest.raises(StageAcquisitionError) as err:
+            await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)),
+                                now=NOW, fetch_page=fetch, fetch_evidence=nothing,
+                                fetch_exchange=None)
+        assert err.value.code == rr.FailureCode.SOURCE_ACQUISITION_FAILED
+
+
+def test_cli_acquisition_failure_is_typed_with_no_traceback(tmp_path, pages, monkeypatch, capsys):
+    from stock_research_ai.__main__ import main
+
+    monkeypatch.setattr(acquire_mod, "live_fetchers", fakes(pages, fail=set(pages) | {INFY_CONS}))
+    with pytest.raises(SystemExit) as exit_info:
+        main(["detailed-research-stage", "--source-url", INFY[1], "--as-of", "2026-10-10",
+              "--work", str(tmp_path / "w"), "--output", str(tmp_path / "s.json")])
+    out = capsys.readouterr()
+    assert exit_info.value.code == 2
+    assert json.loads(out.out)["failure"]["code"] == "SOURCE_ACQUISITION_FAILED"
+    assert "Traceback" not in out.err + out.out and str(tmp_path) not in out.out
+    assert not (tmp_path / "s.json").exists()
+    monkeypatch.setattr(acquire_mod, "live_fetchers", fakes(pages))
+    with pytest.raises(SystemExit) as exit_info:
+        main(["detailed-research-stage", "--source-url", INFY[1], "--as-of", "2026-10-10",
+              "--nse-symbol", "IRCON", "--work", str(tmp_path / "w2"),
+              "--output", str(tmp_path / "s2.json")])
+    out = capsys.readouterr()
+    assert exit_info.value.code == 2
+    assert json.loads(out.out)["failure"]["code"] == "COMPANY_IDENTITY_MISMATCH"
+    assert not (tmp_path / "s2.json").exists()
+
+
+# --- H-2: the acquired Screener page binds the company identity ------------------------------
+
+
+def _declared(stage: ResearchStage, *, nse: str | None = None, isin: str | None = None,
+              market: bool = False) -> ResearchStage:
+    update: dict[str, Any] = {
+        "report_request": stage.report_request.model_copy(update={"nse_symbol": nse,
+                                                                  "isin": isin}),
+        "diligence_request": stage.diligence_request.model_copy(update={"nse_symbol": nse,
+                                                                        "isin": isin})}
+    if market:
+        update["market_request"] = orch.MarketIntelligenceRequest(
+            nse_symbol=nse, isin=isin, as_of=NOW)
+    return stage.model_copy(update=update)
+
+
+@pytest.mark.parametrize("nse,isin,market", [
+    ("IRCON", None, False),                 # wrong symbol
+    (None, "INE962Y01021", False),          # wrong (unverifiable) ISIN
+    ("IRCON", "INE962Y01021", False),       # both wrong: the audit reproduction
+    ("IRCON", "INE962Y01021", True),        # ... also as the Box 12 request
+    ("INFY", "INE962Y01021", False),        # right symbol, another company's ISIN
+])
+def test_wrong_declared_identity_fails_closed_with_no_artifact(tmp_path, infy_stage, nse, isin,
+                                                               market):
+    store = store_for(tmp_path)
+    result = run_detailed_research(_declared(infy_stage, nse=nse, isin=isin, market=market),
+                                   store=store, pdf=render_pdf)
+    assert result.status == "FAILED"
+    assert result.failure.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+    assert result.manifest is None and not any(s.box == "BOX14" for s in result.steps)
+    root = tmp_path / "final-reports"
+    assert not root.exists() or not any(root.rglob("manifest.json"))
+    assert not root.exists() or not any(p.name.startswith("nse-IRCON") for p in root.iterdir())
+    assert store.list_for_symbol("IRCON") == [] and store.list_for_page("INFY") == []
+
+
+def test_correct_or_absent_declared_identity_is_accepted(tmp_path, infy_stage):
+    for stage in (_declared(infy_stage, nse="INFY"), _declared(infy_stage, nse="infy"),
+                  infy_stage):
+        result = run_detailed_research(stage, store=store_for(tmp_path), pdf=None,
+                                       formats=["json"])
+        assert result.status == "COMPLETE", result.failure
+        assert result.manifest.screener_page == "INFY"
+
+
+def test_isin_is_checked_against_box12s_resolved_isin(infy_stage):
+    from types import SimpleNamespace
+
+    resolved = SimpleNamespace(identity=SimpleNamespace(isin="INE009A01021"))
+    verify_isin(_declared(infy_stage, isin="ine009a01021"), resolved)  # same ISIN: accepted
+    for wrong, box12 in (("INE962Y01021", resolved), ("INE009A01021", None)):
+        with pytest.raises(orch._Failed) as err:
+            verify_isin(_declared(infy_stage, isin=wrong), box12)
+        assert err.value.failure.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+
+
+def test_a_stage_mixing_companies_is_refused(tmp_path, infy_stage, bank_stage):
+    mixed = infy_stage.model_copy(update={"screeners": (*infy_stage.screeners,
+                                                        bank_stage.screeners[0])})
+    result = run_detailed_research(mixed, store=store_for(tmp_path), pdf=None)
+    assert result.failure.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+
+
+# --- M-1: Box 9 runs from the acquired peer table --------------------------------------------
+
+
+async def test_box9_runs_from_the_page_peer_table_and_reaches_box14(tmp_path, pages):
+    stage = await generated_stage(pages)
+    assert stage.screeners[0].peer_status.status == "RETRIEVED"
+    rows = {f"screener:{r.screener_company_id}" for r in stage.screeners[0].peers.peers}
+    assert [p.company_key for p in stage.peer_screeners] == ["screener:3365"]
+    assert {p.company_key for p in stage.peer_screeners} <= rows  # never an invented peer
+    result = run_detailed_research(ResearchStage.model_validate_json(stage.model_dump_json()),
+                                   store=store_for(tmp_path), pdf=None, formats=["json"])
+    assert result.status == "COMPLETE", result.failure
+    assert next(s for s in result.steps if s.box == "BOX9").status == "BUILT"
+    report = FinalResearchReportDataset.model_validate_json(
+        (tmp_path / "final-reports" / result.manifest.location / "report.json").read_text())
+    assert any(i.layer.value == "BOX9" and i.dataset_id for i in report.metadata.inputs)
+    industry = next(s for s in report.sections if s.section_id.value == "INDUSTRY_COMPETITION")
+    assert industry.status != SectionStatus.UNAVAILABLE
+    assert "BOX9_INDUSTRY" not in {f.value for f in industry.completeness.missing}
+
+
+async def test_peer_failure_is_disclosed_and_the_report_continues(tmp_path, pages):
+    stage = await generated_stage(pages, peers=False)
+    assert stage.screeners[0].peer_status.status == "BLOCKED" and stage.peer_screeners == ()
+    result = run_detailed_research(stage, store=store_for(tmp_path), pdf=None,
+                                   formats=["json", "md"])
+    assert result.status == "COMPLETE", result.failure
+    text = (tmp_path / "final-reports" / result.manifest.location / "report.md").read_text()
+    body = text[text.find("## 4. Industry"):text.find("## 5. Historical")]
+    assert "Peer median" in body and "Data unavailable" in body  # no invented peer value
+    box9 = next(s for s in result.steps if s.box == "BOX9")
+    assert box9.detail.startswith("PEERS_UNAVAILABLE: peer table BLOCKED (HTTP_403)")
+    assert any(w.startswith("BOX9_BUILT: PEERS_UNAVAILABLE") for w in result.manifest.warnings)
+
+
+async def test_peer_pages_are_bounded_and_come_only_from_table_rows(pages):
+    fetched: list[str] = []
+    stage0 = await generated_stage(pages)
+    table = stage0.screeners[0].peers
+    many = table.model_copy(update={"peers": tuple(
+        row.model_copy(update={"screener_company_id": str(5000 + i),
+                               "company_url": f"https://www.screener.in/company/P{i}/",
+                               "is_subject_company": False})
+        for i, row in enumerate([table.peers[0]] * 25))})
+    primary = stage0.screeners[0].model_copy(update={"peers": many})
+
+    async def fetch(url: str):
+        fetched.append(url)
+        raise PageUnavailableError("offline")
+
+    assert await acquire_mod._peer_screeners(primary, fetch) == ()
+    assert len(fetched) == MAX_PEER_PAGES  # bounded even when every peer fails
+    assert set(fetched) <= {f"https://www.screener.in/company/P{i}/" for i in range(25)}
+    with pytest.raises(ValueError):
+        ResearchStage.model_validate({**json.loads(stage0.model_dump_json()), "peer_screeners": [
+            json.loads(stage0.peer_screeners[0].model_dump_json())] * (MAX_PEER_PAGES + 1)})
+
+
+# --- H-1: Detailed Research is generated through the authenticated API -----------------------
+
+
+@pytest.fixture
+async def gen_api(tmp_path, engine, pages):
+    settings = auth_settings(tmp_path)
+    store = store_for(tmp_path)
+    jobs = FinalReportJobManager(LiveFinalReportGenerator(
+        store, tmp_path / "work", pdf=render_pdf, fetchers=fakes(pages), clock=lambda: NOW),
+        clock=lambda: NOW)
+    app = http_interface.create_app(engine=engine, settings=settings, final_report_store=store,
+                                    final_report_jobs=jobs)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://127.0.0.1") as client:
+            yield client, settings, jobs, tmp_path
+
+
+async def _wait(client: httpx.AsyncClient, auth: dict[str, str], job_id: str) -> dict[str, Any]:
+    for _ in range(600):
+        job = (await client.get(f"/v1/final-report-jobs/{job_id}", headers=auth)).json()
+        if job["status"] not in ("QUEUED", "RUNNING"):
+            return job
+        await asyncio.sleep(0.05)
+    raise AssertionError("the job never finished")
+
+
+async def test_generation_routes_require_pairing(gen_api):
+    client, _, jobs, _ = gen_api
+    body = {"source_url": INFY[1]}
+    for headers in ({}, {"Authorization": "Bearer wrong"}):
+        assert (await client.post("/v1/final-reports", json=body, headers=headers)
+                ).status_code == 401
+        for path in (f"/v1/final-report-jobs/{uuid4()}", f"/v1/final-reports/{uuid4()}/view",
+                     "/v1/final-reports?page=INFY"):
+            assert (await client.get(path, headers=headers)).status_code == 401
+    assert jobs._jobs == {}  # noqa: SLF001 - nothing was launched
+
+
+async def test_extension_flow_generates_detailed_research_without_cli(gen_api):
+    client, settings, _, tmp_path = gen_api
+    auth = await pair(client, settings)
+    assert (await client.get("/v1/final-reports?page=INFY", headers=auth)).json()["reports"] == []
+    created = await client.post("/v1/final-reports", json={"source_url": INFY[1]}, headers=auth)
+    assert created.status_code == 202
+    again = await client.post("/v1/final-reports", json={"source_url": INFY[1].lower()},
+                              headers=auth)
+    assert again.json()["job_id"] == created.json()["job_id"]  # joined, not duplicated
+    job = await _wait(client, auth, created.json()["job_id"])
+    assert job["status"] == "READY" and job["failure"] is None
+    listed = (await client.get("/v1/final-reports?page=infy", headers=auth)).json()["reports"]
+    assert [r["artifact_id"] for r in listed] == [job["artifact_id"]]
+    assert listed[0]["screener_page"] == "INFY"
+    view = (await client.get(f"/v1/final-reports/{job['artifact_id']}/view", headers=auth)).json()
+    assert view["company_name"] and view["recommendation"] == "NONE"
+    assert [s["title"] for s in view["sections"]] == [SECTION_TITLES[s] for s in SECTION_ORDER]
+    for key in ("red", "yellow", "positive_controls", "input_conflicts", "data_limitations",
+                "open_diligence"):
+        assert set(view[key]) == {"items", "total"}
+    manifest = (await client.get(f"/v1/final-reports/{job['artifact_id']}",
+                                 headers=auth)).json()
+    for entry in manifest["files"]:
+        got = await client.get(f"/v1/final-reports/{job['artifact_id']}/files/"
+                               f"{entry['format']}", headers=auth)
+        assert got.status_code == 200 and orch._sha_bytes(got.content) == entry["sha256"]
+    assert not any((tmp_path / "work").iterdir()), "the per-run work directory is removed"
+    assert not list(tmp_path.rglob("stage.json"))
+    PairingStore(settings.browser_auth_path).revoke()
+    for call in (client.post("/v1/final-reports", json={"source_url": INFY[1]}, headers=auth),
+                 client.get(f"/v1/final-reports/{job['artifact_id']}/files/PDF", headers=auth)):
+        assert (await call).status_code == 401
+
+
+async def test_generation_rejects_unsupported_urls_and_declared_identity(gen_api):
+    client, settings, _, _ = gen_api
+    auth = await pair(client, settings)
+    for body in ({"source_url": "https://evil.example/company/INFY/"},
+                 {"source_url": "file:///etc/passwd"},
+                 {"source_url": INFY[1], "nse_symbol": "IRCON"}):
+        response = await client.post("/v1/final-reports", json=body, headers=auth)
+        assert response.status_code == 422
+        assert "evil" not in response.text and "passwd" not in response.text
+
+
+async def test_failed_generation_is_typed_and_never_stays_generating(tmp_path, engine, pages):
+    settings = auth_settings(tmp_path)
+    store = store_for(tmp_path)
+    jobs = FinalReportJobManager(LiveFinalReportGenerator(
+        store, tmp_path / "work", pdf=None, fetchers=fakes(pages, fail=set(pages) | {INFY_CONS})))
+    app = http_interface.create_app(engine=engine, settings=settings, final_report_store=store,
+                                    final_report_jobs=jobs)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://127.0.0.1") as client:
+            auth = await pair(client, settings)
+            created = (await client.post("/v1/final-reports", json={"source_url": INFY[1]},
+                                         headers=auth)).json()
+            job = await _wait(client, auth, created["job_id"])
+    assert job["status"] == "FAILED" and job["stage"] == "DONE"
+    assert job["failure"]["code"] == "SOURCE_ACQUISITION_FAILED"
+    assert "Traceback" not in job["failure"]["message"] and str(tmp_path) not in str(job)
+    assert store.list_for_page("INFY") == []
+
+
+async def test_job_manager_timeout_limits_and_typed_generator_errors():
+    async def slow(url: str, as_of: date, progress: Any) -> Any:
+        await asyncio.sleep(10)
+
+    manager = FinalReportJobManager(slow, timeout_seconds=0.05)
+    job = manager.launch(INFY[1], "INFY")
+    with pytest.raises(orch_limit_error()):
+        manager.launch(TCS_URL, "TCS")  # one generation at a time
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if manager.get(job.job_id).status == FinalReportJobStatus.FAILED:
+            break
+    assert manager.get(job.job_id).failure.code == rr.FailureCode.GENERATION_TIMEOUT
+
+    async def mismatch(url: str, as_of: date, progress: Any) -> Any:
+        raise FinalReportGenerationError(rr.FailureCode.COMPANY_IDENTITY_MISMATCH, "x /secret")
+
+    manager = FinalReportJobManager(mismatch)
+    job = manager.launch(INFY[1], "INFY")
+    await asyncio.sleep(0.05)
+    failed = manager.get(job.job_id)
+    assert failed.failure.code == rr.FailureCode.COMPANY_IDENTITY_MISMATCH
+    assert "/secret" not in failed.failure.message
+    await manager.aclose()
+
+
+def orch_limit_error() -> type[Exception]:
+    from stock_research_ai.application.final_report_jobs import FinalReportJobLimitError
+    return FinalReportJobLimitError
+
+
+def test_legacy_full_research_route_remains_but_is_not_detailed_research():
+    from stock_research_ai.application import browser_jobs
+    assert "FULL_RESEARCH_V1" in browser_jobs.__doc__
+    source = (ROOT / "adapters" / "http" / "final_reports.py").read_text()
+    assert "research_plan" not in source and "FULL_RESEARCH" not in source

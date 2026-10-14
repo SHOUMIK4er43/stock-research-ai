@@ -171,6 +171,14 @@ class Draft:
     not_applicable: set[InputFamily] = field(default_factory=set)
     #: upstream items that do not apply to this company (never counted as missing)
     inapplicable: list[str] = field(default_factory=list)
+    #: applicable structured outputs the section owns outside claims / tables / charts
+    #: (monitoring items, view-change entries): real section content
+    items: list[UUID] = field(default_factory=list)
+
+    @property
+    def has_content(self) -> bool:
+        """Any applicable content: a claim, limitation, table, chart or structured item."""
+        return bool(self.claims or self.limits or self.tables or self.charts or self.items)
 
 
 @dataclass
@@ -258,6 +266,11 @@ class Ctx:
         d.notes.append(f"NOT_APPLICABLE_{code}"[:80])
         if code not in d.inapplicable:
             d.inapplicable.append(code)
+
+    def item(self, section: SectionId, item_id: UUID) -> None:
+        """An applicable structured output of the section (counts as section content)."""
+        if item_id not in self.drafts[section].items:
+            self.drafts[section].items.append(item_id)
 
     def inapplicable(self, f: ForensicMetric) -> bool:
         """Box 13 NOT_APPLICABLE, or a gap Box 13 traces (reason code UNSUPPORTED_SECTOR) to
@@ -2528,6 +2541,8 @@ def what_changes(ctx: Ctx, tracker: list[GuidanceTrackerEntry]) -> list[ViewChan
                 subject="SOURCE_DISAGREEMENT", thresholds=(), related_claim_ids=(),
                 related_risk_ids=(), source_required="The filed document for the period",
                 status="OPEN"))
+    for entry in out:
+        ctx.item(S.WHAT_CHANGES_THE_VIEW, entry.entry_id)
     return out
 
 
@@ -2553,11 +2568,13 @@ def monitoring(ctx: Ctx, tracker: list[GuidanceTrackerEntry], view: OrderBookVie
     def add(topic: str, subject: str, reason: str, latest: Iterable[UUID],
             trigger: Trigger, source: str, risks: Iterable[UUID] = (),
             limits: tuple[ThresholdRef, ...] = ()) -> None:
-        out.append(MonitoringItem(
+        item = MonitoringItem(
             item_id=uuid5(NS, f"monitor|{ctx.box4.company_key}|{topic}|{subject}"),
             topic=topic, subject=subject[:80], reason=reason, latest_claim_ids=tuple(latest),
             thresholds=limits, source_to_check=source, trigger=trigger,
-            related_risk_ids=tuple(risks)))
+            related_risk_ids=tuple(risks))
+        out.append(item)
+        ctx.item(S.MONITORING, item.item_id)
 
     latest_quarter = periods(ctx, ctx.analytical, "QUARTER")
     add("NEXT_RESULTS", "QUARTERLY_RESULTS", "Next quarterly results after the latest "

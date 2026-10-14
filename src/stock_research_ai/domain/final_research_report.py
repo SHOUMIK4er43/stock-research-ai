@@ -1079,6 +1079,16 @@ class FinalResearchReportDataset(BaseModel):
         if (reds or self.risks.yellow) and not any(
                 claims[i].polarity == Polarity.NEGATIVE for i in listed):
             fail("Risks are never erased from the summary")
+        # --- a section holding applicable structured items is never wholly not applicable
+        items = {SectionId.MONITORING: {m.item_id for m in self.monitoring},
+                 SectionId.WHAT_CHANGES_THE_VIEW: {e.entry_id for e in self.what_changes_the_view}}
+        if not {i for p in summary.points for i in p.monitoring_item_ids} <= items[
+                SectionId.MONITORING]:
+            fail("The executive summary only cites existing monitoring items")
+        for s in self.sections:
+            if s.status == SectionStatus.NOT_APPLICABLE and items.get(s.section_id):
+                fail(f"A section with applicable items is not wholly not applicable "
+                     f"({s.section_id.value})")
         # --- risks: company risk and data limitation never share a list
         by_risk = {r.risk_id: r for r in self.risks.risk_register}
         for r in self.risks.risk_register:

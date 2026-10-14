@@ -536,9 +536,8 @@ def _status(ctx: Ctx, section: SectionId, families: dict[InputFamily, FamilyChec
         SectionStatus, str, SectionCompleteness]:
     draft = ctx.drafts[section]
     required = REQUIRED[section]
-    if draft.status is None and draft.inapplicable and not (
-            draft.claims or draft.limits or draft.tables or draft.charts):
-        # every upstream item of the section is typed not applicable to this company
+    if draft.status is None and draft.inapplicable and not draft.has_content:
+        # every upstream item is typed not applicable and no applicable content remains
         draft.status = SectionStatus.NOT_APPLICABLE
         draft.reason = (f"NOT_APPLICABLE: all {len(draft.inapplicable)} upstream items are "
                         "not applicable to this company")

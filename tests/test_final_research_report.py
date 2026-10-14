@@ -1399,6 +1399,123 @@ def test_not_applicable_summary_point_cites_nothing():
         fr.SummaryPoint(kind=fr.SummaryKind.ORDER_BOOK, claim_ids=(), status="NOT_APPLICABLE")
 
 
+# --- green-check remediation: mixed applicable / inapplicable sections ----------------------------
+
+APPLICABLE_MONITORING = {"RISK_FLAG", "RATING", "PROMOTER_HOLDING", "DEBT", "NEXT_RESULTS"}
+_MONITORED: dict[Industry, tuple[dd.DueDiligenceDataset, FinalResearchReportDataset]] = {}
+
+
+def monitored_report(industry: Industry) -> tuple[dd.DueDiligenceDataset,
+                                                   FinalResearchReportDataset]:
+    """A financial company with a RED rating downgrade, ratings and promoter holdings."""
+    if industry not in _MONITORED:
+        box4 = make(company(), industry)
+        box5 = build_financial_analytics(box4, generated_at=NOW)
+        ratings = tuple(dd.RatingInput(action_date=day, agency="CARE", instrument="LT",
+                                       rating=rating, outlook=outlook, action=action,
+                                       source=SRC)
+                        for day, rating, outlook, action in (
+                            (date(2025, 6, 5), "CARE AA; Stable", "STABLE", "REAFFIRMED"),
+                            (date(2026, 1, 5), "CARE A; Negative", "NEGATIVE", "DOWNGRADED")))
+        d = build_due_diligence(box4, box5, request=dd.DueDiligenceRequest(
+            as_of=AS_OF, company_key=box4.company_key, ratings=ratings, holdings=holdings()),
+            generated_at=NOW)
+        _MONITORED[industry] = d, fr_build(
+            request=FinalReportRequest(as_of=AS_OF, company_key=box4.company_key),
+            generated_at=NOW, box4=box4, box5=box5, box13=d)
+    return _MONITORED[industry]
+
+
+@FINANCIALS
+def test_mixed_monitoring_section_keeps_its_applicable_items(industry):
+    d, r = monitored_report(industry)
+    assert d.sector_gate.value == "FINANCIAL"
+    assert "CREDIT_DETERIORATION" in {d.signal(i).code for i in d.red_flags}
+    topics = {m.topic for m in r.monitoring}
+    assert APPLICABLE_MONITORING <= topics and not topics & INDUSTRIAL_MONITORING
+    monitoring = r.section(S.MONITORING)
+    assert {f"NOT_APPLICABLE_{t}" for t in INDUSTRIAL_MONITORING} <= set(monitoring.notes)
+    assert monitoring.status != SectionStatus.NOT_APPLICABLE
+    assert not monitoring.status_reason.startswith("NOT_APPLICABLE")
+    c = monitoring.completeness
+    assert c.missing == () and c.not_applicable == () and c.available == c.required
+    # the sector-gated metrics stay not applicable and never become a data limitation
+    gated = {s.risk_id for s in d.signals if s.status.value == GATED}
+    inapplicable = sector_inapplicable_metric_ids(d)
+    assert gated and inapplicable
+    for claim in r.claims:
+        if claim.claim_type == CT.DATA_LIMITATION:
+            assert not {u.record_id for u in claim.upstream} & (gated | inapplicable)
+    assert r.section(S.ORDER_BOOK).status == SectionStatus.NOT_APPLICABLE
+
+
+@FINANCIALS
+def test_base_financial_monitoring_section_is_not_wholly_not_applicable(industry):
+    _, r = sector_report(industry)
+    assert {"DEBT", "NEXT_RESULTS"} <= {m.topic for m in r.monitoring}
+    assert r.section(S.MONITORING).status != SectionStatus.NOT_APPLICABLE
+
+
+@FINANCIALS
+def test_summary_monitoring_point_and_section_never_contradict(industry):
+    for _, r in (sector_report(industry), monitored_report(industry)):
+        point = next(p for p in r.executive_summary.points
+                     if p.kind == fr.SummaryKind.MONITORING)
+        assert point.status == "AVAILABLE" and point.monitoring_item_ids
+        assert set(point.monitoring_item_ids) <= {m.item_id for m in r.monitoring}
+        assert r.section(S.MONITORING).status != SectionStatus.NOT_APPLICABLE
+
+
+def test_a_section_with_items_cannot_be_forged_wholly_not_applicable():
+    _, r = monitored_report(Industry.BANK)
+
+    def na(section: SectionId) -> Any:
+        def mutate(data: dict[str, Any]) -> None:
+            i = index_of(data, "sections", lambda s: s["section_id"] == section)
+            data["sections"][i]["status"] = SectionStatus.NOT_APPLICABLE
+        return mutate
+    forge(r, na(S.MONITORING))
+    if r.what_changes_the_view:
+        forge(r, na(S.WHAT_CHANGES_THE_VIEW))
+
+    def unknown_item(data: dict[str, Any]) -> None:
+        i = index_of(data["executive_summary"], "points",
+                     lambda p: p["kind"] == fr.SummaryKind.MONITORING)
+        data["executive_summary"]["points"][i]["monitoring_item_ids"] = [uuid4()]
+    forge(r, unknown_item)
+
+
+def test_structured_item_counts_as_section_content():
+    from stock_research_ai.application.report_sections import Draft
+    inapplicable = ["CFO_CONVERSION", "DEBTOR_DAYS", "MARGIN", "CAPEX"]
+    assert not Draft(inapplicable=inapplicable).has_content
+    assert Draft(items=[uuid4()]).has_content
+    status, reason, completeness = _status_of(Draft(inapplicable=list(inapplicable)),
+                                              S.MONITORING)
+    assert status == SectionStatus.NOT_APPLICABLE and reason.startswith("NOT_APPLICABLE")
+    assert completeness.not_applicable == completeness.required == (fr.InputFamily.BOX13_DILIGENCE,)
+    status, _, completeness = _status_of(Draft(items=[uuid4()], inapplicable=list(inapplicable)),
+                                         S.MONITORING)
+    assert status == SectionStatus.COMPLETE
+    assert completeness.available == completeness.required and completeness.missing == ()
+    assert completeness.not_applicable == ()
+
+
+def test_mixed_structured_section_counts_applicable_requirements_normally():
+    from stock_research_ai.application.report_sections import Draft
+    mixed = Draft(items=[uuid4()], inapplicable=["CFO_CONVERSION"])
+    status, _, completeness = _status_of(mixed, S.MONITORING,
+                                         missing=(fr.InputFamily.BOX13_DILIGENCE,))
+    # a missing applicable requirement is still a gap; inapplicability never hides it
+    assert status == SectionStatus.UNAVAILABLE
+    assert completeness.missing == (fr.InputFamily.BOX13_DILIGENCE,)
+    assert completeness.not_applicable == ()
+    # an explicit upstream status still wins over the content rule
+    explicit = Draft(items=[uuid4()], inapplicable=["CFO_CONVERSION"],
+                     status=SectionStatus.PARTIAL, reason="partial upstream")
+    assert _status_of(explicit, S.MONITORING)[0] == SectionStatus.PARTIAL
+
+
 # --- audit remediation M-2: risk evidence reaches the core event timeline -------------------------
 
 KMP_DESC = "Change in Key Managerial Personnel"

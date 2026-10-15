@@ -217,6 +217,21 @@ def add_months(day: date, months: int) -> date:
     return date(year, month + 1, min(day.day, last))
 
 
+#: FinancialPeriod.fiscal_year's own bounds. A header year outside them is not a financial
+#: period (e.g. the statute year in "Income Tax Act, 1961"): such a column is ambiguous.
+MIN_FISCAL_YEAR, MAX_FISCAL_YEAR = 1990, 2100
+
+
+def _fiscal_year(end: date, fy_end_month: int | None) -> int:
+    if fy_end_month is None:
+        return end.year
+    return end.year if end.month <= fy_end_month else end.year + 1
+
+
+def in_fiscal_range(end: date, fy_end_month: int | None) -> bool:
+    return MIN_FISCAL_YEAR <= _fiscal_year(end, fy_end_month) <= MAX_FISCAL_YEAR
+
+
 def period_from(
     period_type: PeriodType,
     duration: int | None,
@@ -224,6 +239,9 @@ def period_from(
     label: str,
     fy_end_month: int | None,
 ) -> FinancialPeriod:
+    if end is not None and not in_fiscal_range(end, fy_end_month):
+        # not a financial period: kept as an UNKNOWN column, never a fiscal period
+        period_type, duration, end = PeriodType.UNKNOWN, None, None
     start = (
         add_months(end + timedelta(days=1), -duration)
         if end is not None and duration is not None
@@ -334,6 +352,8 @@ def interpret_columns(
                 end = None
         elif column.year and period_type == PeriodType.FY and fy_end_month is not None:
             end = date(column.year, fy_end_month, calendar.monthrange(column.year, fy_end_month)[1])
+        if end is not None and not in_fiscal_range(end, fy_end_month):
+            end, explicit = None, False  # a non-financial year header (see MIN_FISCAL_YEAR)
         ambiguous = period_type == PeriodType.UNKNOWN or end is None
         label = " ".join(column.words) or "unlabelled column"
         result.append(

@@ -26,11 +26,14 @@ from stock_research_ai.application.document_intelligence import extract_evidence
 from stock_research_ai.application.evidence_catalogue import assemble_catalogue
 from stock_research_ai.application.evidence_retrieval import retrieve_evidence
 from stock_research_ai.application.financial_parsing import (
+    MAX_FISCAL_YEAR,
+    MIN_FISCAL_YEAR,
     interpret_columns,
     map_filing_label,
     normalize_label,
     parse_financial_number,
     parse_unit_caption,
+    period_from,
 )
 from stock_research_ai.application.financial_reconciliation import (
     _row_values,
@@ -755,3 +758,71 @@ def test_no_ai_or_network_dependencies_in_reconciliation():
             )
             for name in names:
                 assert not any(word in name for word in forbidden), (module.__name__, name)
+
+
+# --- non-financial year headers (HUDCO live failure, 2026-10-15) ----------------------------
+
+
+def test_hudco_statute_year_header_is_never_a_fiscal_period():
+    """The live HUDCO filing table: the 1961 (Income Tax Act) header used to raise a
+    FinancialPeriod ValidationError and abort Box 7. It is now an ambiguous UNKNOWN column."""
+    header = ["1961", "1961", "1961", "TRACES Demand TDS 0.04 - 0.04 year ended March 31, 2007"]
+    cols = interpret_columns(header, 4, S.QUARTERLY_RESULTS, 3)
+    assert len(cols) == 4
+    for col in cols:
+        assert col.period.fiscal_year is None or (
+            MIN_FISCAL_YEAR <= col.period.fiscal_year <= MAX_FISCAL_YEAR)
+        assert col.period.period_end is None or col.period.period_end.year >= MIN_FISCAL_YEAR - 1
+    assert all(c.period.fiscal_year != 1961 for c in cols)
+
+
+@pytest.mark.parametrize("header", [
+    ["Year ended March 31, 1961"], ["Quarter ended June 30, 1956"], ["As at March 31, 1961"],
+    ["1961"], ["Year ended March 31, 1989"],
+])
+def test_pre_range_years_are_unknown_and_ambiguous(header):
+    for statement, fy_end in ((S.PROFIT_AND_LOSS, 3), (S.QUARTERLY_RESULTS, 3),
+                              (S.BALANCE_SHEET, 3), (S.PROFIT_AND_LOSS, None)):
+        (col,) = interpret_columns(header, 1, statement, fy_end)
+        assert col.ambiguous and not col.explicit
+        assert col.period.period_type == PeriodType.UNKNOWN
+        assert (col.period.period_end, col.period.period_start, col.period.fiscal_year,
+                col.period.fiscal_quarter, col.period.duration_months) == (
+                    None, None, None, None, None)
+
+
+def test_range_boundaries_still_parse_exactly_as_before():
+    (col,) = interpret_columns(["Year ended March 31, 1990"], 1, S.PROFIT_AND_LOSS, 3)
+    assert (col.period.period_type, col.period.fiscal_year, col.ambiguous) == (
+        PeriodType.FY, 1990, False)
+    (col,) = interpret_columns(["Quarter ended December 31, 1989"], 1, S.QUARTERLY_RESULTS, 3)
+    assert (col.period.period_type, col.period.fiscal_year, col.period.fiscal_quarter) == (
+        PeriodType.QUARTER, 1990, 3)  # FY1990 (Apr 1989 - Mar 1990) is in range
+    (col,) = interpret_columns(["Year ended March 31, 2026"], 1, S.PROFIT_AND_LOSS, 3)
+    assert (col.period.period_type, col.period.period_end, col.period.fiscal_year,
+            col.explicit, col.ambiguous) == (PeriodType.FY, FY26, 2026, True, False)
+
+
+def test_period_from_guard_covers_every_caller():
+    for end, fy_end in ((date(1961, 3, 31), 3), (date(1961, 3, 31), None),
+                        (date(2100, 12, 31), 3), (date(1989, 3, 31), 3)):
+        period = period_from(PeriodType.FY, 12, end, "x", fy_end)  # used to raise
+        assert (period.period_type, period.period_end, period.fiscal_year) == (
+            PeriodType.UNKNOWN, None, None)
+    normal = period_from(PeriodType.QUARTER, 3, date(2026, 6, 30), "Q1", 3)
+    assert (normal.period_type, normal.period_start, normal.period_end, normal.fiscal_year,
+            normal.fiscal_quarter) == (PeriodType.QUARTER, date(2026, 4, 1),
+                                       date(2026, 6, 30), 2027, 1)
+    undated = period_from(PeriodType.UNKNOWN, None, None, "unlabelled column", 3)
+    assert (undated.period_type, undated.period_end, undated.fiscal_year) == (
+        PeriodType.UNKNOWN, None, None)
+
+
+def test_fiscal_range_matches_the_financial_period_model():
+    from annotated_types import Ge, Le
+
+    from stock_research_ai.domain.financial_canonical import FinancialPeriod
+
+    meta = FinancialPeriod.model_fields["fiscal_year"].metadata
+    assert next(m.ge for m in meta if isinstance(m, Ge)) == MIN_FISCAL_YEAR
+    assert next(m.le for m in meta if isinstance(m, Le)) == MAX_FISCAL_YEAR

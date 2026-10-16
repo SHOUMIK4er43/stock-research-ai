@@ -210,7 +210,7 @@ TRANSCRIPT = (
 )
 
 RATING = (
-    b'"<html><body><h1>Rating Rationale</h1>\n'
+    b'"<html><body><h1>Example Industries Limited</h1><h2>Rating Rationale</h2>\n'
     b"<h2>Rating Action</h2><p>CRISIL Ratings has reaffirmed its CRISIL AA+/Stable"
     b" rating on the Rs.500 crore non-convertible debentures of Example Industries"
     b" Limited.</p>\n"
@@ -601,7 +601,7 @@ def test_extraction_is_deterministic():
 HOST = "https://docs.example.com"
 COMPANY = EvidenceCompany(
     company_key="screener:9999",
-    name="Example Industries Ltd",
+    name="Example Industries",
     source_company_key="9999",
     reporting_scope=ReportingScope.STANDALONE,
 )

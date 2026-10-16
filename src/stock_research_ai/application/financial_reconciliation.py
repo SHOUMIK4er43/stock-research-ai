@@ -50,6 +50,7 @@ from stock_research_ai.domain.document_intelligence import (
     ExtractedTable,
     ExtractionStatus,
     FinancialStatementKind,
+    IssuerBindingStatus,
 )
 from stock_research_ai.domain.evidence import AUTHORITY_RANK, EvidenceCatalogue, SourceAuthority
 from stock_research_ai.domain.financial import ReportingScope, UnitKind
@@ -631,10 +632,42 @@ def filing_observations(
     industry: Industry,
     fy_end: int | None,
 ) -> None:
+    if bundle.company_key != collector.company_key or catalogue.company.company_key != \
+            collector.company_key:
+        collector.warn(
+            "ISSUER_IDENTITY_MISMATCH",
+            "filing bundle and catalogue must belong to the canonical dataset company",
+        )
+        return
     urls = {d.document_id: d.source_url for d in catalogue.documents}
+    documents = {d.document_id: d for d in catalogue.documents}
     tables_seen = 0
     for extraction in bundle.extractions:
         if extraction.status not in (ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL):
+            identity_warnings = {
+                warning.code for warning in extraction.warnings
+                if warning.code in {"ISSUER_IDENTITY_MISMATCH", "ISSUER_IDENTITY_UNVERIFIED"}
+            }
+            for code in sorted(identity_warnings):
+                collector.warn(
+                    code,
+                    f"document {extraction.document_id} has no usable issuer-bound evidence",
+                )
+            continue
+        document = documents.get(extraction.document_id)
+        if (
+            extraction.issuer_binding_status != IssuerBindingStatus.VERIFIED
+            or extraction.issuer_binding_target_company_key != collector.company_key
+            or extraction.company_key != collector.company_key
+            or document is None
+            or document.company_key != collector.company_key
+        ):
+            code = (
+                "ISSUER_IDENTITY_MISMATCH"
+                if extraction.issuer_binding_status == IssuerBindingStatus.MISMATCH
+                else "ISSUER_IDENTITY_UNVERIFIED"
+            )
+            collector.warn(code, f"document {extraction.document_id} excluded from Box 4")
             continue
         frames: dict[UUID, _TableFrame] = {}
         previous: ExtractedTable | None = None
@@ -1327,6 +1360,12 @@ def build_canonical_dataset(
     collector = _Collector(company_key, bounds)
     if len({s.company_key for s in screeners}) > 1:
         raise ValueError("Screener datasets belong to different companies")
+    if any(s.company_key != company_key for s in screeners):
+        collector.warn(
+            "COMPANY_IDENTITY_MISMATCH",
+            "Screener dataset company key does not match the canonical dataset company",
+        )
+        screeners = ()
     industry = detect_industry(screeners)
     fy_end = fiscal_year_end_month(screeners)
     for screener in screeners:

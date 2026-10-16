@@ -50,6 +50,18 @@ class ExtractionStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class IssuerBindingStatus(StrEnum):
+    VERIFIED = "VERIFIED"
+    MISMATCH = "MISMATCH"
+    UNVERIFIED = "UNVERIFIED"
+
+
+class IssuerBindingMethod(StrEnum):
+    NORMALIZED_LEGAL_NAME = "NORMALIZED_LEGAL_NAME"
+    EXCHANGE_IDENTIFIER = "EXCHANGE_IDENTIFIER"
+    NAME_AND_EXCHANGE = "NAME_AND_EXCHANGE"
+
+
 class BlockType(StrEnum):
     TITLE = "TITLE"
     HEADING = "HEADING"
@@ -351,6 +363,9 @@ class DocumentExtraction(BaseModel):
     company_key: str
     document_type: EvidenceDocumentType
     authority: SourceAuthority
+    issuer_binding_status: IssuerBindingStatus = IssuerBindingStatus.UNVERIFIED
+    issuer_binding_target_company_key: str | None = None
+    issuer_binding_method: IssuerBindingMethod | None = None
     artifact_sha256: Sha256Hex
     artifact_reference: Label
     retrieval_id: UUID
@@ -371,6 +386,15 @@ class DocumentExtraction(BaseModel):
 
     @model_validator(mode="after")
     def internally_linked(self) -> Self:
+        if self.issuer_binding_status == IssuerBindingStatus.VERIFIED and (
+            self.issuer_binding_target_company_key != self.company_key
+            or self.issuer_binding_method is None
+        ):
+            raise ValueError("Verified issuer binding must name this extraction's company")
+        if self.issuer_binding_status != IssuerBindingStatus.VERIFIED and (
+            self.issuer_binding_method is not None
+        ):
+            raise ValueError("Unverified issuer binding cannot carry a verification method")
         pages = {p.page_number for p in self.pages}
         blocks = {b.block_id for b in self.blocks}
         tables = {t.table_id for t in self.tables}

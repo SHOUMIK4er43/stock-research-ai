@@ -106,6 +106,8 @@ class EvidenceCompany(BaseModel):
     source_company_key: ShortText
     reporting_scope: ReportingScope
     website_url: Url | None = None
+    nse_symbol: ShortText | None = None
+    bse_code: ShortText | None = None
 
 
 class DocumentDiscovery(BaseModel):

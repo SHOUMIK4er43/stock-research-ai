@@ -219,7 +219,16 @@ BANK_KPI = [
 
 async def filings(root: Path, files: dict[str, tuple[EvidenceDocumentType, list[list[str]], str]]):
     """Synthetic PDFs -> real Box 1 catalogue -> Box 2 retrieval -> Box 3 extraction."""
-    bodies = {path: make_pdf(pages) for path, (_kind, pages, _host) in files.items()}
+    # These integration fixtures represent Widget Co filings. Print an explicit issuer on
+    # page one so tests exercise the same fail-closed identity contract as production.
+    bodies = {
+        path: make_pdf(
+            [[COMPANY.name, *pages[0]], *pages[1:]]
+            if pages
+            else [[COMPANY.name]]
+        )
+        for path, (_kind, pages, _host) in files.items()
+    }
     candidates = [
         DocumentCandidate(
             document_type=kind,

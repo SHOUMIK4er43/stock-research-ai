@@ -168,6 +168,16 @@ class ScreenerEvidenceSource:
             ),
             None,
         )
+        nse_symbol = next(
+            (listing.symbol for listing in self._identity.listings
+             if listing.exchange == "NSE" and listing.symbol),
+            None,
+        )
+        bse_code = next(
+            (listing.exchange_identifier for listing in self._identity.listings
+             if listing.exchange == "BSE" and listing.exchange_identifier),
+            None,
+        )
         return EvidenceCompany(
             company_key=f"{self._identity.provider}:{self._identity.source_company_key}",
             company_id=self._identity.company_id,
@@ -175,6 +185,8 @@ class ScreenerEvidenceSource:
             source_company_key=self._identity.source_company_key,
             reporting_scope=self._identity.reporting_scope,
             website_url=website,
+            nse_symbol=nse_symbol,
+            bse_code=bse_code,
         )
 
     async def discover(self, company: EvidenceCompany) -> SourceDiscovery:

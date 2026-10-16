@@ -9,6 +9,8 @@ catalogue document and its source URL.
 
 import asyncio
 import json
+import re
+import unicodedata
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
@@ -30,8 +32,14 @@ from stock_research_ai.domain.document_intelligence import (
     ExtractionStatistics,
     ExtractionStatus,
     ExtractionWarning,
+    IssuerBindingMethod,
+    IssuerBindingStatus,
 )
-from stock_research_ai.domain.evidence import EvidenceCatalogue, EvidenceDocumentType
+from stock_research_ai.domain.evidence import (
+    EvidenceCatalogue,
+    EvidenceCompany,
+    EvidenceDocumentType,
+)
 from stock_research_ai.domain.evidence_retrieval import (
     DetectedContentType,
     EvidenceRetrievalManifest,
@@ -42,6 +50,93 @@ from stock_research_ai.domain.evidence_retrieval import (
 _NS = UUID("6c1d4e0b-2f5a-4a9e-8b3d-7e2f1a0c9d55")
 _SUCCESSFUL = {ExtractionStatus.SUCCESS}
 _USABLE = {ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL}
+_NSE_HEADER = re.compile(
+    r"\bNSE\s*(?:SYMBOL|CODE)\s*[:\-]\s*([A-Z0-9][A-Z0-9.&_-]{0,23})"
+    r"|\bNSE\s*:\s*([A-Z0-9][A-Z0-9.&_-]{0,23})",
+    re.I,
+)
+_BSE_HEADER = re.compile(
+    r"\bBSE\s*(?:SCRIP\s*)?(?:CODE)?\s*[:\-]\s*(\d{4,8})", re.I
+)
+
+
+def _issuer_name_tokens(value: str) -> tuple[str, ...]:
+    normalized = unicodedata.normalize("NFKC", value).casefold().replace("&", " and ")
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    aliases = {"ltd": "limited", "pvt": "private"}
+    return tuple(aliases.get(token, token) for token in tokens)
+
+
+def _contains_name(text: str, name: str) -> bool:
+    expected = _issuer_name_tokens(name)
+    if not expected:
+        return False
+    title_terms = {
+        "annual", "report", "financial", "result", "results", "quarter", "quarterly",
+        "ended", "year", "investor", "presentation", "earnings", "conference", "call",
+        "business", "responsibility", "sustainability", "corporate", "governance", "notice",
+        "statement", "of", "the", "for", "as", "at", "and", "bank", "limited",
+    }
+
+    def title_context(tokens: tuple[str, ...]) -> bool:
+        return all(
+            token in title_terms
+            or token.isdigit()
+            or re.fullmatch(r"(?:q[1-4]|fy)\d{0,4}", token) is not None
+            for token in tokens
+        )
+
+    # A name mention in prose is not issuer evidence. Accept an exact standalone name
+    # line or an exact name attached only to recognizable document-title/date words.
+    for line in text.splitlines():
+        observed = _issuer_name_tokens(line)
+        if not observed or len(observed) < len(expected):
+            continue
+        for start in range(len(observed) - len(expected) + 1):
+            if observed[start:start + len(expected)] != expected:
+                continue
+            if title_context(observed[:start]) and title_context(observed[start + len(expected):]):
+                return True
+    return False
+
+
+def _issuer_binding(
+    company: EvidenceCompany, raw: RawDocument
+) -> tuple[IssuerBindingStatus, IssuerBindingMethod | None]:
+    """Bind from identity printed at the front of the retrieved document, never its URL alone.
+
+    Only the first three text pages are identity-bearing. A clear conflict with an exchange
+    identifier fails; absent identity evidence remains unverified. Name normalization is
+    deliberately exact apart from Unicode, punctuation, whitespace, Ltd/Limited and PVT/Private.
+    """
+    pages = [page.text for page in raw.pages if page.number <= 3]
+    front_matter = "\n".join(pages)
+    name_match = _contains_name(front_matter, company.name)
+    nse_values = {
+        (match.group(1) or match.group(2)).strip(".&_- ").upper()
+        for match in _NSE_HEADER.finditer(front_matter)
+    }
+    bse_values = {match.group(1) for match in _BSE_HEADER.finditer(front_matter)}
+    expected_nse = company.nse_symbol.strip().upper() if company.nse_symbol else None
+    expected_bse = company.bse_code.strip() if company.bse_code else None
+
+    if expected_nse and nse_values and expected_nse not in nse_values:
+        return IssuerBindingStatus.MISMATCH, None
+    if expected_bse and bse_values and expected_bse not in bse_values:
+        return IssuerBindingStatus.MISMATCH, None
+    if (nse_values and expected_nse is None) or (bse_values and expected_bse is None):
+        return IssuerBindingStatus.UNVERIFIED, None
+    identifiers_match = bool(
+        (expected_nse and expected_nse in nse_values)
+        or (expected_bse and expected_bse in bse_values)
+    )
+    if identifiers_match and name_match:
+        return IssuerBindingStatus.VERIFIED, IssuerBindingMethod.NAME_AND_EXCHANGE
+    if identifiers_match:
+        return IssuerBindingStatus.VERIFIED, IssuerBindingMethod.EXCHANGE_IDENTIFIER
+    if name_match:
+        return IssuerBindingStatus.VERIFIED, IssuerBindingMethod.NORMALIZED_LEGAL_NAME
+    return IssuerBindingStatus.UNVERIFIED, None
 
 
 class ArtifactReader(Protocol):
@@ -54,13 +149,21 @@ class DocumentParser(Protocol):
     ) -> RawDocument: ...
 
 
-def _failed(context: DocumentContext, code: str, status: ExtractionStatus) -> DocumentExtraction:
+def _failed(
+    context: DocumentContext,
+    code: str,
+    status: ExtractionStatus,
+    *,
+    issuer_binding_status: IssuerBindingStatus = IssuerBindingStatus.UNVERIFIED,
+) -> DocumentExtraction:
     return DocumentExtraction(
         extraction_id=uuid5(_NS, f"{context.document_id}|{context.artifact_sha256}|failed|{code}"),
         document_id=context.document_id,
         company_key=context.company_key,
         document_type=context.document_type,
         authority=context.authority,
+        issuer_binding_status=issuer_binding_status,
+        issuer_binding_target_company_key=context.company_key,
         artifact_sha256=context.artifact_sha256,
         artifact_reference=context.artifact_reference,
         retrieval_id=context.retrieval_id,
@@ -142,7 +245,38 @@ async def extract_evidence(
             raw = await to_thread_cancellable(
                 parser.parse, content, record.detected_content_type, limits
             )
-            extractions.append(await asyncio.to_thread(analyse_document, raw, context, limits))
+            binding_status, binding_method = _issuer_binding(catalogue.company, raw)
+            binding_fields = {
+                "issuer_binding_status": binding_status,
+                "issuer_binding_target_company_key": catalogue.company.company_key,
+                "issuer_binding_method": binding_method,
+            }
+            has_text = any(page.text.strip() for page in raw.pages)
+            if binding_status != IssuerBindingStatus.VERIFIED and raw.status in _USABLE \
+                    and has_text:
+                code = (
+                    "ISSUER_IDENTITY_MISMATCH"
+                    if binding_status == IssuerBindingStatus.MISMATCH
+                    else "ISSUER_IDENTITY_UNVERIFIED"
+                )
+                extractions.append(_failed(
+                    context, code, ExtractionStatus.FAILED,
+                    issuer_binding_status=binding_status,
+                ))
+                continue
+            extraction = await asyncio.to_thread(analyse_document, raw, context, limits)
+            warnings = extraction.warnings
+            if binding_status != IssuerBindingStatus.VERIFIED:
+                code = (
+                    "ISSUER_IDENTITY_MISMATCH"
+                    if binding_status == IssuerBindingStatus.MISMATCH
+                    else "ISSUER_IDENTITY_UNVERIFIED"
+                )
+                warnings = (*warnings, ExtractionWarning(code=code))
+            extractions.append(extraction.model_copy(update={
+                **binding_fields,
+                "warnings": warnings,
+            }))
         except Exception:  # isolate one pathological document from the run
             extractions.append(_failed(context, "PARSER_ERROR", ExtractionStatus.FAILED))
     return _bundle(catalogue, manifest, limits, extracted_at, extractions, skipped)

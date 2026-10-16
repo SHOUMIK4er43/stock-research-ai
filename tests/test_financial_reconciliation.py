@@ -84,19 +84,37 @@ COMPANY = EvidenceCompany(
 )
 
 
-async def filings(root: Path, files: dict[str, tuple[EvidenceDocumentType, list[list[str]]]]):
+async def filings(
+    root: Path,
+    files: dict[str, tuple[EvidenceDocumentType, list[list[str]] | bytes]],
+    *,
+    company: EvidenceCompany = COMPANY,
+    issuer_name: str | None = None,
+    source_urls: dict[str, str] | None = None,
+):
     """Synthetic PDFs through the real Box 1 catalogue, Box 2 retrieval and Box 3 extraction."""
-    bodies = {path: make_pdf(pages) for path, (_kind, pages) in files.items()}
+    bodies: dict[str, bytes] = {}
+    for path, (_kind, content) in files.items():
+        if isinstance(content, bytes):
+            bodies[path] = content
+            continue
+        pages = [list(page) for page in content]
+        document_issuer = company.name if issuer_name is None else issuer_name
+        if document_issuer.strip() and pages:
+            pages[0].insert(0, document_issuer)
+        bodies[path] = make_pdf(pages)
     candidates = [
         DocumentCandidate(
             document_type=kind,
             confidence=ClassificationConfidence.HIGH,
             title=path,
-            url=f"{HOST}{path}",
+            url=(source_urls or {}).get(path, f"{HOST}{path}"),
             is_direct_document=True,
             discovery=DocumentDiscovery(
                 source_name="test",
-                discovered_via_url="https://www.screener.in/company/INFY/",
+                discovered_via_url=(
+                    "https://www.screener.in/company/" + company.source_company_key + "/"
+                ),
                 locator=path,
                 classified_as=kind,
                 discovered_at=NOW,
@@ -105,7 +123,7 @@ async def filings(root: Path, files: dict[str, tuple[EvidenceDocumentType, list[
         for path, (kind, _pages) in files.items()
     ]
     catalogue = assemble_catalogue(
-        COMPANY,
+        company,
         [SourceDiscovery(source_name="test", candidates=tuple(candidates))],
         [SourceOutcome(source_name="test", status="SUCCESS", candidates_found=len(candidates))],
         catalogued_at=NOW,
@@ -137,15 +155,33 @@ async def filings(root: Path, files: dict[str, tuple[EvidenceDocumentType, list[
     return bundle, catalogue
 
 
-def build(screeners=(), bundle=None, catalogue=None, **kw) -> CanonicalFinancialDataset:
+def build(
+    screeners=(), bundle=None, catalogue=None, *,
+    company_key: str | None = None,
+    company_name: str | None = None,
+    **kw,
+) -> CanonicalFinancialDataset:
+    target_key = company_key or (screeners[0].company_key if screeners else COMPANY.company_key)
+    target_name = company_name or (screeners[0].profile.name if screeners else COMPANY.name)
     return build_canonical_dataset(
-        company_key="screener:INFY",
-        company_name="Infosys Ltd",
+        company_key=target_key,
+        company_name=target_name,
         screeners=list(screeners),
         bundle=bundle,
         catalogue=catalogue,
         generated_at=NOW,
         **kw,
+    )
+
+
+def evidence_company_for(screener) -> EvidenceCompany:
+    return EvidenceCompany(
+        company_key=screener.company_key,
+        name=screener.profile.name,
+        source_company_key=screener.profile.source_company_key,
+        reporting_scope=screener.profile.reporting_basis,
+        nse_symbol=screener.profile.nse_symbol,
+        bse_code=screener.profile.bse_code,
     )
 
 
@@ -534,7 +570,10 @@ async def test_e_consolidated_and_standalone_stay_apart(tmp_path, fixture_dir):
         profit_and_loss("Consolidated"),
         profit_and_loss("Standalone", revenue="1,48,819 1,36,592", other="5,345 4,782"),
     ]
-    bundle, catalogue = await filings(tmp_path / "f", {"/ar.pdf": (T.ANNUAL_REPORT, pages)})
+    bundle, catalogue = await filings(
+        tmp_path / "f", {"/ar.pdf": (T.ANNUAL_REPORT, pages)},
+        company=evidence_company_for(screener),
+    )
     data = build([screener], bundle, catalogue)
     consolidated = one(data, M.REVENUE_FROM_OPERATIONS, B.CONSOLIDATED, FY26, PeriodType.FY)
     standalone = one(data, M.REVENUE_FROM_OPERATIONS, B.STANDALONE, FY26, PeriodType.FY)
@@ -591,7 +630,10 @@ async def test_g_unexplained_filing_differences_are_conflicts(tmp_path):
 async def test_g_screener_versus_filing_conflict_and_h_rounding(tmp_path, fixture_dir):
     screener = await dataset(tmp_path / "s", fixture_dir, INFY)
     page = profit_and_loss("Standalone", revenue="1,48,819.40 1,36,592", other="6,491 4,782")
-    bundle, catalogue = await filings(tmp_path / "f", {"/ar.pdf": (T.ANNUAL_REPORT, [page])})
+    bundle, catalogue = await filings(
+        tmp_path / "f", {"/ar.pdf": (T.ANNUAL_REPORT, [page])},
+        company=evidence_company_for(screener),
+    )
     data = build([screener], bundle, catalogue)
     other = record(data, M.OTHER_INCOME, B.STANDALONE, FY26, PeriodType.FY)
     assert other.outcome == Outcome.SOURCE_PRECEDENCE
@@ -706,10 +748,12 @@ async def test_deterministic_serialization_and_provenance(tmp_path, fixture_dir)
     screener = await dataset(tmp_path / "s", fixture_dir, INFY)
     pages = [profit_and_loss("Standalone", revenue="1,48,819 1,36,592"), BALANCE_ASSETS]
     first_bundle, first_catalogue = await filings(
-        tmp_path / "a", {"/ar.pdf": (T.ANNUAL_REPORT, pages)}
+        tmp_path / "a", {"/ar.pdf": (T.ANNUAL_REPORT, pages)},
+        company=evidence_company_for(screener),
     )
     second_bundle, second_catalogue = await filings(
-        tmp_path / "b", {"/ar.pdf": (T.ANNUAL_REPORT, pages)}
+        tmp_path / "b", {"/ar.pdf": (T.ANNUAL_REPORT, pages)},
+        company=evidence_company_for(screener),
     )
     first = build([screener], first_bundle, first_catalogue)
     second = build([screener], second_bundle, second_catalogue)

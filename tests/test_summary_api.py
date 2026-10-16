@@ -4,6 +4,7 @@ Screener is served by httpx.MockTransport from the offline fixtures; the summary
 an in-memory fake. No live Screener or AI Credits call is ever made.
 """
 
+import json
 from pathlib import Path
 
 import httpx
@@ -55,7 +56,7 @@ class FakeSummaryModel:
         if self.error is not None:
             raise self.error
         return SummaryModelOutput(
-            summary_text="Company overview\nA neutral summary of the supplied data.",
+            summary_text=json.dumps({"claim_ids": []}),
             requested_model=MODEL,
             reported_model="claude-sonnet-5",
             finish_reason="stop",
@@ -160,11 +161,15 @@ async def test_summary_for_detected_page_comes_from_extraction(summary_api, url,
     assert body["company"] == {"name": name, "source_company_key": key, "reporting_scope": scope}
     assert body["source_url"] == url
     assert body["summary_text"].startswith("Company overview")
+    assert body["grounding_claims"]
+    assert all(
+        claim["text"] in body["summary_text"].splitlines() for claim in body["grounding_claims"]
+    )
     assert body["provider"] == "aicredits"
     assert harness.screener_requests == [url.removeprefix("https://www.screener.in")]
     assert len(harness.model.calls) == 1
     _system, user = harness.model.calls[0]
-    assert user.startswith("SUMMARY_INPUT_V1 JSON:\n")
+    assert user.startswith("SUMMARY_CLAIM_CATALOG_V2 JSON:\n")
     assert f'"name":"{name}"' in user
 
 
@@ -287,5 +292,31 @@ async def test_responses_never_carry_credentials_or_prompt(summary_api, monkeypa
     failed = await post_summary(build(), token, {"portal": "SCREENER", "source_url": INFY_URL})
     system = harness.model.calls[0][0]
     for response in (ok, failed):
-        for forbidden in (SECRET, "Authorization", "Bearer", system[:80], "SUMMARY_INPUT_V1 JSON"):
+        for forbidden in (
+            SECRET,
+            "Authorization",
+            "Bearer",
+            system[:80],
+            "SUMMARY_CLAIM_CATALOG_V2 JSON",
+        ):
             assert forbidden not in response.text
+
+
+async def test_fabricated_model_text_never_reaches_api_response(summary_api):
+    build, harness, token = summary_api
+    harness.model = FakeSummaryModel()
+
+    async def fabricated(*, system: str, user: str) -> SummaryModelOutput:
+        harness.model.calls.append((system, user))
+        return SummaryModelOutput(
+            summary_text="Revenue was ₹12,500 Cr in FY2025.",
+            requested_model=MODEL,
+            reported_model="claude-sonnet-5",
+            finish_reason="stop",
+        )
+
+    harness.model.complete = fabricated
+    response = await post_summary(build(), token, {"portal": "SCREENER", "source_url": INFY_URL})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == SummaryErrorCode.INVALID_PROVIDER_RESPONSE.value
+    assert "12,500" not in response.text

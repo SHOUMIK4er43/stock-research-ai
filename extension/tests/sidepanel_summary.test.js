@@ -35,7 +35,7 @@ function summaryResult(sourceUrl, overrides = {}) {
     data_retrieved_at: "2026-10-06T09:00:00Z",
     generated_at: "2026-10-06T09:00:05Z",
     input_sha256: "a".repeat(64),
-    prompt_version: "SUMMARY_PROMPT_V1",
+    prompt_version: "SUMMARY_PROMPT_V2",
     summary_text: `Company overview\n${name} figures from the supplied data.\n\nOverall summary\nNeutral.`,
     limitations: [],
     provider: "aicredits",

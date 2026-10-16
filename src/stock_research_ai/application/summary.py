@@ -177,6 +177,9 @@ def _value(observation: FinancialObservation) -> SummaryValue:
         period=observation.period.fiscal_label,
         value=observation.value,
         status=observation.value_status,
+        source_observation_id=observation.id,
+        source_artifact_id=observation.provenance.raw_artifact_id,
+        source_location=observation.provenance.source_location.locator,
     )
 
 

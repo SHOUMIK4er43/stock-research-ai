@@ -21,12 +21,16 @@ from pydantic import (
 
 from stock_research_ai.domain.financial import (
     ExactDecimal,
-    FinancialUnit,
-    ReportingScope,
     ValueStatus,
 )
+from stock_research_ai.domain.financial import (
+    FinancialUnit as FinancialUnit,
+)
+from stock_research_ai.domain.financial import (
+    ReportingScope as ReportingScope,
+)
 
-SUMMARY_INPUT_MAX_BYTES = 16_384
+SUMMARY_INPUT_MAX_BYTES = 24_576
 
 BoundedText = Annotated[str, StringConstraints(min_length=1, max_length=120)]
 BoundedUrl = Annotated[str, StringConstraints(min_length=1, max_length=300)]
@@ -73,11 +77,23 @@ class SummaryValue(BaseModel):
     period: BoundedText
     value: ExactDecimal | None
     status: ValueStatus
+    source_observation_id: UUID | None = None
+    source_artifact_id: UUID | None = None
+    source_location: Annotated[str, StringConstraints(min_length=1, max_length=500)] | None = None
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
         if (self.status == ValueStatus.AVAILABLE) != (self.value is not None):
             raise ValueError("Only available values may be non-null")
+        provenance = (
+            self.source_observation_id,
+            self.source_artifact_id,
+            self.source_location,
+        )
+        if any(item is not None for item in provenance) and not all(
+            item is not None for item in provenance
+        ):
+            raise ValueError("Summary value provenance must be complete or absent")
         return self
 
 
@@ -272,6 +288,59 @@ class SummaryModelOutput(BaseModel):
     usage: SummaryUsage | None = None
 
 
+ClaimId = Annotated[str, StringConstraints(pattern=r"^c_[0-9a-f]{20}$")]
+
+
+class SummaryClaimSelection(BaseModel):
+    """The model may select catalogued claims, but may not author displayed prose."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    claim_ids: tuple[ClaimId, ...] = Field(max_length=256)
+
+    @model_validator(mode="after")
+    def unique_claims(self) -> Self:
+        if len(set(self.claim_ids)) != len(self.claim_ids):
+            raise ValueError("Claim selections must be unique")
+        return self
+
+
+class SummaryGroundingClaim(BaseModel):
+    """A deterministic displayed statement linked to observations and raw evidence."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    claim_id: ClaimId
+    kind: Literal["observation", "trend"]
+    block: SummaryBlockName
+    metric_id: MetricId
+    label: BoundedText
+    text: Annotated[str, StringConstraints(min_length=1, max_length=600)]
+    periods: tuple[BoundedText, ...] = Field(min_length=1, max_length=2)
+    values: tuple[ExactDecimal, ...] = Field(min_length=1, max_length=2)
+    unit: FinancialUnit
+    reporting_scope: ReportingScope
+    source_observation_ids: tuple[UUID, ...] = Field(min_length=1, max_length=2)
+    source_artifact_ids: tuple[UUID, ...] = Field(min_length=1, max_length=2)
+    source_locations: tuple[
+        Annotated[str, StringConstraints(min_length=1, max_length=500)], ...
+    ] = Field(min_length=1, max_length=2)
+
+    @model_validator(mode="after")
+    def linked_inputs(self) -> Self:
+        count = 2 if self.kind == "trend" else 1
+        if not all(
+            len(items) == count
+            for items in (
+                self.periods,
+                self.values,
+                self.source_observation_ids,
+                self.source_artifact_ids,
+                self.source_locations,
+            )
+        ):
+            raise ValueError("A summary claim must link each displayed value to its source")
+        return self
+
+
 class SummaryCompanyRef(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: BoundedText
@@ -291,11 +360,12 @@ class SummaryResult(BaseModel):
     data_retrieved_at: AwareDatetime | None
     generated_at: AwareDatetime
     input_sha256: Sha256Hex
-    prompt_version: Literal["SUMMARY_PROMPT_V1"] = "SUMMARY_PROMPT_V1"
+    prompt_version: Literal["SUMMARY_PROMPT_V2"] = "SUMMARY_PROMPT_V2"
     summary_text: Annotated[
         str,
         StringConstraints(min_length=1, max_length=SUMMARY_TEXT_MAX_CHARACTERS),
     ]
+    grounding_claims: tuple[SummaryGroundingClaim, ...] = Field(default=(), max_length=256)
     limitations: tuple[SummaryLimitation, ...] = Field(default=(), max_length=48)
     provider: Literal["aicredits"] = "aicredits"
     requested_model: BoundedText
@@ -311,3 +381,12 @@ class SummaryResult(BaseModel):
         if unsafe_text_characters(value):
             raise ValueError("Summary text contains disallowed characters")
         return value
+
+    @model_validator(mode="after")
+    def displayed_claims_are_linked(self) -> Self:
+        if len({claim.claim_id for claim in self.grounding_claims}) != len(self.grounding_claims):
+            raise ValueError("Summary grounding claims must be unique")
+        visible_lines = set(self.summary_text.splitlines())
+        if any(claim.text not in visible_lines for claim in self.grounding_claims):
+            raise ValueError("Every grounding claim must be an exact displayed sentence")
+        return self

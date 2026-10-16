@@ -21,7 +21,7 @@ const SCOPE_LABELS = Object.freeze({
   unknown: "Scope not stated",
 });
 
-/** The fixed SUMMARY_PROMPT_V1 section headings; any other line is body text. */
+/** The fixed SUMMARY_PROMPT_V2 section headings; any other line is body text. */
 const SECTION_HEADINGS = new Set([
   "Company overview",
   "Financial snapshot",

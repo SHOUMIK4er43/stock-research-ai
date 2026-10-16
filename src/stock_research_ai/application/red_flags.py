@@ -817,7 +817,7 @@ class Ctx:
             status=status,
             severity=severity,
             metric=code,
-            value=q(ev.value) if ev.value is not None else None,
+            value=q(ev.value) if ev.value is not None and self.gate in rule.sectors else None,
             unit=ev.unit or rule.unit,
             threshold=thresholds,
             period=ev.period_label,

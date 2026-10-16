@@ -154,7 +154,8 @@ def _f(
         periods=periods,
         sectors=sectors,
         variants=tuple(FormulaVariant(name=n, expression=e) for n, e in variants),
-        notes=notes,
+        notes=("BANK only; other financial businesses and UNKNOWN are not applicable. "
+               if sectors == (Sector.FINANCIAL,) else "") + notes,
     )
 
 

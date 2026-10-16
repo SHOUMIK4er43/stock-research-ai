@@ -16,6 +16,7 @@ from stock_research_ai.domain.calculations import (
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.financial import FinancialObservation
+from stock_research_ai.domain.financial_business import declaration_compatible
 from stock_research_ai.domain.sector_kpis import (
     KPIDefinition,
     SectorKPIEvaluation,
@@ -176,6 +177,10 @@ def evaluate_kpis(
             status="AVAILABLE",
         )
         try:
+            if not declaration_compatible(
+                source.business_classification, request.classification.classification
+            ):
+                raise GateFailure("NOT_APPLICABLE", "ACQUIRED_BUSINESS_MODEL_MISMATCH")
             issue = profile_issue(request.classification.classification, profile)
             if issue:
                 raise GateFailure("NOT_APPLICABLE", issue)

@@ -573,6 +573,11 @@ def positive_controls(ctx: Ctx, end: date | None) -> dict[str, UUID]:
 
 def metric_of(ctx: Ctx, code: str, calc: Calc, kind: MetricKind, layer: Layer, unit: str,
               label: str, formula_id: str, basis: ReportingBasis | None = None) -> ForensicMetric:
+    definition = FORMULAS.get(code) or next(
+        (f for f in FORMULAS.values() if f.formula_id == formula_id), None)
+    if ctx.financial and definition is not None and definition.applicability != "all sectors":
+        calc = Calc("NOT_APPLICABLE", None, "BUSINESS_MODEL_NOT_APPLICABLE", calc.period,
+                    Trace())
     b = basis_of(basis or ctx.analytical)
     period = calc.period
     available = calc.ok and bool(calc.trace.record_ids)

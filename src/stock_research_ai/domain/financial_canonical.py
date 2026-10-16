@@ -147,6 +147,7 @@ class Industry(StrEnum):
     BANK = "BANK"
     NBFC = "NBFC"
     INSURANCE = "INSURANCE"
+    UNKNOWN = "UNKNOWN"
 
 
 class CanonicalMetric(StrEnum):

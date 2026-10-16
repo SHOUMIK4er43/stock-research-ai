@@ -48,6 +48,7 @@ from stock_research_ai.domain.financial_analytics import (
     MetricInput,
     Sector,
 )
+from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
     CanonicalFinancialValue,
@@ -67,7 +68,6 @@ M = CanonicalMetric
 S = CalculationStatus
 U = AnalyticsUnit
 NS = UUID("b6f1d2a4-3c5e-4f7a-8b9c-0d1e2f3a4b5c")
-FINANCIAL_INDUSTRIES = {Industry.BANK, Industry.NBFC, Industry.INSURANCE}
 #: A SOURCE_PRECEDENCE input whose losing source differs by more than this share of the
 #: selected value is a material conflict: confidence LOW, warning MATERIAL_INPUT_CONFLICT.
 MATERIAL_CONFLICT_SHARE = Decimal("0.10")
@@ -343,7 +343,7 @@ class Engine:
 
     @property
     def sector(self) -> Sector:
-        return Sector.FINANCIAL if self.industry in FINANCIAL_INDUSTRIES else Sector.GENERAL
+        return Sector.FINANCIAL if self.industry in RESTRICTED_INDUSTRIES else Sector.GENERAL
 
     @property
     def financial(self) -> bool:
@@ -420,7 +420,9 @@ class Engine:
             "formula_id": formula_id,
             "formula_text": expression,
         }
-        if self.sector not in definition.sectors:
+        if self.sector not in definition.sectors or (
+            definition.sectors == (Sector.FINANCIAL,) and self.industry != Industry.BANK
+        ):
             metric = CalculatedMetric(
                 **common,
                 status=S.UNSUPPORTED_SECTOR,

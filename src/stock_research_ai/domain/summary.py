@@ -29,6 +29,7 @@ from stock_research_ai.domain.financial import (
 from stock_research_ai.domain.financial import (
     ReportingScope as ReportingScope,
 )
+from stock_research_ai.domain.financial_canonical import Industry
 
 SUMMARY_INPUT_MAX_BYTES = 24_576
 
@@ -138,6 +139,7 @@ class SummaryInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Literal["SUMMARY_INPUT_V1"] = "SUMMARY_INPUT_V1"
     company: SummaryCompany
+    business_classification: Industry = Industry.UNKNOWN
     snapshot: tuple[SummaryMetric, ...] = Field(default=(), max_length=16)
     annual: SummaryBlock
     quarterly: SummaryBlock

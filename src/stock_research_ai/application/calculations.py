@@ -16,6 +16,7 @@ from stock_research_ai.domain.calculations import (
 )
 from stock_research_ai.domain.extraction import CompanyExtractionResult
 from stock_research_ai.domain.financial import FinancialObservation
+from stock_research_ai.domain.financial_business import declaration_compatible
 
 FORMULAS = {
     "CFO_TO_NET_PROFIT": FormulaDefinition(
@@ -152,6 +153,8 @@ def evaluate(
     issues: list[str],
 ) -> Fraction:
     sector = request.sector.classification
+    if not declaration_compatible(source.business_classification, sector):
+        raise InputFailure("NOT_APPLICABLE", "ACQUIRED_BUSINESS_MODEL_MISMATCH")
     if sector in {"UNKNOWN", "OTHER_FINANCIAL"}:
         raise InputFailure("NOT_APPLICABLE", "SECTOR_CONVENTION_NOT_SUPPORTED")
     if request.reporting_scope == "unknown":

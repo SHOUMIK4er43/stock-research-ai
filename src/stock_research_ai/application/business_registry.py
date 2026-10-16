@@ -987,6 +987,17 @@ def sector_family(industry: Industry, classification: list[str]) -> tuple[Sector
         if name.lower().strip() in _FAMILY_NAMES
     }
     families = {f for _, f in found}
+    if industry == Industry.UNKNOWN:
+        # UNKNOWN is also used when older callers provide no Screener financial
+        # evidence. Preserve profile-derived sector handling; a finance profile
+        # remains restricted even when Box 4 could not resolve the subtype.
+        financial_profile = " ".join(classification)
+        if re.search(
+            r"\b(?:financial|bank|insurance|insurer|nbfc|housing finance|lending)\b",
+            financial_profile,
+            re.I,
+        ):
+            return SectorFamily.FINANCIAL, "unresolved financial Box 1B classification"
     if len(families) == 1:
         family = families.pop()
         names = sorted(n for n, f in found if f == family)

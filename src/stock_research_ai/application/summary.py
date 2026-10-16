@@ -9,6 +9,10 @@ from collections.abc import Sequence
 
 from stock_research_ai.domain.extraction import CompanyExtractionResult, Section
 from stock_research_ai.domain.financial import FinancialObservation, PeriodFrequency
+from stock_research_ai.domain.financial_business import (
+    reported_metric_applicable as reported_metric_applicable,
+)
+from stock_research_ai.domain.financial_canonical import Industry
 from stock_research_ai.domain.summary import (
     SUMMARY_INPUT_MAX_BYTES,
     SummaryBlock,
@@ -99,6 +103,7 @@ def project_summary_input(extraction: CompanyExtractionResult) -> SummaryInput:
         *_section_limitations(extraction, "company", Section.COMPANY_IDENTITY),
         *_section_limitations(extraction, "snapshot", Section.TOP_METRICS),
     ]
+    industry = extraction.business_classification or Industry.UNKNOWN
     snapshot: list[SummaryMetric] = []
     for alternatives, required in SNAPSHOT:
         found = [
@@ -111,9 +116,11 @@ def project_summary_input(extraction: CompanyExtractionResult) -> SummaryInput:
             )
             for metric_id in alternatives
             for o in extraction.top_metrics
-            if o.metric_id == metric_id
+            if o.metric_id == metric_id and reported_metric_applicable(industry, metric_id)
         ]
-        if not found and required:
+        if not found and required and any(
+            reported_metric_applicable(industry, m) for m in alternatives
+        ):
             limitations.append(_not_present("snapshot", alternatives))
         snapshot.extend(found)
     blocks: dict[SummaryBlockName, SummaryBlock] = {}
@@ -124,6 +131,8 @@ def project_summary_input(extraction: CompanyExtractionResult) -> SummaryInput:
         for alternatives, required in allowlist:
             group_rows: list[SummaryRow] = []
             for metric_id in alternatives:
+                if not reported_metric_applicable(industry, metric_id):
+                    continue
                 for series in _by_source_label(observations, metric_id):
                     row, codes = _row(series, metric_id, frequency, cap)
                     limitations.extend(
@@ -132,7 +141,9 @@ def project_summary_input(extraction: CompanyExtractionResult) -> SummaryInput:
                     )
                     if row is not None:
                         group_rows.append(row)
-            if not group_rows and required:
+            if not group_rows and required and any(
+                reported_metric_applicable(industry, m) for m in alternatives
+            ):
                 limitations.append(_not_present(name, alternatives))
             rows.extend(group_rows)
         blocks[name] = SummaryBlock(rows=tuple(rows))
@@ -140,6 +151,7 @@ def project_summary_input(extraction: CompanyExtractionResult) -> SummaryInput:
         extraction.retrievals[0].retrieved_at if len(extraction.retrievals) == 1 else None
     )
     summary = SummaryInput(
+        business_classification=industry,
         company=SummaryCompany(
             name=identity.name,
             source_company_key=identity.source_company_key,

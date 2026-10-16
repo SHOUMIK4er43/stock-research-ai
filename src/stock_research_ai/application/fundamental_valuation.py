@@ -25,7 +25,7 @@ from datetime import date, datetime
 from decimal import Decimal, localcontext
 from uuid import UUID, uuid5
 
-from stock_research_ai.application.financial_metrics import FINANCIAL_INDUSTRIES, Fact
+from stock_research_ai.application.financial_metrics import Fact
 from stock_research_ai.application.financial_reconciliation import canonical_dataset_json
 from stock_research_ai.application.forecast_integrity import (
     ForecastIntegrityError,
@@ -37,6 +37,7 @@ from stock_research_ai.application.forecasting import (
     canonical_forecast_json,
 )
 from stock_research_ai.domain.financial_analytics import MetricInput
+from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
     CanonicalMetric,
@@ -1432,7 +1433,7 @@ def build_valuation(
             methods=req.methods,
             years=all_years[:horizon],
             all_years=all_years,
-            financial=forecast.industry in FINANCIAL_INDUSTRIES,
+            financial=forecast.industry in RESTRICTED_INDUSTRIES,
             shared=shared,
         )
         for scenario in req.scenarios:

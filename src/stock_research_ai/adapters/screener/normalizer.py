@@ -33,6 +33,8 @@ from stock_research_ai.domain.extraction import (
     SectionCoverage,
 )
 from stock_research_ai.domain.financial import FinancialObservation, ReportingScope
+from stock_research_ai.domain.financial_business import classify_business, has_business_evidence
+from stock_research_ai.domain.financial_canonical import Industry
 from stock_research_ai.domain.peers import PeerSnapshot
 from stock_research_ai.domain.provenance import RawArtifact, RetrievalStatus, SourceRetrieval
 from stock_research_ai.domain.shareholding import ShareholdingSnapshot
@@ -242,6 +244,7 @@ class ScreenerNormalizer:
                 id=uuid4(), provider=retrieval.provider, created_at=datetime.now(UTC)
             ),
             company=identity,
+            business_classification=_business_classification(root),
             metric_definitions=tuple(context.definitions[k] for k in sorted(context.definitions))
             if context
             else (),
@@ -258,3 +261,20 @@ class ScreenerNormalizer:
             raw_artifacts=(artifact,) if artifact else (),
             coverage=CoverageReport(overall=overall, sections=tuple(coverage)),
         )
+
+
+def _business_classification(root: Node) -> Industry | None:
+    peers, top = root.by_id("peers"), root.by_id("top")
+    about = top.by_class("about") if top else None
+    names = [a.text for a in peers.all("a") if a.attrs.get("title") in
+             {"Broad Sector", "Sector", "Broad Industry", "Industry"}] if peers else []
+    labels: list[str] = []
+    for identifier in ("profit-loss", "quarters", "balance-sheet", "ratios"):
+        section = root.by_id(identifier)
+        if section:
+            for table in data_tables(section):
+                labels.extend(row[0].text.rstrip(" +") for row in rows(table) if row)
+    description = about.text if about else ""
+    if not has_business_evidence(names, description, labels):
+        return None
+    return classify_business(names, description=description, labels=labels)

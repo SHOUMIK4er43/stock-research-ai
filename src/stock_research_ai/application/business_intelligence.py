@@ -248,7 +248,8 @@ def build_business_intelligence(
             canonical_of[observation] = value.canonical_value_id
     builder = Builder([], canonical_of)
     segment_analytics(
-        segments, canonical_key, presented, comparability, seg_values, totals, builder
+        segments, canonical_key, presented, comparability, seg_values, totals, builder,
+        industrial=not financial,
     )
     geography_analytics(geographies, geo_values, builder)
     kpi_analytics(kpi_values, builder)

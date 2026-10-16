@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Literal, Protocol
 from uuid import UUID
 
-from stock_research_ai.application.summary import ensure_within_budget
+from stock_research_ai.application.summary import ensure_within_budget, reported_metric_applicable
 from stock_research_ai.domain.summary import (
     SUMMARY_REQUEST_MAX_BYTES,
     SUMMARY_TEXT_MAX_CHARACTERS,
@@ -261,6 +261,8 @@ def build_summary_claims(summary_input: SummaryInput) -> tuple[SummaryGroundingC
     """Compile only provenance-complete observations and direct direction comparisons."""
     claims: list[SummaryGroundingClaim] = []
     for metric in summary_input.snapshot:
+        if not reported_metric_applicable(summary_input.business_classification, metric.metric_id):
+            continue
         claims.extend(
             _claims_for_values(
                 "snapshot",
@@ -274,6 +276,8 @@ def build_summary_claims(summary_input: SummaryInput) -> tuple[SummaryGroundingC
     for block_name in ("annual", "quarterly", "balance_sheet", "cash_flow"):
         block = getattr(summary_input, block_name)
         for row in block.rows:
+            if not reported_metric_applicable(summary_input.business_classification, row.metric_id):
+                continue
             values = (*row.values, *((row.ttm,) if row.ttm is not None else ()))
             claims.extend(
                 _claims_for_values(

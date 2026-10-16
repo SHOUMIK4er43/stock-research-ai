@@ -53,7 +53,6 @@ from stock_research_ai.application.financial_analytics import (
     frame_currencies,
 )
 from stock_research_ai.application.financial_metrics import (
-    FINANCIAL_INDUSTRIES,
     REVENUE,
     Fact,
     Frame,
@@ -112,6 +111,7 @@ from stock_research_ai.domain.due_diligence import (
     UpstreamRef,
 )
 from stock_research_ai.domain.financial_analytics import FinancialAnalyticsDataset, PeriodRole
+from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
     CanonicalMetric,
@@ -652,7 +652,7 @@ def build_due_diligence(
         box4=box4, box5=box5, request=inputs.request, frames=frames, currency=currency,
         analytical=analytical, control=control, periods=Periods(box4.fiscal_year_end_month),
         latest={b: _latest(box5, b) for b in frames}, financial=box4.industry in
-        FINANCIAL_INDUSTRIES, b5=Box5View(box5),
+        RESTRICTED_INDUSTRIES, b5=Box5View(box5),
         obs_source={o.observation_id: f"{o.source.source_url}#{o.source.locator}"[:1000]
                     for o in box4.observations},
         dd_key=dd_key, evidence_index=evidence_index, inputs=inputs,

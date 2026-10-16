@@ -54,6 +54,7 @@ from stock_research_ai.domain.document_intelligence import (
 )
 from stock_research_ai.domain.evidence import AUTHORITY_RANK, EvidenceCatalogue, SourceAuthority
 from stock_research_ai.domain.financial import ReportingScope, UnitKind
+from stock_research_ai.domain.financial_business import CLASSIFICATION_VERSION, classify_business
 from stock_research_ai.domain.financial_canonical import (
     CANONICAL_SCALE,
     SCALE_FACTOR,
@@ -158,11 +159,15 @@ def _normalized(parsed: ParsedNumber, kind: ValueKind, scale: Scale) -> Decimal 
 
 
 def detect_industry(screeners: Sequence[DetailedScreenerDataset]) -> Industry:
-    labels = {row.label for s in screeners for table in s.tables for row in table.rows}
-    names = {c.name.lower() for s in screeners for c in s.profile.classification}
-    if {"Financing Profit", "Deposits"} & labels or "banks" in names:
-        return Industry.BANK
-    return Industry.GENERAL
+    decisions = {
+        classify_business(
+            [c.name for c in s.profile.classification],
+            description=s.profile.about or "",
+            labels=[row.label for table in s.tables for row in table.rows],
+        )
+        for s in screeners
+    }
+    return decisions.pop() if len(decisions) == 1 else Industry.UNKNOWN
 
 
 def fiscal_year_end_month(screeners: Sequence[DetailedScreenerDataset]) -> int | None:
@@ -184,7 +189,14 @@ def fiscal_year_end_month(screeners: Sequence[DetailedScreenerDataset]) -> int |
 def screener_observations(
     screener: DetailedScreenerDataset, collector: _Collector, industry: Industry, fy_end: int | None
 ) -> None:
-    mapping = SCREENER_BANK if industry == Industry.BANK else SCREENER_GENERAL
+    mapping: dict[str, CanonicalMetric | None] = dict(SCREENER_GENERAL)
+    if industry == Industry.BANK:
+        mapping = SCREENER_BANK
+    elif industry != Industry.GENERAL:
+        # Preserve reported aggregates without interpreting them as industrial operations
+        # or silently relabelling a lender's financing profit as a bank-only metric.
+        mapping.update({"Revenue": CanonicalMetric.REVENUE, "Operating Profit": None,
+                        "Expenses": None, "Interest": None})
     source = screener.source
     for table in screener.tables:
         statement = _SCREENER_TABLES.get(table.kind)
@@ -1367,6 +1379,10 @@ def build_canonical_dataset(
         )
         screeners = ()
     industry = detect_industry(screeners)
+    if industry == Industry.UNKNOWN and screeners:
+        collector.warn("BUSINESS_CLASSIFICATION_UNRESOLVED",
+                       f"{CLASSIFICATION_VERSION}: absent, ambiguous or conflicting business "
+                       "evidence; industrial and bank-only metrics are restricted")
     fy_end = fiscal_year_end_month(screeners)
     for screener in screeners:
         screener_observations(screener, collector, industry, fy_end)
@@ -1393,6 +1409,7 @@ def build_canonical_dataset(
                     *sorted(s.source.content_sha256 for s in screeners),
                     str(bundle.bundle_id) if bundle else "-",
                     TAXONOMY_VERSION,
+                    CLASSIFICATION_VERSION,
                     policy.model_dump_json(),
                     bounds.model_dump_json(),
                 ]

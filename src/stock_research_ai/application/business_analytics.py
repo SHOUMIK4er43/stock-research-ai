@@ -191,6 +191,8 @@ def segment_analytics(
     values: Sequence[CanonicalSegmentValue],
     totals: Sequence[TotalReconciliation],
     builder: Builder,
+    *,
+    industrial: bool = True,
 ) -> None:
     by_frame: dict[tuple[UUID, str, str, date], list[SegmentObservation]] = {}
     for o in observations:
@@ -352,7 +354,11 @@ def segment_analytics(
                 result = one(latest.frame_id, metric.value, key, end)
                 if result is None or result.normalized_value is None:
                     continue
-                if rev.normalized_value == 0:
+                if not industrial:
+                    value, status, reason = (
+                        None, AnalyticStatus.NOT_APPLICABLE, "business model does not support "
+                        "industrial segment margin interpretation")
+                elif rev.normalized_value == 0:
                     value, status, reason = None, AnalyticStatus.DIVISION_BY_ZERO, "zero revenue"
                 else:
                     value = result.normalized_value / rev.normalized_value * HUNDRED

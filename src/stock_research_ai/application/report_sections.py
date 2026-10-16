@@ -80,6 +80,7 @@ from stock_research_ai.domain.financial_analytics import (
     CalculationStatus,
     FinancialAnalyticsDataset,
 )
+from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
     CanonicalFinancialValue,
@@ -979,6 +980,10 @@ def series_table(ctx: Ctx, section: SectionId, code: str, title: str, basis: Cla
             cid: UUID | None = None
             note, not_app = "NOT_REPORTED", False
             for code_ in codes:
+                if (layer == "B4" and code_ == "OPERATING_PROFIT"
+                        and ctx.box4.industry in RESTRICTED_INDUSTRIES):
+                    note, not_app = "NOT_APPLICABLE", True
+                    break
                 if layer == "B4":
                     v = ctx.b4.get((code_, basis.value, ptype, e))
                     if v is not None:

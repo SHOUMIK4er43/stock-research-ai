@@ -27,7 +27,6 @@ from uuid import UUID, uuid5
 from stock_research_ai.application.financial_analytics import frame_currencies
 from stock_research_ai.application.financial_formulas import cagr
 from stock_research_ai.application.financial_metrics import (
-    FINANCIAL_INDUSTRIES,
     REVENUE,
     Fact,
     Frame,
@@ -38,6 +37,7 @@ from stock_research_ai.application.financial_metrics import (
 )
 from stock_research_ai.application.financial_reconciliation import canonical_dataset_json
 from stock_research_ai.domain.financial_analytics import AnalyticsLimits, MetricInput
+from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
     CanonicalMetric,
@@ -1562,7 +1562,7 @@ def build_forecast(
         growth = derive.growth()
         if growth:
             candidates[D.REVENUE_GROWTH] = growth
-        if data.industry in FINANCIAL_INDUSTRIES:
+        if data.industry in RESTRICTED_INDUSTRIES:
             issues.add(
                 "UNSUPPORTED_SECTOR",
                 Severity.WARNING,
@@ -1679,7 +1679,7 @@ def build_forecast(
                     ("DEBT_HELD_FLAT", "FALLBACK_ASSUMPTION"),
                 )
                 candidates[D.DEBT_CHANGE] = {s: fallback for s in SC}
-    drivers = _drivers(route, finance_method, minority, data.industry in FINANCIAL_INDUSTRIES)
+    drivers = _drivers(route, finance_method, minority, data.industry in RESTRICTED_INDUSTRIES)
     for a in req.explicit_assumptions:
         if fatal is None and a.driver not in drivers:
             raise ForecastInputError(

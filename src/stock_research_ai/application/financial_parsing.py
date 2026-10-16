@@ -156,7 +156,10 @@ def parse_unit_caption(line: str) -> UnitCaption | None:
 
 _MONTHS = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
 _TOKENS = re.compile(
-    r"(?P<kind>quarter|three months|3 months|six months|6 months|half[- ]year|nine months"
+    r"(?P<fy_year>F\.?\s*Y\.?\s*(?:19|20)\d{2})"
+    r"|(?P<month_year>\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)"
+    r"[a-z]*\.?\s+(?:19|20)\d{2}\b)"
+    r"|(?P<kind>quarter|three months|3 months|six months|6 months|half[- ]year|nine months"
     r"|9 months|twelve months|12 months|year)"
     r"|(?P<ended>\bended\b|\bending\b)"
     r"|(?P<asat>\bas (?:at|on)\b)"
@@ -165,6 +168,29 @@ _TOKENS = re.compile(
     r"|(?P<year>\b(?:19|20)\d{2}\b)"
     r"|(?P<audit>\bunaudited\b|\baudited\b|\breviewed\b)"
     r"|(?P<restated>\brestated\b)",
+    re.I,
+)
+_EXPLICIT_PERIOD_YEAR = re.compile(
+    r"\b(?:year|quarter|three months|six months|nine months|twelve months)\s+"
+    r"(?:ended|ending)\s+(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)"
+    r"[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*|"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|"
+    r"nov|dec)[a-z]*\.?\s*,?\s*)?(?:19|20)\d{2}\b|"
+    r"\byear\s+(?:19|20)\d{2}\b|"
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+"
+    r"\d{1,2}(?:st|nd|rd|th)?\s*,?\s*(?:19|20)\d{2}\b|"
+    r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|"
+    r"oct|nov|dec)[a-z]*\.?\s*,?\s*(?:19|20)\d{2}\b|"
+    r"\bas\s+(?:at|on)\s+(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|"
+    r"dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*)?(?:19|20)\d{2}\b",
+    re.I,
+)
+_PERIOD_HEADER_CUE = re.compile(
+    r"^\s*(?:(?:(?:particulars|note|no)\s+)*(?:year|quarter|three months|six months|"
+    r"nine months|twelve months)\s+(?:ended|ending)(?:\s+(?:jan|feb|mar|apr|may|jun|"
+    r"jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?)?|"
+    r"as\s+(?:at|on)(?:\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)"
+    r"[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?)?)\s*$",
     re.I,
 )
 _KINDS = {
@@ -187,6 +213,7 @@ _KINDS = {
 class ColumnHeader:
     kind: str | None = None
     month_day: str | None = None
+    month_year: tuple[int, int] | None = None
     year: int | None = None
     as_at: bool = False
     audited: bool | None = None
@@ -273,16 +300,68 @@ def interpret_columns(
 
     Per line: when the line has exactly one column-token per value column, tokens are
     assigned positionally. Otherwise, per attribute: as many items as columns -> by
-    position; as many as columns still lacking it -> fill in order; exactly one -> applies
-    to every column lacking it; anything else -> left unset (ambiguous).
+    position; as many as columns still lacking it -> fill in order. A lone year binds to at
+    most one column; period and audit labels may still apply across columns.
     """
     columns = [ColumnHeader() for _ in range(count)]
+    tokenized = [
+        (line, [(m.lastgroup or "", m.group(0)) for m in _TOKENS.finditer(line)])
+        for line in header_lines
+    ]
+    standalone_years = [
+        (index, int(tokens[0][1]))
+        for index, (line, tokens) in enumerate(tokenized)
+        if len(tokens) == 1
+        and tokens[0][0] == "year"
+        and re.fullmatch(r"\s*(?:19|20)\d{2}\s*", line)
+    ]
+    standalone_values = [year for _, year in standalone_years]
+    first_standalone_index = standalone_years[0][0] if standalone_years else 0
+    preceding_header_line = next(
+        (
+            header_lines[index].strip()
+            for index in range(first_standalone_index - 1, -1, -1)
+            if header_lines[index].strip()
+        ),
+        "",
+    )
+    stacked_year_indices = {
+        index
+        for index, _ in standalone_years
+    } if (
+        count > 1
+        and len(standalone_years) == count
+        and len(set(standalone_values)) == count
+        and (
+            standalone_values == sorted(standalone_values)
+            or standalone_values == sorted(standalone_values, reverse=True)
+        )
+        and _PERIOD_HEADER_CUE.search(preceding_header_line)
+    ) else set()
 
     def put(column: ColumnHeader, group: str, text: str) -> None:
         lowered = text.lower()
         column.words.append(text)
         if group == "kind" and column.kind is None:
             column.kind = lowered.replace("-", " ") if "half" in lowered else lowered
+        elif group == "fy_year":
+            year_match = re.search(r"(?:19|20)\d{2}", text)
+            if year_match is None:
+                return
+            year = int(year_match.group(0))
+            column.year = column.year if column.year is not None else year
+            if column.kind is None:
+                column.kind = "year"
+        elif group == "month_year":
+            match = re.fullmatch(
+                r"([a-z]+)\.?\s+((?:19|20)\d{2})", lowered
+            )
+            if match:
+                month = _MONTHS.get(match.group(1)[:3])
+                year = int(match.group(2))
+                if month is not None:
+                    column.month_year = (month, year)
+                    column.year = column.year if column.year is not None else year
         elif group == "date" and column.month_day is None:
             column.month_day = text
         elif group == "year" and column.year is None:
@@ -294,9 +373,50 @@ def interpret_columns(
         elif group == "restated":
             column.restated = True
 
-    attribute = {"kind": "kind", "date": "month_day", "year": "year", "audit": "audited"}
-    for line in header_lines:
-        tokens = [(m.lastgroup or "", m.group(0)) for m in _TOKENS.finditer(line)]
+    attribute = {
+        "kind": "kind",
+        "date": "month_day",
+        "fy_year": "year",
+        "month_year": "month_year",
+        "year": "year",
+        "audit": "audited",
+    }
+    for line_index, (line, original_tokens) in enumerate(tokenized):
+        tokens = list(original_tokens)
+        if not tokens:
+            continue
+        years = [text for group, text in tokens if group == "year"]
+        pure_year_sequence = (
+            count > 1
+            and len(years) == count
+            and re.fullmatch(
+                r"\s*(?:(?:19|20)\d{2})(?:[\s,;/|]+(?:19|20)\d{2})+[ ,;/|]*",
+                line,
+            )
+            is not None
+        )
+        stacked_single_year = line_index in stacked_year_indices
+        explicit_year_spans = {
+            (match.end() - 4, match.end())
+            for match in _EXPLICIT_PERIOD_YEAR.finditer(line)
+        }
+        explicit_year_indices = {
+            index for index, match in enumerate(_TOKENS.finditer(line))
+            if match.lastgroup == "year" and (match.start(), match.end()) in explicit_year_spans
+        }
+        # A bare numeric year is useful only as a complete multi-column year row or when
+        # it is attached to an explicit period heading. This keeps unrelated text such as
+        # "Companies Act 2013" out of the date-position fill logic.
+        if pure_year_sequence or stacked_single_year:
+            tokens = [("fy_year", text) if group == "year" else (group, text)
+                      for group, text in tokens]
+        else:
+            tokens = [
+                (group, text)
+                for index, (group, text) in enumerate(tokens)
+                if group != "year"
+                or index in explicit_year_indices
+            ]
         if not tokens:
             continue
         groups = [g for g, _ in tokens]
@@ -306,7 +426,10 @@ def interpret_columns(
             for column, (group, text) in zip(columns, tokens, strict=True):
                 put(column, group, text)
             continue
-        for group in ("kind", "ended", "date", "year", "audit", "asat", "restated"):
+        for group in (
+            "kind", "ended", "date", "fy_year", "month_year", "year", "audit", "asat",
+            "restated",
+        ):
             items = [text for g, text in tokens if g == group]
             if not items:
                 continue
@@ -323,6 +446,18 @@ def interpret_columns(
                         put(column, group, items[0])
                 continue
             missing = [c for c in columns if getattr(c, attribute[group]) is None]
+            if group in ("fy_year", "month_year", "year"):
+                if len(items) == count:
+                    for column, text in zip(columns, items, strict=True):
+                        put(column, group, text)
+                elif items and len(items) == len(missing):
+                    for column, text in zip(missing, items, strict=True):
+                        put(column, group, text)
+                elif len(items) == 1 and missing:
+                    # A single year identifies at most one value column. Replicating it
+                    # across columns is how unrelated years can silently become periods.
+                    put(missing[0], group, items[0])
+                continue
             if len(items) == count:
                 for column, text in zip(columns, items, strict=True):
                     put(column, group, text)
@@ -335,16 +470,28 @@ def interpret_columns(
     result: list[ColumnPeriod] = []
     for column in columns:
         kind = _KINDS.get(column.kind or "")
-        if column.as_at or (kind is None and statement == StatementType.BALANCE_SHEET):
+        end: date | None = None
+        explicit = False
+        month_day = _month_day(column.month_day) if column.month_day else None
+        if column.month_year is not None:
+            month, year = column.month_year
+            end = date(year, month, calendar.monthrange(year, month)[1])
+            if statement == StatementType.BALANCE_SHEET:
+                period_type, duration = PeriodType.POINT_IN_TIME, None
+            elif statement == StatementType.QUARTERLY_RESULTS:
+                period_type, duration = PeriodType.QUARTER, 3
+            elif fy_end_month == month:
+                period_type, duration = PeriodType.FY, 12
+            else:
+                period_type, duration = PeriodType.UNKNOWN, None
+            explicit = True
+        elif column.as_at or (kind is None and statement == StatementType.BALANCE_SHEET):
             period_type, duration = PeriodType.POINT_IN_TIME, None
         elif kind is not None:
             period_type, duration = kind
         else:
             period_type, duration = PeriodType.UNKNOWN, None
-        end: date | None = None
-        explicit = False
-        month_day = _month_day(column.month_day) if column.month_day else None
-        if month_day and column.year:
+        if end is None and month_day and column.year:
             try:
                 end = date(column.year, *month_day)
                 explicit = kind is not None or column.as_at
@@ -352,6 +499,8 @@ def interpret_columns(
                 end = None
         elif column.year and period_type == PeriodType.FY and fy_end_month is not None:
             end = date(column.year, fy_end_month, calendar.monthrange(column.year, fy_end_month)[1])
+        if period_type == PeriodType.UNKNOWN:
+            end, explicit = None, False
         if end is not None and not in_fiscal_range(end, fy_end_month):
             end, explicit = None, False  # a non-financial year header (see MIN_FISCAL_YEAR)
         ambiguous = period_type == PeriodType.UNKNOWN or end is None

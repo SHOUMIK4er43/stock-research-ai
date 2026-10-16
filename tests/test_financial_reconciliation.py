@@ -416,6 +416,128 @@ def test_point_in_time_and_ambiguous_headers():
     )
 
 
+def test_in_range_nonfinancial_years_do_not_override_structural_fiscal_columns():
+    cols = interpret_columns(
+        ["Companies Act 2013", "FY2026 FY2025"], 2, S.PROFIT_AND_LOSS, 3
+    )
+    assert [(c.period.period_type, c.period.period_end, c.period.fiscal_year) for c in cols] == [
+        (PeriodType.FY, FY26, 2026),
+        (PeriodType.FY, FY25, 2025),
+    ]
+    cols = interpret_columns(
+        [
+            "Year ended March 31, 2026 Companies Act 2013",
+            "Year ended March 31, 2025",
+        ],
+        2,
+        S.PROFIT_AND_LOSS,
+        3,
+    )
+    assert [c.period.period_end for c in cols] == [FY26, FY25]
+
+    cols = interpret_columns(
+        ["SEBI Regulations 2015", "Mar 2026 Mar 2025"], 2, S.PROFIT_AND_LOSS, 3
+    )
+    assert [(c.period.period_type, c.period.period_end, c.period.fiscal_year) for c in cols] == [
+        (PeriodType.FY, FY26, 2026),
+        (PeriodType.FY, FY25, 2025),
+    ]
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        ["Income-tax Act 1961"],
+        ["incorporated in 2004"],
+        ["Ind AS 115"],
+        ["2013"],
+    ],
+)
+def test_nonfinancial_or_uncontextualized_years_remain_unknown(header):
+    (column,) = interpret_columns(header, 1, S.PROFIT_AND_LOSS, 3)
+    assert column.ambiguous and not column.explicit
+    assert column.period.period_type == PeriodType.UNKNOWN
+    assert column.period.period_end is None and column.period.fiscal_year is None
+
+
+def test_explicit_older_fiscal_years_and_year_ended_dates_remain_valid():
+    cols = interpret_columns(["FY2013 FY2012"], 2, S.PROFIT_AND_LOSS, 3)
+    assert [(c.period.period_type, c.period.period_end, c.period.fiscal_year) for c in cols] == [
+        (PeriodType.FY, date(2013, 3, 31), 2013),
+        (PeriodType.FY, date(2012, 3, 31), 2012),
+    ]
+
+    (column,) = interpret_columns(["Year ended March 31, 2013"], 1, S.PROFIT_AND_LOSS, 3)
+    assert (column.period.period_type, column.period.period_end, column.ambiguous) == (
+        PeriodType.FY,
+        date(2013, 3, 31),
+        False,
+    )
+
+
+def test_structural_bare_year_columns_and_month_year_quarters_are_valid():
+    cols = interpret_columns(["2026 2025"], 2, S.PROFIT_AND_LOSS, 3)
+    assert [(c.period.period_type, c.period.period_end) for c in cols] == [
+        (PeriodType.FY, FY26),
+        (PeriodType.FY, FY25),
+    ]
+    stacked = interpret_columns(
+        ["Year ended March 31,", "2026", "2025"], 2, S.PROFIT_AND_LOSS, 3
+    )
+    assert [c.period.period_end for c in stacked] == [FY26, FY25]
+    unrelated_singleton = interpret_columns(
+        ["Year ended March 31,", "Companies Act", "2013"],
+        2,
+        S.PROFIT_AND_LOSS,
+        3,
+    )
+    assert all(c.ambiguous and c.period.period_end is None for c in unrelated_singleton)
+    unrelated_stacked_year = interpret_columns(
+        ["Companies Act", "2013", "2012"], 2, S.PROFIT_AND_LOSS, 3
+    )
+    assert all(c.ambiguous and c.period.period_end is None for c in unrelated_stacked_year)
+
+    cols = interpret_columns(
+        ["Jun 2026 Mar 2026 Dec 2025"], 3, S.QUARTERLY_RESULTS, 3
+    )
+    assert [(c.period.period_type, c.period.period_end, c.period.fiscal_year,
+             c.period.fiscal_quarter) for c in cols] == [
+        (PeriodType.QUARTER, date(2026, 6, 30), 2027, 1),
+        (PeriodType.QUARTER, date(2026, 3, 31), 2026, 4),
+        (PeriodType.QUARTER, date(2025, 12, 31), 2026, 3),
+    ]
+
+
+async def test_nonfinancial_header_year_never_reaches_canonical_financial_period(tmp_path):
+    page = [
+        "Consolidated Statement of Profit and Loss",
+        "(In Rs. crore)",
+        "Particulars Note Year ended March 31,",
+        "Companies Act 2013",
+        "2026 2025",
+        "Revenue from operations 100 80",
+        "Profit for the year 20 15",
+    ]
+    bundle, catalogue = await filings(
+        tmp_path, {"/ar.pdf": (T.ANNUAL_REPORT, [page])}
+    )
+    data = build(bundle=bundle, catalogue=catalogue)
+    revenue = [
+        item for item in data.observations if item.metric == M.REVENUE_FROM_OPERATIONS
+    ]
+    assert {item.period.period_end for item in revenue} == {FY26, FY25}
+    assert {(item.raw_value, item.period.period_end) for item in revenue} == {
+        ("100", FY26),
+        ("80", FY25),
+    }
+    assert not any(item.period.period_end == date(2013, 3, 31) for item in data.observations)
+    assert {(item.value, item.period.period_end) for item in data.canonical_values
+            if item.metric == M.REVENUE_FROM_OPERATIONS} == {
+        (Decimal(100), FY26),
+        (Decimal(80), FY25),
+    }
+
+
 def test_labels_and_explicit_aliases():
     assert normalize_label("  (a) Revenue from operations (refer note 5) ") == (
         "revenue from operations"

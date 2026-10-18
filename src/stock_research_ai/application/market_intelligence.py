@@ -72,6 +72,7 @@ from stock_research_ai.domain.market_intelligence import (
     CompanyIdentity,
     CorporateAction,
     CorporateEvent,
+    CoverageCategory,
     FetchStatus,
     FilingDocument,
     InsiderTrade,
@@ -162,6 +163,32 @@ def _ledger_coverage(
     complete = complete_feed and not truncated and ledger_start is not None
     return LedgerCoverage(complete=complete, ledger_start=ledger_start,
                           reasons=() if complete else tuple(reasons))
+
+
+def _absence_coverage_requirements(
+    identity: CompanyIdentity,
+) -> dict[CoverageCategory, tuple[PayloadKind, ...]]:
+    announcement_feeds = tuple(
+        kind for enabled, kind in (
+            (identity.nse_symbol is not None, PayloadKind.NSE_ANNOUNCEMENTS),
+            (identity.bse_code is not None, PayloadKind.BSE_ANNOUNCEMENTS),
+        ) if enabled
+    )
+    action_feeds = tuple(
+        kind for enabled, kind in (
+            (identity.nse_symbol is not None, PayloadKind.NSE_CORPORATE_ACTIONS),
+            (identity.bse_code is not None, PayloadKind.BSE_CORPORATE_ACTIONS),
+        ) if enabled
+    )
+    requirements: dict[CoverageCategory, tuple[PayloadKind, ...]] = {}
+    if announcement_feeds:
+        requirements[CoverageCategory.MATERIAL_ANNOUNCEMENTS] = announcement_feeds
+        requirements[CoverageCategory.CORPORATE_ACTIONS] = action_feeds
+    if identity.nse_symbol is not None:
+        requirements[CoverageCategory.CREDIT_RATINGS] = (
+            PayloadKind.NSE_CREDIT_RATINGS, PayloadKind.NSE_ANNOUNCEMENTS,
+        )
+    return requirements
 
 
 def build_market_intelligence(
@@ -342,12 +369,17 @@ def build_market_intelligence(
         issues.append(issue("SOURCE_RECORD_LIMIT", "Decoded-row budget reached across payloads",
                             severity="ERROR"))
 
-    records = [payload_record(p, decoded.get(i, 0)) for p, i in ordered]
+    records = [payload_record(
+        p,
+        decoded.get(i, 0),
+        processing_succeeded=not any(x.payload_id == i for x in issues),
+    ) for p, i in ordered]
     facts = exchange_facts(shareholding, conflicts) + list(request.comparable_facts)
     coverage = build_coverage(
         as_of_day, records, events, filings, shareholding, insider, actions, snapshot,
         company_history, identity_usable=identity.usable,
         truncated=budget.exhausted or master_budget.exhausted,
+        required_payload_kinds=_absence_coverage_requirements(identity),
     )
     timeline = build_timeline(as_of_day, events, actions, filings)
     issues = sorted(issues, key=lambda i: (i.code, str(i.payload_id), i.locator or "", i.message))

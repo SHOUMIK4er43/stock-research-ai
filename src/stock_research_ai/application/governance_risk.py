@@ -109,12 +109,29 @@ def years_before(day: date, years: int) -> date:
         return day.replace(year=day.year - years, day=28)
 
 
-def coverage_ok(box12: MarketIntelligenceDataset | None, category: CoverageCategory) -> bool:
+def coverage_ok(
+    box12: MarketIntelligenceDataset | None,
+    category: CoverageCategory,
+    start: date,
+    end: date,
+) -> bool:
     if box12 is None:
         return False
     item = next((i for i in box12.coverage.items if i.category == category), None)
-    return item is not None and item.status in (CoverageStatus.AVAILABLE, CoverageStatus.STALE,
-                                                CoverageStatus.NOT_FOUND)
+    if item is None or item.status not in (CoverageStatus.AVAILABLE, CoverageStatus.STALE,
+                                           CoverageStatus.MISSING, CoverageStatus.NOT_FOUND):
+        return False
+    if not (item.required_sources_complete and item.processing_succeeded
+            and item.coverage_window_complete and item.coverage_window_start is not None
+            and item.coverage_window_end is not None and item.required_sources_retrieved is not None
+            and item.coverage_window_start <= start and item.coverage_window_end >= end):
+        return False
+    if any(gap_start <= end and gap_end >= start
+           for gap_start, gap_end in item.coverage_window_gaps):
+        return False
+    age = (box12.coverage.as_of - item.required_sources_retrieved).days
+    freshness_limit = item.stale_after_days if item.stale_after_days is not None else 120
+    return 0 <= age <= freshness_limit
 
 
 def event_source(box12: MarketIntelligenceDataset, event_id: UUID) -> str | None:
@@ -268,6 +285,11 @@ def promoter_pledge(ctx: Ctx) -> tuple[Ev, Ev | None]:
         ctx.explicit(trace, f"pledged % {p.period_end}", p.pledged_pct_of_promoter_holding,
                      "PERCENT", fid("pledge", p), p.source, period_end=p.period_end)
     value = latest.pledged_pct_of_promoter_holding
+    pledge_age = (ctx.request.as_of - latest.period_end).days
+    if value == 0 and not 0 <= pledge_age <= 120:
+        return unavailable(NA, "PLEDGE_DATA_STALE", trace=trace,
+                           explanation="a zero pledge value from a stale filing cannot establish "
+                           "current absence of promoter pledge"), None
     severity = grade(value, RULES["PROMOTER_PLEDGE"].thresholds)
     issues: list[str] = []
     if len(window) == 3:
@@ -298,7 +320,9 @@ DILUTING_ACTIONS = {CorporateActionKind.BONUS, CorporateActionKind.RIGHTS,
 
 def dilution_ruled_out(ctx: Ctx, box12: MarketIntelligenceDataset | None, start: date,
                        end: date) -> bool:
-    if box12 is None or not coverage_ok(box12, CoverageCategory.MATERIAL_ANNOUNCEMENTS):
+    if box12 is None or not coverage_ok(
+        box12, CoverageCategory.MATERIAL_ANNOUNCEMENTS, start, end
+    ):
         return False
     if any(start < e.event_date <= end and e.event_type in DILUTING_EVENTS for e in box12.events):
         return False
@@ -319,7 +343,7 @@ PROMOTER_SHARE_TOLERANCE_PP = D("0.01")
 def bonus_split_ruled_out(box12: MarketIntelligenceDataset | None, start: date,
                           end: date) -> bool:
     """No bonus / split in (start, end], on a complete corporate-action ledger."""
-    if box12 is None or not coverage_ok(box12, CoverageCategory.CORPORATE_ACTIONS):
+    if box12 is None or not coverage_ok(box12, CoverageCategory.CORPORATE_ACTIONS, start, end):
         return False
     if any(start < e.event_date <= end and e.event_type in SPLITTING_EVENTS
            for e in box12.events):
@@ -446,7 +470,9 @@ def equity_dilution(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
                              c.source, period_end=c.as_of)
             if first.bonus_split_adjusted and latest.bonus_split_adjusted or (
                 not first.bonus_split_adjusted and not latest.bonus_split_adjusted
-                and box12 is not None and coverage_ok(box12, CoverageCategory.CORPORATE_ACTIONS)
+                and box12 is not None and coverage_ok(
+                    box12, CoverageCategory.CORPORATE_ACTIONS, first.as_of, latest.as_of
+                )
                 and not any(a.kind in (CorporateActionKind.BONUS, CorporateActionKind.SPLIT)
                             and a.ex_date and first.as_of < a.ex_date <= latest.as_of
                             for a in box12.corporate_actions)
@@ -471,7 +497,9 @@ def equity_dilution(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
         return unavailable(NA, "NON_POSITIVE_SHARE_CAPITAL", status=S.NOT_APPLICABLE, trace=trace)
     value = q((cap.value / cap0.value - 1) * HUNDRED)
     start = shift(end, -36)
-    bonus = box12 is None or not coverage_ok(box12, CoverageCategory.CORPORATE_ACTIONS) or any(
+    bonus = box12 is None or not coverage_ok(
+        box12, CoverageCategory.CORPORATE_ACTIONS, start, end
+    ) or any(
         a.kind == CorporateActionKind.BONUS and any(start < x <= end for x in (
             a.ex_date, a.record_date, a.announcement_date) if x)
         for a in box12.corporate_actions)
@@ -496,7 +524,9 @@ def cheap_insider_allotment(ctx: Ctx, box12: MarketIntelligenceDataset | None) -
         raised = box12 is not None and any(
             start < e.event_date <= ctx.request.as_of
             and e.event_type in (EventType.FUND_RAISE, EventType.RIGHTS) for e in box12.events)
-        if box12 is not None and coverage_ok(box12, CoverageCategory.MATERIAL_ANNOUNCEMENTS) \
+        if box12 is not None and coverage_ok(
+            box12, CoverageCategory.MATERIAL_ANNOUNCEMENTS, start, ctx.request.as_of
+        ) \
                 and not raised:
             return unavailable(NA, "NO_ISSUE_DISCLOSED", status=S.NOT_APPLICABLE)
         return unavailable(NA, "ISSUE_TERMS_NOT_SUPPLIED")
@@ -1117,6 +1147,9 @@ def exchange_events(
 
 def exchange_penalties(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
     start, end = years_before(ctx.request.as_of, 3), ctx.request.as_of
+    complete_coverage = coverage_ok(
+        box12, CoverageCategory.MATERIAL_ANNOUNCEMENTS, start, end
+    )
     trace = Trace()
     days: set[date] = set()
     amounts: list[Decimal] = []
@@ -1140,11 +1173,14 @@ def exchange_penalties(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
     if not days:
         if box12 is None:
             return unavailable(NA, "NO_EVENT_LEDGER", trace=trace)
-        if not coverage_ok(box12, CoverageCategory.MATERIAL_ANNOUNCEMENTS):
+        if not complete_coverage:
             return unavailable(NA, "ANNOUNCEMENT_COVERAGE_INCOMPLETE", trace=trace)
     count = D(len(days))
     severity = SV.YELLOW if count >= 1 else SV.GREEN
     reasons = [f"{len(days)} penalty dates in 3 years"]
+    issues = [] if complete_coverage else ["PENALTY_COVERAGE_INCOMPLETE"]
+    if not complete_coverage:
+        reasons.append("coverage incomplete; absence of additional penalties is not established")
     end_fy = ctx.latest.get(ctx.analytical)
     if amounts and end_fy is not None:
         pat = ctx.canonical([M.PAT], ctx.periods.fy(end_fy))
@@ -1162,7 +1198,8 @@ def exchange_penalties(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> Ev:
         ctx.record(trace, "announcement coverage", D(item.count), "FILINGS", Layer.BOX12,
                    box12.dataset_id, f"BOX12:{box12.dataset_id}:coverage")
     return Ev(S.EVALUATED, NA, severity, count, period_label=f"{start} to {end}", period_end=end,
-              trace=trace, calculation="; ".join(reasons), explanation="; ".join(reasons))
+              trace=trace, issues=issues, calculation="; ".join(reasons),
+              explanation="; ".join(reasons))
 
 
 # --- governance catalogue ---------------------------------------------------------------------

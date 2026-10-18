@@ -203,6 +203,10 @@ class RawPayload(BaseModel):
     content: bytes | None = None
     content_type: Label | None = None
     error_code: Code | None = None
+    coverage_window_start: date | None = None
+    coverage_window_end: date | None = None
+    coverage_window_complete: bool = False
+    coverage_window_gaps: tuple[tuple[date, date], ...] = ()
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -210,6 +214,14 @@ class RawPayload(BaseModel):
             raise ValueError("Exactly the successful payloads carry content")
         if self.content is not None and len(self.content) > MAX_PAYLOAD_BYTES:
             raise ValueError("Payload exceeds the Box 12 size bound")
+        if self.coverage_window_complete and not (
+            self.coverage_window_start is not None
+            and self.coverage_window_end is not None
+            and self.coverage_window_start <= self.coverage_window_end
+        ):
+            raise ValueError("A complete coverage window needs ordered start/end dates")
+        if any(gap_start > gap_end for gap_start, gap_end in self.coverage_window_gaps):
+            raise ValueError("Coverage gaps need ordered start/end dates")
         if self.status != FetchStatus.OK and self.error_code is None:
             raise ValueError("A failed payload needs an error code")
         return self
@@ -231,6 +243,11 @@ class SourcePayloadRecord(BaseModel):
     size_bytes: NonNegativeInt
     error_code: Code | None
     records_decoded: NonNegativeInt = 0
+    coverage_window_start: date | None = None
+    coverage_window_end: date | None = None
+    coverage_window_complete: bool = False
+    coverage_window_gaps: tuple[tuple[date, date], ...] = ()
+    processing_succeeded: bool = True
 
 
 class Citation(BaseModel):
@@ -1220,6 +1237,13 @@ class CoverageItem(BaseModel):
     stale_after_days: NonNegativeInt | None = None
     providers: tuple[Provider, ...] = ()
     source_failures: tuple[Code, ...] = ()
+    coverage_window_start: date | None = None
+    coverage_window_end: date | None = None
+    coverage_window_complete: bool = False
+    coverage_window_gaps: tuple[tuple[date, date], ...] = ()
+    required_sources_complete: bool = False
+    processing_succeeded: bool = False
+    required_sources_retrieved: date | None = None
 
 
 class SourceCoverageDataset(BaseModel):

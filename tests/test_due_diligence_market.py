@@ -24,6 +24,7 @@ from test_market_intelligence import (
     SYMBOL,
     announcement,
     base_payloads,
+    bse_announcements,
     build,
     docs,
     failed,
@@ -155,6 +156,37 @@ def penalty_payload() -> Any:
         "Imposition of fine by NSE for the quarter", seq="5"))
 
 
+WINDOW_START = date(2023, 6, 30)
+WINDOW_END = date(2026, 10, 10)
+
+
+def attested_window(payload: Any, *, start: date = WINDOW_START, end: date = WINDOW_END,
+                    gaps: tuple[tuple[date, date], ...] = ()) -> Any:
+    return payload.model_copy(update={
+        "coverage_window_start": start,
+        "coverage_window_end": end,
+        "coverage_window_complete": True,
+        "coverage_window_gaps": gaps,
+    })
+
+
+def complete_announcement_sources(*rows: dict[str, Any], start: date = WINDOW_START,
+                                   end: date = WINDOW_END,
+                                   gaps: tuple[tuple[date, date], ...] = ()) -> list[Any]:
+    return [*base_payloads(),
+            attested_window(nse_announcements(*rows), start=start, end=end, gaps=gaps),
+            attested_window(bse_announcements(), start=start, end=end, gaps=gaps)]
+
+
+def complete_corporate_action_sources() -> list[Any]:
+    return [
+        attested_window(raw(PayloadKind.NSE_CORPORATE_ACTIONS, {"data": []},
+                            f"{NSE_API}/corporate-actions")),
+        attested_window(raw(PayloadKind.BSE_CORPORATE_ACTIONS, {"Table": []},
+                            "https://api.bseindia.com/corporate-actions")),
+    ]
+
+
 def test_exchange_penalty_event_feeds_a_signal_and_the_event_register():
     box12 = build([*base_payloads(), penalty_payload()])
     data = box13(box12)
@@ -170,10 +202,132 @@ def test_exchange_penalty_event_feeds_a_signal_and_the_event_register():
     assert sig(data, "EXCHANGE_PENALTIES").severity == SV.RED  # 10 crore >= 1 % of PAT
 
 
-def test_clean_announcement_ledger_gives_a_cited_green_penalty_reading():
+def test_unattested_announcement_ledger_does_not_give_clean_penalty_reading():
     box12 = build(order_payloads(), document_texts=docs())
     s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert s.status == ST.UNAVAILABLE and s.reason == "ANNOUNCEMENT_COVERAGE_INCOMPLETE"
+
+
+def test_audit_stale_announcement_case_is_unavailable_not_green_zero():
+    old = nse_announcements(announcement(
+        "01-Jan-2024 10:00:00", "Updates", "General filing", seq="1"))
+    box12 = build([*base_payloads(), old])
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    signal = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert item.status.value == "STALE" and item.age_days == 1012
+    assert signal.status == ST.UNAVAILABLE and signal.severity is None
+    assert signal.reason == "ANNOUNCEMENT_COVERAGE_INCOMPLETE"
+    assert any(i.kind == "INCOMPLETE_COVERAGE_WINDOW"
+               for i in box13(box12).data_quality_summary.items)
+
+
+def test_complete_fresh_announcement_window_allows_cited_green_penalty_reading():
+    box12 = build(complete_announcement_sources(), document_texts=docs())
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert item.coverage_window_complete and item.required_sources_complete
     assert s.severity == SV.GREEN and s.record_ids
+
+
+def test_partial_window_with_no_penalty_never_becomes_green():
+    partial = date(2026, 4, 10)
+    box12 = build(complete_announcement_sources(start=partial))
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert s.status == ST.UNAVAILABLE and s.severity is None
+
+
+def test_each_required_exchange_source_must_cover_the_full_window():
+    payloads = [*base_payloads(),
+                attested_window(nse_announcements()),
+                attested_window(bse_announcements(), start=date(2026, 4, 10))]
+    box12 = build(payloads)
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert item.required_sources_complete and item.coverage_window_start == date(2026, 4, 10)
+    assert s.status == ST.UNAVAILABLE and s.severity is None
+
+
+def test_complete_window_preserves_observed_penalty_as_adverse():
+    payloads = complete_announcement_sources(announcement(
+        "01-Mar-2026 10:00:00", "Action(s) taken or orders passed",
+        "Imposition of fine by NSE for the quarter", seq="5"))
+    box12 = build(payloads)
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert s.status == ST.EVALUATED and s.severity == SV.YELLOW and s.value == 1
+
+
+def test_incomplete_window_keeps_found_penalty_but_does_not_claim_complete_coverage():
+    payloads = complete_announcement_sources(
+        announcement("01-Mar-2026 10:00:00", "Action(s) taken or orders passed",
+                     "Imposition of fine by NSE for the quarter", seq="5"),
+        start=date(2026, 4, 10))
+    box12 = build(payloads)
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    data = box13(box12)
+    s = sig(data, "EXCHANGE_PENALTIES")
+    assert item.coverage_window_complete and item.coverage_window_start == date(2026, 4, 10)
+    assert s.status == ST.EVALUATED and s.severity == SV.YELLOW and s.value == 1
+    assert "PENALTY_COVERAGE_INCOMPLETE" in s.issues
+    assert any(i.kind == "INCOMPLETE_COVERAGE_WINDOW"
+               for i in data.data_quality_summary.items)
+
+
+def test_one_failed_required_exchange_source_blocks_absence_conclusion():
+    payloads = [attested_window(nse_announcements()),
+                failed(PayloadKind.BSE_ANNOUNCEMENTS, FetchStatus.NETWORK_ERROR, "TEST_NETWORK")]
+    box12 = build([*base_payloads(), *payloads])
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert not item.required_sources_complete
+    assert s.status == ST.UNAVAILABLE
+
+
+def test_source_extraction_failure_blocks_absence_conclusion():
+    broken = raw(PayloadKind.NSE_ANNOUNCEMENTS, "{malformed", f"{NSE_API}/corporate-announcements")
+    payloads = [attested_window(broken), attested_window(bse_announcements())]
+    box12 = build([*base_payloads(), *payloads])
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert not item.processing_succeeded and s.status == ST.UNAVAILABLE
+
+
+def test_wrong_issuer_rows_do_not_count_toward_complete_coverage():
+    foreign = announcement("01-Oct-2026 10:00:00", "Updates", "General filing", seq="9",
+                           symbol="TCS", isin="INE467B01029")
+    box12 = build(complete_announcement_sources(foreign))
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert not item.processing_succeeded and not item.coverage_window_complete
+    assert s.status == ST.UNAVAILABLE and not box12.events
+
+
+def test_fresh_feed_with_too_short_window_is_unavailable():
+    box12 = build(complete_announcement_sources(start=date(2026, 9, 1)))
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert s.status == ST.UNAVAILABLE
+
+
+def test_correct_start_with_stale_coverage_end_is_unavailable():
+    box12 = build(complete_announcement_sources(end=date(2025, 1, 1)))
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert s.status == ST.UNAVAILABLE and s.severity is None
+
+
+def test_known_internal_coverage_gap_blocks_absence_conclusion():
+    gap = ((date(2024, 1, 1), date(2025, 12, 31)),)
+    box12 = build(complete_announcement_sources(gaps=gap))
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert item.coverage_window_gaps == gap and item.coverage_window_complete
+    assert s.status == ST.UNAVAILABLE
+
+
+def test_not_found_optional_coverage_never_turns_into_a_clean_penalty_signal():
+    box12 = build([*base_payloads()])
+    item = next(i for i in box12.coverage.items if i.category.value == "MATERIAL_ANNOUNCEMENTS")
+    s = sig(box13(box12), "EXCHANGE_PENALTIES")
+    assert item.status.value == "SOURCE_UNAVAILABLE"
+    assert s.status == ST.UNAVAILABLE
 
 
 def ratings_payload(action: str, grade: str = "AA") -> Any:
@@ -194,6 +348,30 @@ def test_filed_rating_actions_without_instrument():
     assert sig(up, "RATING_UPGRADE").risk_id in up.positive_controls
     junk = box13(build([*base_payloads(), ratings_payload("Reaffirm", "BB")]))
     assert sig(junk, "CREDIT_DETERIORATION").severity == SV.RED
+
+
+def test_no_rating_deterioration_requires_complete_fresh_window():
+    rating = ratings_payload("Reaffirm")
+    box12 = build([*base_payloads(), rating])
+    signal = sig(box13(box12), "CREDIT_DETERIORATION")
+    assert signal.status == ST.UNAVAILABLE and signal.reason == "RATING_COVERAGE_INCOMPLETE"
+
+
+def test_complete_rating_window_allows_evaluated_no_deterioration():
+    payloads = [*base_payloads(),
+                attested_window(ratings_payload("Reaffirm")),
+                attested_window(nse_announcements())]
+    box12 = build(payloads)
+    signal = sig(box13(box12), "CREDIT_DETERIORATION")
+    assert signal.status == ST.EVALUATED and signal.severity == SV.GREEN
+
+
+def test_complete_rating_source_with_no_rated_instrument_is_not_applicable():
+    rating_feed = raw(PayloadKind.NSE_CREDIT_RATINGS, {"data": []}, f"{NSE_API}/cr")
+    box12 = build([*base_payloads(), attested_window(rating_feed),
+                   attested_window(nse_announcements())])
+    signal = sig(box13(box12), "CREDIT_DETERIORATION")
+    assert signal.status == ST.NOT_APPLICABLE and signal.reason == "NO_RATING_INSTRUMENT"
 
 
 def insider_payload(category: str, kind: str, value: str) -> Any:
@@ -228,7 +406,11 @@ QUARTERS = ("30-JUN-2025", "30-SEP-2025", "31-DEC-2025", "31-MAR-2026", "30-JUN-
 def test_promoter_selling_from_exchange_filings_with_dilution_ruled_out():
     sh = shareholding_payload(*[(q, p, str(100 - Decimal(p)), "N") for q, p in
                                 zip(QUARTERS, ("72.84", "72", "70", "68", "66"), strict=True)])
-    box12 = build([*base_payloads(), sh, penalty_payload()])
+    penalty = announcement("01-Mar-2026 10:00:00", "Action(s) taken or orders passed",
+                           "Imposition of fine by NSE for the quarter", seq="5")
+    recent = announcement("01-Oct-2026 10:00:00", "Updates", "General filing", seq="6")
+    box12 = build([sh, *complete_announcement_sources(penalty, recent),
+                   *complete_corporate_action_sources()])
     s = sig(box13(box12), "PROMOTER_SELLING")
     assert s.severity == SV.RED and s.value == Decimal("6.84")
     assert "DILUTION_RULED_OUT_BY_EVENT_LEDGER" in s.issues

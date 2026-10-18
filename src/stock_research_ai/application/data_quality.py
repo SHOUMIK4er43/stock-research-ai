@@ -12,7 +12,7 @@ from datetime import date
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.diligence_inputs import fid
-from stock_research_ai.application.governance_risk import holding_points
+from stock_research_ai.application.governance_risk import holding_points, years_before
 from stock_research_ai.application.red_flags import NS, RULES, Ctx
 from stock_research_ai.domain.document_intelligence import EvidenceBundle, ExtractionStatus
 from stock_research_ai.domain.due_diligence import (
@@ -249,6 +249,28 @@ def data_quality(
                         "CREDIT_RATINGS": "MISSING_RATING_NOTES"}.get(
                     c.category.value, "MISSING_REQUIRED_DOCUMENT")
                 add(kind, Layer.BOX12, f"{c.category.value}: {c.status.value}")
+            absence_window_start = years_before(ctx.request.as_of, 3)
+            window_proven = (
+                c.required_sources_complete and c.processing_succeeded
+                and c.coverage_window_complete and c.coverage_window_start is not None
+                and c.coverage_window_end is not None
+                and c.coverage_window_start <= absence_window_start
+                and c.coverage_window_end >= ctx.request.as_of
+                and not any(gap_start <= ctx.request.as_of and gap_end >= absence_window_start
+                            for gap_start, gap_end in c.coverage_window_gaps)
+            )
+            if c.category.value in ("MATERIAL_ANNOUNCEMENTS", "CORPORATE_ACTIONS",
+                                    "CREDIT_RATINGS") and not window_proven:
+                signals = {
+                    "MATERIAL_ANNOUNCEMENTS": ("EXCHANGE_PENALTIES", "PROMOTER_SELLING",
+                                               "CHEAP_INSIDER_ALLOTMENT"),
+                    "CORPORATE_ACTIONS": ("PROMOTER_SELLING", "EQUITY_DILUTION"),
+                    "CREDIT_RATINGS": ("CREDIT_DETERIORATION",),
+                }[c.category.value]
+                add("INCOMPLETE_COVERAGE_WINDOW", Layer.BOX12,
+                    f"{c.category.value}: source window, acquisition, or processing completeness "
+                    "is not verified; absence-based conclusions are unavailable",
+                    affects=signals)
         if box12.snapshot is not None and box12.snapshot.freshness == Freshness.STALE:
             add("STALE_DATA", Layer.BOX12, "market quote is stale")
         pending = [c for c in box12.order_chains if c.status == ChainStatus.PENDING_L1 and

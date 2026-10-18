@@ -82,13 +82,22 @@ def payload_sha256(payload: RawPayload) -> str | None:
 
 def payload_id(payload: RawPayload) -> UUID:
     """Content identity: the retrieval time is deliberately excluded."""
+    coverage_attestation = (
+        payload.coverage_window_start,
+        payload.coverage_window_end,
+        payload.coverage_window_complete,
+        payload.coverage_window_gaps,
+    )
     return uid(
         "payload", payload.kind.value, payload.url, payload.status.value,
         payload_sha256(payload) or "-", payload.error_code or "-",
+        *(coverage_attestation if any(coverage_attestation) else ()),
     )
 
 
-def payload_record(payload: RawPayload, decoded: int) -> SourcePayloadRecord:
+def payload_record(
+    payload: RawPayload, decoded: int, *, processing_succeeded: bool = True
+) -> SourcePayloadRecord:
     return SourcePayloadRecord(
         payload_id=payload_id(payload),
         kind=payload.kind,
@@ -102,6 +111,11 @@ def payload_record(payload: RawPayload, decoded: int) -> SourcePayloadRecord:
         size_bytes=len(payload.content or b""),
         error_code=payload.error_code,
         records_decoded=decoded,
+        coverage_window_start=payload.coverage_window_start,
+        coverage_window_end=payload.coverage_window_end,
+        coverage_window_complete=payload.coverage_window_complete,
+        coverage_window_gaps=payload.coverage_window_gaps,
+        processing_succeeded=processing_succeeded,
     )
 
 

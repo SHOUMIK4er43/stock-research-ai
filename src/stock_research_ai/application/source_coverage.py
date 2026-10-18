@@ -195,6 +195,7 @@ def build_coverage(
     *,
     identity_usable: bool,
     truncated: bool = False,
+    required_payload_kinds: dict[CoverageCategory, tuple[PayloadKind, ...]] | None = None,
 ) -> SourceCoverageDataset:
     def ev(kind: EventType, word: str | None = None) -> list[date]:
         return [e.event_date for e in events if e.event_type == kind
@@ -228,6 +229,31 @@ def build_coverage(
     items = []
     for category, (expected, basis, stale, kinds) in POLICY.items():
         records = [r for k in kinds for r in by_kind.get(k, [])]
+        required_kinds = (required_payload_kinds or {}).get(category, ())
+        required_records = [r for kind in required_kinds for r in by_kind.get(kind, [])]
+        required_sources_complete = identity_usable and bool(required_kinds) and all(
+            any(r.kind == kind for r in required_records)
+            and all(r.status == FetchStatus.OK and r.processing_succeeded
+                    for r in required_records if r.kind == kind)
+            for kind in required_kinds
+        )
+        processing_succeeded = bool(records) and all(
+            r.status == FetchStatus.OK and r.processing_succeeded for r in records
+        )
+        windows = [r for r in required_records if r.coverage_window_complete
+                   and r.coverage_window_start is not None
+                   and r.coverage_window_end is not None]
+        coverage_window_complete = (
+            required_sources_complete
+            and len(windows) == len(required_records)
+            and bool(required_records)
+        )
+        starts = [r.coverage_window_start for r in windows if r.coverage_window_start is not None]
+        ends = [r.coverage_window_end for r in windows if r.coverage_window_end is not None]
+        window_start = max(starts) if coverage_window_complete and starts else None
+        window_end = min(ends) if coverage_window_complete and ends else None
+        source_retrieved = min((r.retrieved_at.date() for r in required_records), default=None) \
+            if required_sources_complete else None
         ok = [r for r in records if r.status == FetchStatus.OK]
         failures = sorted({r.error_code or r.status.value for r in records
                            if r.status != FetchStatus.OK})
@@ -257,5 +283,14 @@ def build_coverage(
             count=len(dates), latest_date=latest, age_days=age, stale_after_days=stale,
             providers=tuple(sorted({r.provider for r in ok}, key=lambda p: p.value)),
             source_failures=tuple(failures),
+            coverage_window_start=window_start,
+            coverage_window_end=window_end,
+            coverage_window_complete=coverage_window_complete,
+            coverage_window_gaps=tuple(sorted({
+                gap for r in required_records for gap in r.coverage_window_gaps
+            })),
+            required_sources_complete=required_sources_complete,
+            processing_succeeded=processing_succeeded,
+            required_sources_retrieved=source_retrieved,
         ))
     return SourceCoverageDataset(as_of=as_of, items=tuple(items))

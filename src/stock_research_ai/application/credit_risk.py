@@ -25,7 +25,7 @@ from stock_research_ai.application.earnings_quality import (
     pit,
 )
 from stock_research_ai.application.financial_metrics import Fact
-from stock_research_ai.application.governance_risk import years_before
+from stock_research_ai.application.governance_risk import coverage_ok, years_before
 from stock_research_ai.application.red_flags import (
     NS,
     RULES,
@@ -54,7 +54,11 @@ from stock_research_ai.domain.due_diligence import (
 )
 from stock_research_ai.domain.due_diligence import Severity as SV
 from stock_research_ai.domain.financial_canonical import CanonicalMetric, ReportingBasis
-from stock_research_ai.domain.market_intelligence import FilingCategory, MarketIntelligenceDataset
+from stock_research_ai.domain.market_intelligence import (
+    CoverageCategory,
+    FilingCategory,
+    MarketIntelligenceDataset,
+)
 
 M = CanonicalMetric
 S = SignalStatus
@@ -167,12 +171,21 @@ def rating_observations(
     return out
 
 
-def credit_deterioration(ctx: Ctx, ratings: list[RatingObservation]) -> tuple[Ev, Ev | None]:
+def credit_deterioration(
+    ctx: Ctx,
+    ratings: list[RatingObservation],
+    box12: MarketIntelligenceDataset | None,
+) -> tuple[Ev, Ev | None]:
     start, end = years_before(ctx.request.as_of, 3), ctx.request.as_of
+    coverage_complete = coverage_ok(box12, CoverageCategory.CREDIT_RATINGS, start, end)
     disputes = conflicted(ctx, "ratings", lambda r: r.action_date <= end)
     if disputes:  # one rating action stated two ways: no notch move is measured from either
         return conflict_ev(ctx, NA, disputes, what=" - rating actions"), None
     if not ratings:
+        if coverage_complete:
+            return unavailable(NA, "NO_RATING_INSTRUMENT", status=S.NOT_APPLICABLE,
+                               explanation="complete source coverage found no rated "
+                               "instrument"), None
         return unavailable(NA, "NO_RATING_DATA", explanation="no rating action supplied or "
                            "filed"), None
     trace = Trace()
@@ -250,10 +263,27 @@ def credit_deterioration(ctx: Ctx, ratings: list[RatingObservation]) -> tuple[Ev
     if not mapped and severity == SV.GREEN:
         return unavailable(NA, "UNSUPPORTED_RATING_SCALE", trace=trace,
                            explanation="no rating on the mapped Indian long-term scale"), None
+    if severity == SV.GREEN:
+        if not coverage_complete:
+            positive = None
+            if best_delta < 0 or upgrade:
+                positive = Ev(S.EVALUATED, NA, SV.GREEN,
+                              D(-best_delta) if best_delta else D(1), period_end=end,
+                              trace=trace, explanation="a rating upgrade in the last 3 years")
+            unavailable_ev = unavailable(
+                NA, "RATING_COVERAGE_INCOMPLETE", trace=trace,
+                explanation="rating deterioration cannot be ruled out without complete, fresh "
+                "rating coverage for the three-year window",
+            )
+            if withdrawn:
+                unavailable_ev.issues.append("RATING_WITHDRAWN")
+            return unavailable_ev, positive
     if not trace.inputs:
         current = max(mapped, key=lambda o: (o.action_date, str(o.observation_id)))
         cite(current, "current rating")
-    issues = ["RATING_WITHDRAWN"] if withdrawn else []
+    issues = ([] if coverage_complete else ["RATING_COVERAGE_INCOMPLETE"])
+    if withdrawn:
+        issues.append("RATING_WITHDRAWN")
     ev = Ev(S.EVALUATED, NA, severity, D(worst_delta), period_label=f"{start} to {end}",
             period_end=end, trace=trace, issues=issues,
             calculation="; ".join(reasons) or "no downgrade, negative outlook or sub-investment "
@@ -436,7 +466,7 @@ def credit_profile(ctx: Ctx, box12: MarketIntelligenceDataset | None,
                   for m in sorted(ctx.request.debt_maturities, key=lambda m: (m.as_of, m.bucket))]
     ratings = rating_observations(ctx, box12)
     ids: list[UUID] = []
-    ev, upgrade = credit_deterioration(ctx, ratings)
+    ev, upgrade = credit_deterioration(ctx, ratings, box12)
     ids.append(ctx.emit("CREDIT_DETERIORATION", ev))
     if upgrade is not None:
         ids.append(ctx.emit("RATING_UPGRADE", upgrade))

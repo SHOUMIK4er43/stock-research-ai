@@ -2629,7 +2629,7 @@ def monitoring(ctx: Ctx, tracker: list[GuidanceTrackerEntry], view: OrderBookVie
             "cited before it is graded)", (), "ON_EXCHANGE_FILING", "Exchange filings")
     for kind, n in d13.data_quality_summary.counts:
         if kind in ("BLOCKED_SOURCE", "MISSING_REQUIRED_DOCUMENT", "INCOMPLETE_ORDER_LINKAGE",
-                    "INPUT_CONFLICT", "STALE_DATA"):
+                    "INPUT_CONFLICT", "STALE_DATA", "INCOMPLETE_COVERAGE_WINDOW"):
             add("DATA_GAP", kind, f"Data gap {human(kind)} ({n} items)", (),
                 "ON_DATA_RESOLUTION", "The blocked / missing source")
     return out

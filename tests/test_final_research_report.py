@@ -263,6 +263,19 @@ def test_deterministic_output_independent_of_generated_at(stack, d13, report):
     assert [c.claim_id for c in later.claims] == [c.claim_id for c in report.claims]
 
 
+def test_incomplete_exchange_coverage_renders_as_report_limitation(stack):
+    d13 = box13(stack)
+    penalty = next(s for s in d13.signals if s.code == "EXCHANGE_PENALTIES")
+    assert penalty.status == dd.SignalStatus.UNAVAILABLE and penalty.severity is None
+    report = compose(stack, d13)
+    limitations = [c for c in report.claims if c.topic == "DQ_INCOMPLETE_COVERAGE_WINDOW"]
+    assert limitations and all(c.claim_type == CT.DATA_LIMITATION for c in limitations)
+    assert any("absence-based conclusions are unavailable" in (c.source_text or "")
+               for c in limitations)
+    risk_section = report.section(S.RISKS)
+    assert any(c.claim_id in risk_section.limitation_claim_ids for c in limitations)
+
+
 async def test_async_wrapper_runs_off_the_loop(stack, d13, report):
     from stock_research_ai.application.final_report_composer import build_final_report_async
     req = FinalReportRequest(as_of=AS_OF, company_key=COMPANY.company_key,

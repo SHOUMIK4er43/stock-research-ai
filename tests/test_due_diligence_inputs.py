@@ -14,7 +14,12 @@ from uuid import UUID
 
 import pytest
 from test_due_diligence import AS_OF, NOW, SRC, datasets, holding, maybe, rows_for, run, sig
-from test_due_diligence_market import QUARTERS, box13, penalty_payload
+from test_due_diligence_market import (
+    QUARTERS,
+    box13,
+    complete_announcement_sources,
+    complete_corporate_action_sources,
+)
 from test_market_intelligence import announcement as filed
 from test_market_intelligence import (
     base_payloads,
@@ -241,9 +246,13 @@ def test_resolve_is_symmetric():
 
 
 def shareholding_box12(*pcts: str) -> MarketIntelligenceDataset:
-    # the announcement feed (a penalty filing) rules dilution out of the window
-    return build([*base_payloads(), penalty_payload(), shareholding_payload(
-        *[(q, p, str(100 - D(p)), "N") for q, p in zip(QUARTERS, pcts, strict=True)])])
+    penalty = filed("01-Mar-2026 10:00:00", "Action(s) taken or orders passed",
+                    "Imposition of fine by NSE for the quarter", seq="5")
+    recent = filed("01-Oct-2026 10:00:00", "Updates", "General filing", seq="6")
+    return build([*complete_announcement_sources(penalty, recent),
+                  *complete_corporate_action_sources(), shareholding_payload(
+                      *[(q, p, str(100 - D(p)), "N") for q, p in
+                        zip(QUARTERS, pcts, strict=True)])])
 
 
 def test_filing_and_equal_authority_input_disagree_is_open_in_either_order():

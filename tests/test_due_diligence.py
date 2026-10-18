@@ -284,6 +284,13 @@ def test_promoter_pledge_levels_trend_and_zero():
     zero = run(pledges=(pledge(Q[-1], 0),))
     assert sig(zero, "PROMOTER_PLEDGE").severity == SV.GREEN
     assert sig(zero, "NO_PLEDGE").risk_id in zero.positive_controls
+    stale_zero = run(pledges=(pledge(date(2025, 1, 1), 0),))
+    assert sig(stale_zero, "PROMOTER_PLEDGE").status == ST.UNAVAILABLE
+    assert sig(stale_zero, "PROMOTER_PLEDGE").reason == "PLEDGE_DATA_STALE"
+    assert maybe(stale_zero, "NO_PLEDGE") is None
+    future_zero = run(pledges=(pledge(date(2027, 1, 1), 0),))
+    assert sig(future_zero, "PROMOTER_PLEDGE").status == ST.UNAVAILABLE
+    assert sig(future_zero, "PROMOTER_PLEDGE").reason == "PLEDGE_DATA_STALE"
     missing = sig(run(), "PROMOTER_PLEDGE")
     assert missing.status == ST.UNAVAILABLE and missing.severity is None
 
@@ -702,11 +709,12 @@ def test_credit_deterioration_by_instrument():
     outlook = run(ratings=(rating(date(2025, 1, 1), "CRISIL AA", outlook="NEGATIVE"),))
     assert sig(outlook, "CREDIT_DETERIORATION").severity == SV.YELLOW
     up = run(ratings=(rating(date(2024, 1, 1), "AA-"), rating(date(2025, 1, 1), "AA")))
-    assert sig(up, "CREDIT_DETERIORATION").severity == SV.GREEN
-    assert sig(up, "RATING_UPGRADE").risk_id in up.positive_controls
+    assert sig(up, "CREDIT_DETERIORATION").status == ST.UNAVAILABLE
+    assert sig(up, "CREDIT_DETERIORATION").reason == "RATING_COVERAGE_INCOMPLETE"
+    assert maybe(up, "RATING_UPGRADE").risk_id in up.positive_controls
     other = run(ratings=(rating(date(2024, 1, 1), "CRISIL AA"),
                          rating(date(2025, 1, 1), "CRISIL A+", instrument="Bank loans")))
-    assert sig(other, "CREDIT_DETERIORATION").severity == SV.GREEN  # different instruments
+    assert sig(other, "CREDIT_DETERIORATION").status == ST.UNAVAILABLE  # no comparable movement
 
 
 def test_missing_withdrawn_and_unsupported_ratings():
@@ -714,7 +722,8 @@ def test_missing_withdrawn_and_unsupported_ratings():
     withdrawn = run(ratings=(rating(date(2024, 1, 1), "CRISIL AA"),
                              rating(date(2025, 1, 1), "CRISIL AA", action="WITHDRAWN")))
     s = sig(withdrawn, "CREDIT_DETERIORATION")
-    assert s.severity == SV.GREEN and "RATING_WITHDRAWN" in s.issues
+    assert s.status == ST.UNAVAILABLE and s.reason == "RATING_COVERAGE_INCOMPLETE"
+    assert "RATING_WITHDRAWN" in s.issues
     assert any("withdrawn" in i.question for i in withdrawn.open_diligence_items)
     short = run(ratings=(rating(date(2025, 1, 1), "CRISIL A1+"),))
     assert sig(short, "CREDIT_DETERIORATION").reason == "UNSUPPORTED_RATING_SCALE"

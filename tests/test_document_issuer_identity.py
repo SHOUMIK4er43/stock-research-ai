@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from test_financial_reconciliation import (
     COMPANY,
     FY26,
@@ -184,6 +185,145 @@ async def test_h_wrong_company_emits_no_extraction_artifacts_or_box4_observation
     assert not extraction.tables and not extraction.evidence and not extraction.pages
     data = build(bundle=bundle, catalogue=catalogue)
     assert not source_observations(data, extraction.document_id)
+
+
+async def test_audit_bypass_is_rejected_before_primary_financial_evidence(tmp_path):
+    target = COMPANY.model_copy(update={"nse_symbol": "INFY"})
+    bundle, catalogue = await filings(
+        tmp_path,
+        {"/tcs.pdf": (T.ANNUAL_REPORT, [[
+            "Tata Consultancy Services Limited",
+            "Peer comparison: NSE Symbol: INFY",
+            *profit_and_loss("Consolidated"),
+        ]])},
+        company=target,
+        issuer_name="",
+    )
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is IssuerBindingStatus.MISMATCH
+    assert extraction.issuer_binding_method is None
+    assert extraction.status is ExtractionStatus.FAILED
+    assert extraction.tables == extraction.evidence == extraction.pages == ()
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert source_observations(data, extraction.document_id) == []
+    assert data.observations == ()
+    assert data.canonical_values == ()
+
+
+@pytest.mark.parametrize("lines, expected", [
+    (["Tata Consultancy Services Limited", "Peer comparison: NSE Symbol: INFY"],
+     IssuerBindingStatus.MISMATCH),
+    (["Tata Consultancy Services Limited", "Peer table: Infosys | INFY"],
+     IssuerBindingStatus.MISMATCH),
+    (["Tata Consultancy Services Limited", "Infosys INFY Infosys INFY"],
+     IssuerBindingStatus.MISMATCH),
+    (["Tata Consultancy Services Limited", "Peer comparison", "Infosys Limited | NSE: INFY"],
+     IssuerBindingStatus.MISMATCH),
+    (["Tata Consultancy Services Limited", "Annual Results", "NSE: INFY"],
+     IssuerBindingStatus.MISMATCH),
+    (["Peer table: Infosys | INFY"], IssuerBindingStatus.UNVERIFIED),
+    (["Peer comparison of IT companies", "Infosys Limited | NSE: INFY"],
+     IssuerBindingStatus.UNVERIFIED),
+    (["ABC Technologies Private Limited", "Parent: Infosys Limited"],
+     IssuerBindingStatus.MISMATCH),
+    (["Tata Consultancy Services Limited", "NSE: INFY", "NSE: TCS"],
+     IssuerBindingStatus.MISMATCH),
+])
+async def test_foreign_issuer_and_weak_target_mentions_never_bind(tmp_path, lines, expected):
+    target = COMPANY.model_copy(update={"nse_symbol": "INFY"})
+    bundle, catalogue = await filings(
+        tmp_path,
+        {"/foreign.pdf": (T.ANNUAL_REPORT, [lines + profit_and_loss("Consolidated")])},
+        company=target,
+        issuer_name="",
+    )
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is expected
+    assert extraction.status is ExtractionStatus.FAILED
+    assert extraction.tables == extraction.evidence == extraction.pages == ()
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert source_observations(data, extraction.document_id) == []
+    assert data.observations == data.canonical_values == ()
+
+
+async def test_matching_legal_name_with_matching_exchange_metadata_is_verified(tmp_path):
+    target = COMPANY.model_copy(update={"nse_symbol": "INFY", "name": "Infosys Limited"})
+    bundle, catalogue = await filings(
+        tmp_path,
+        {"/infosys.pdf": (T.ANNUAL_REPORT, [[
+            "Infosys Limited", "NSE Symbol: INFY", *profit_and_loss("Consolidated"),
+        ]])},
+        company=target,
+        issuer_name="",
+    )
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is IssuerBindingStatus.VERIFIED
+    assert extraction.issuer_binding_method is IssuerBindingMethod.NAME_AND_EXCHANGE
+    assert extraction.status is ExtractionStatus.SUCCESS
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert one(data, M.REVENUE_FROM_OPERATIONS, B.CONSOLIDATED, FY26, PeriodType.FY).value \
+        == Decimal(178650)
+
+
+async def test_matching_historical_name_variation_remains_verified(tmp_path):
+    bundle, catalogue = await filings(
+        tmp_path,
+        {"/infosys.pdf": (T.ANNUAL_REPORT, [[
+            "Infosys Ltd.", "NSE Symbol: INFY", *profit_and_loss("Standalone"),
+        ]])},
+        company=COMPANY.model_copy(update={"nse_symbol": "INFY"}),
+        issuer_name="",
+    )
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is IssuerBindingStatus.VERIFIED
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert one(data, M.REVENUE_FROM_OPERATIONS, B.STANDALONE, FY26, PeriodType.FY).value \
+        == Decimal(178650)
+
+
+@pytest.mark.parametrize("conflict", [
+    "ISIN: INE999A01099",
+    "NSE Symbol: TCS",
+    "BSE Scrip Code: 532540",
+])
+async def test_matching_name_with_conflicting_strong_identifier_is_rejected(tmp_path, conflict):
+    target = COMPANY.model_copy(update={
+        "name": "Infosys Limited", "nse_symbol": "INFY", "bse_code": "500209",
+        "isin": "INE009A01021",
+    })
+    bundle, catalogue = await filings(
+        tmp_path,
+        {"/conflicting.pdf": (T.ANNUAL_REPORT, [[
+            "Infosys Limited", "NSE Symbol: INFY", conflict,
+            *profit_and_loss("Consolidated"),
+        ]])},
+        company=target,
+        issuer_name="",
+    )
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is IssuerBindingStatus.MISMATCH
+    assert extraction.status is ExtractionStatus.FAILED
+    assert extraction.tables == extraction.evidence == extraction.pages == ()
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert data.observations == data.canonical_values == ()
+
+
+async def test_unresolved_issuer_isin_does_not_get_overridden_by_name_and_symbol(tmp_path):
+    target = COMPANY.model_copy(update={"name": "Infosys Limited", "nse_symbol": "INFY"})
+    bundle, catalogue = await filings(
+        tmp_path,
+        {"/unknown-isin.pdf": (T.ANNUAL_REPORT, [[
+            "Infosys Limited", "NSE Symbol: INFY", "ISIN: INE999A01099",
+            *profit_and_loss("Consolidated"),
+        ]])},
+        company=target,
+        issuer_name="",
+    )
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is IssuerBindingStatus.UNVERIFIED
+    assert extraction.status is ExtractionStatus.FAILED
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert data.observations == data.canonical_values == ()
 
 
 async def test_real_captured_infy_and_yesbank_sources_do_not_cross_canonical_datasets(

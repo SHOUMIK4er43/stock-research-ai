@@ -58,6 +58,7 @@ _NSE_HEADER = re.compile(
 _BSE_HEADER = re.compile(
     r"\bBSE\s*(?:SCRIP\s*)?(?:CODE)?\s*[:\-]\s*(\d{4,8})", re.I
 )
+_ISIN_HEADER = re.compile(r"\bISIN\s*[:\-]\s*(INE[A-Z0-9]{9})\b", re.I)
 
 
 def _issuer_name_tokens(value: str) -> tuple[str, ...]:
@@ -88,7 +89,13 @@ def _contains_name(text: str, name: str) -> bool:
 
     # A name mention in prose is not issuer evidence. Accept an exact standalone name
     # line or an exact name attached only to recognizable document-title/date words.
-    for line in text.splitlines():
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        context = " ".join(lines[max(0, index - 3):index + 1]).casefold()
+        if any(term in context for term in (
+            "peer", "competitor", "comparable", "benchmark", "peer group",
+        )):
+            continue
         observed = _issuer_name_tokens(line)
         if not observed or len(observed) < len(expected):
             continue
@@ -98,6 +105,55 @@ def _contains_name(text: str, name: str) -> bool:
             if title_context(observed[:start]) and title_context(observed[start + len(expected):]):
                 return True
     return False
+
+
+def _declared_issuer_names(text: str) -> set[tuple[str, ...]]:
+    """Return legal-entity headings, not company names mentioned in ordinary prose."""
+    title_terms = {
+        "annual", "report", "financial", "results", "quarter", "quarterly", "ended",
+        "year", "investor", "presentation", "earnings", "conference", "call", "business",
+        "responsibility", "sustainability", "corporate", "governance", "notice", "statement",
+        "of", "the", "for", "as", "at", "and", "fy", "q1", "q2", "q3", "q4",
+    }
+    legal_suffixes = {"limited", "ltd", "inc", "incorporated", "corporation", "corp", "plc"}
+    prose_terms = {
+        "this", "these", "those", "company", "compares", "compared", "comparison",
+        "performance", "with", "its", "their", "versus", "against", "between", "from",
+        "provides", "reported", "reports", "announced", "announces", "said", "has", "have",
+        "had", "was", "were", "is", "are", "will", "would", "should", "could", "we",
+        "our", "you", "your", "investors", "customers", "business", "growth", "market",
+    }
+    known_non_issuer_entities = {
+        ("national", "stock", "exchange", "of", "india"),
+        ("bse",), ("bombay", "stock", "exchange"),
+        ("securities", "and", "exchange", "board", "of", "india"),
+    }
+    declared: set[tuple[str, ...]] = set()
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        context = " ".join(lines[max(0, index - 3):index + 1]).casefold()
+        if any(term in context for term in (
+            "peer", "competitor", "comparable", "benchmark", "peer group",
+        )):
+            continue
+        tokens = _issuer_name_tokens(line)
+        if not tokens or len(tokens) > 12 or not any(t in legal_suffixes for t in tokens):
+            continue
+        suffix_index = next(i for i, token in enumerate(tokens) if token in legal_suffixes)
+        if not all(token in title_terms or token.isdigit() for token in tokens[suffix_index + 1:]):
+            continue
+        name_tokens = list(tokens[:suffix_index])
+        while name_tokens and name_tokens[0] in {"for", "by", "the"}:
+            name_tokens.pop(0)
+        while name_tokens and name_tokens[-1] in {"private", "pvt"}:
+            name_tokens.pop()
+        if any(token in prose_terms for token in name_tokens):
+            continue
+        normalized_name = tuple(name_tokens)
+        if not normalized_name or normalized_name in known_non_issuer_entities:
+            continue
+        declared.add(normalized_name)
+    return declared
 
 
 def _issuer_binding(
@@ -110,30 +166,63 @@ def _issuer_binding(
     deliberately exact apart from Unicode, punctuation, whitespace, Ltd/Limited and PVT/Private.
     """
     pages = [page.text for page in raw.pages if page.number <= 3]
-    front_matter = "\n".join(pages)
+    # Only the page header and issuer sign-off are identity-bearing. The remaining
+    # first-three-page text includes peer tables, benchmark references and prose.
+    identity_lines: list[str] = []
+    for page_text in pages:
+        lines = page_text.splitlines()
+        identity_lines.extend(lines[:25])
+        identity_lines.extend(
+            line for line in lines[25:] if line.strip().casefold().startswith("for ")
+        )
+    front_matter = "\n".join(identity_lines)
     name_match = _contains_name(front_matter, company.name)
+    expected_name = tuple(
+        token for token in _issuer_name_tokens(company.name)
+        if token not in {"limited", "ltd", "private", "pvt"}
+    )
+    declared_names = _declared_issuer_names(front_matter)
+    conflicting_names = {
+        name for name in declared_names
+        if name != expected_name and not any(
+            name[i:i + len(expected_name)] == expected_name
+            for i in range(len(name) - len(expected_name) + 1)
+        )
+    }
     nse_values = {
         (match.group(1) or match.group(2)).strip(".&_- ").upper()
         for match in _NSE_HEADER.finditer(front_matter)
     }
     bse_values = {match.group(1) for match in _BSE_HEADER.finditer(front_matter)}
+    isin_values = {match.group(1).upper() for match in _ISIN_HEADER.finditer(front_matter)}
     expected_nse = company.nse_symbol.strip().upper() if company.nse_symbol else None
     expected_bse = company.bse_code.strip() if company.bse_code else None
+    expected_isin = company.isin.strip().upper() if company.isin else None
 
-    if expected_nse and nse_values and expected_nse not in nse_values:
+    # A matching exchange code in prose, a peer row, or a footer is not identity proof.
+    # Require a matching legal-name declaration; any distinct legal-entity heading on the
+    # inspected pages is a strong contradiction and fails closed.
+    if conflicting_names:
         return IssuerBindingStatus.MISMATCH, None
-    if expected_bse and bse_values and expected_bse not in bse_values:
+    if expected_nse and any(value != expected_nse for value in nse_values):
         return IssuerBindingStatus.MISMATCH, None
+    if expected_bse and any(value != expected_bse for value in bse_values):
+        return IssuerBindingStatus.MISMATCH, None
+    if expected_isin and any(value != expected_isin for value in isin_values):
+        return IssuerBindingStatus.MISMATCH, None
+    if isin_values and expected_isin is None:
+        return IssuerBindingStatus.UNVERIFIED, None
     if (nse_values and expected_nse is None) or (bse_values and expected_bse is None):
         return IssuerBindingStatus.UNVERIFIED, None
     identifiers_match = bool(
         (expected_nse and expected_nse in nse_values)
         or (expected_bse and expected_bse in bse_values)
+        or (expected_isin and expected_isin in isin_values)
     )
     if identifiers_match and name_match:
         return IssuerBindingStatus.VERIFIED, IssuerBindingMethod.NAME_AND_EXCHANGE
     if identifiers_match:
-        return IssuerBindingStatus.VERIFIED, IssuerBindingMethod.EXCHANGE_IDENTIFIER
+        return IssuerBindingStatus.UNVERIFIED, None
     if name_match:
         return IssuerBindingStatus.VERIFIED, IssuerBindingMethod.NORMALIZED_LEGAL_NAME
     return IssuerBindingStatus.UNVERIFIED, None

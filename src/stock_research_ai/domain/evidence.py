@@ -108,6 +108,7 @@ class EvidenceCompany(BaseModel):
     website_url: Url | None = None
     nse_symbol: ShortText | None = None
     bse_code: ShortText | None = None
+    isin: ShortText | None = None
 
 
 class DocumentDiscovery(BaseModel):

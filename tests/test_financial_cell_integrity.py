@@ -295,7 +295,9 @@ def test_exact_hudco_valid_dependencies_and_peer_input():
     assert metric(box5, "SHAREHOLDERS_EQUITY").value == D("21975.90")
     expected_roe = (D(4034) / ((D("21975.90") + D("17967.90")) / 2) * 100).quantize(D("0.000001"))
     assert metric(box5, "ROE").value == expected_roe
-    assert metric(box5, "EMPLOYEE_COST_TO_REVENUE").value == D("2.038631")
+    # 268.08 / 13,150.40: the filing's 'Total Revenue from Operations (A)' (p.364 r5), not
+    # Screener's provider-defined 'Revenue' 13,150 (user-approved 2026-10-19; was 2.038631)
+    assert metric(box5, "EMPLOYEE_COST_TO_REVENUE").value == D("2.038569")
     assert metric(box5, "SHARE_CAPITAL_GROWTH_YOY").value == 0
     roe = next(m for m in BENCHMARK_METRICS if m.code == "ROE")
     assert any(v.value == expected_roe and v.calculated for v in values_of(

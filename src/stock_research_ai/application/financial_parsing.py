@@ -732,6 +732,28 @@ _BANK: dict[str, CanonicalMetric] = {
 }
 
 
+#: Schedule III (Division III) top-line rows keep their section / composition markers in
+#: the statement ('B Other Income', 'Total Revenue from Operations (A)', 'Total Income
+#: I (A+B)'). Only these exact top-line concepts are recognised through the markers; a
+#: component such as '(a) Interest Income' is NOT revenue and stays unmapped.
+_SCHEDULE_TOPLINE: dict[str, CanonicalMetric] = {
+    "revenue from operations": M.REVENUE_FROM_OPERATIONS,
+    "total revenue from operations": M.REVENUE_FROM_OPERATIONS,
+    "other income": M.OTHER_INCOME,
+    "total income": M.TOTAL_INCOME,
+}
+_SECTION_MARKER = re.compile(r"^(?:[A-H]|[IVX]{1,4})\s+(?=[A-Z])")
+_COMPOSITION_MARKER = re.compile(r"\s+(?:[IVX]{1,4}\s*)?\(\s*[A-H](?:\s*\+\s*[A-H])*\s*\)\s*$")
+
+
+def _schedule_topline(label: str) -> CanonicalMetric | None:
+    text = unicodedata.normalize("NFC", label).strip()
+    stripped = _COMPOSITION_MARKER.sub("", _SECTION_MARKER.sub("", text))
+    if stripped == text:
+        return None  # no Schedule III marker: the explicit aliases above already decided
+    return _SCHEDULE_TOPLINE.get(normalize_label(stripped))
+
+
 def map_filing_label(
     statement: StatementType, label: str, context: list[str], bank: bool
 ) -> CanonicalMetric | None:
@@ -746,7 +768,7 @@ def map_filing_label(
                 return metric
         if bank and norm in ("finance costs", "finance cost", "interest expense"):
             return None  # a bank's interest expense is not an industrial finance cost
-        return _PL.get(norm)
+        return _PL.get(norm) or _schedule_topline(label)
     if statement == StatementType.BALANCE_SHEET:
         if bank and norm == "borrowings":
             return M.TOTAL_BORROWINGS

@@ -90,6 +90,10 @@ STATUS_PRIORITY = [
 #: an upstream calculation that produced no number leaves its dependants without an input
 UPSTREAM_UNAVAILABLE = {S.NOT_APPLICABLE, S.DIVISION_BY_ZERO, S.UNSUPPORTED_SECTOR, S.INVALID_INPUT}
 REVENUE = (M.REVENUE_FROM_OPERATIONS, M.REVENUE)
+#: alternative groups that are different accounting definitions of one idea: a frame uses
+#: one member for every period, never revenue from operations for some years and a
+#: reported / provider 'Revenue' for others
+SINGLE_CONCEPT_GROUPS = frozenset({REVENUE})
 EPS = (M.EPS, M.DILUTED_EPS, M.BASIC_EPS)
 FIXED = (M.PROPERTY_PLANT_EQUIPMENT, M.FIXED_ASSETS)
 AGGREGATOR_RANK = AUTHORITY_RANK[SourceAuthority.SECONDARY_AGGREGATOR]
@@ -242,6 +246,7 @@ class Frame:
             self.values[key] = value
         self.consumed = consumed
         self.period_keys = {key for _, key in self.values}
+        self._concepts: dict[tuple[CanonicalMetric, ...], tuple[CanonicalMetric, ...]] = {}
         self.unresolved: dict[tuple[CanonicalMetric, str], ReconciliationRecord] = {
             (r.metric, r.period.key()): r
             for r in data.reconciliation
@@ -262,7 +267,23 @@ class Frame:
     def has_ttm(self) -> bool:
         return any(v.period.period_type == PeriodType.TTM for v in self.values.values())
 
+    def concept(self, metrics: Sequence[CanonicalMetric]) -> tuple[CanonicalMetric, ...]:
+        """The ONE top-line definition this frame uses (revenue from operations and a
+        reported / provider 'Revenue' are different concepts): the alternative with the
+        most periods here, ties in preference order - Box 6's one-metric-per-series rule.
+        Other alternative groups are looked up as given."""
+        group = tuple(metrics)
+        if group not in SINGLE_CONCEPT_GROUPS:
+            return group
+        if group not in self._concepts:
+            counts = [(sum(1 for (m, _k) in self.values if m == metric), -i, metric)
+                      for i, metric in enumerate(group)]
+            best = max(counts)
+            self._concepts[group] = (best[2],) if best[0] else group
+        return self._concepts[group]
+
     def get(self, metrics: Sequence[CanonicalMetric], period: FinancialPeriod) -> Got:
+        metrics = self.concept(metrics)
         key = period.key()
         for metric in metrics:
             value = self.values.get((metric, key))

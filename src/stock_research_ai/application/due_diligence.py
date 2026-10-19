@@ -61,7 +61,10 @@ from stock_research_ai.application.financial_metrics import (
     Periods,
     shift,
 )
-from stock_research_ai.application.financial_reconciliation import canonical_dataset_json
+from stock_research_ai.application.financial_reconciliation import (
+    PROVIDER_DEFINED_TOPLINE,
+    canonical_dataset_json,
+)
 from stock_research_ai.application.forecasting import canonical_forecast_json
 from stock_research_ai.application.fundamental_valuation import canonical_valuation_json
 from stock_research_ai.application.governance_risk import (
@@ -454,6 +457,21 @@ def _basis_value(ctx: Ctx, source: Any, period: FinancialPeriod, basis: Reportin
     return ctx.canonical(source, period, basis)
 
 
+def _definition_issue(ctx: Ctx, cons: Got, stand: Got) -> str | None:
+    """A standalone / consolidated top-line difference is a consolidation difference only
+    when both bases state the SAME definition: never revenue from operations on one basis
+    and a reported 'Revenue' on the other, and never the provider's own split of total
+    income (Screener's financing-format 'Revenue'), whose composition differs by page."""
+    inputs = [i for g in (cons, stand) for i in g.inputs]
+    if len({i.metric for g in (cons, stand) for i in g.inputs[:1]}) > 1:
+        return "TOPLINE_DEFINITION_DIFFERS"
+    chosen = {i.selected_observation_id for i in inputs}
+    if any(PROVIDER_DEFINED_TOPLINE in o.warnings for o in ctx.box4.observations
+           if o.observation_id in chosen):
+        return PROVIDER_DEFINED_TOPLINE
+    return None
+
+
 def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: Got,
                 same_currency: bool, explanations: Explained,
                 reviewed: set[int], extra: list[Item]) -> BasisComparison:
@@ -486,6 +504,11 @@ def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: 
                                explanation=None, explanation_record_id=None,
                                status=ReconciliationStatus.NOT_COMPARABLE,
                                reason="CURRENCY_DIFFERS_BETWEEN_BASES")
+    definition = _definition_issue(ctx, cons, stand) if code == "REVENUE" else None
+    if definition is not None:
+        return BasisComparison(**common, absolute_difference=None, percentage_difference=None,
+                               explanation=None, explanation_record_id=None,
+                               status=ReconciliationStatus.NOT_COMPARABLE, reason=definition)
     diff = q(cv - sv)
     if cv == 0:
         status = ReconciliationStatus.IMMATERIAL if diff == 0 else \

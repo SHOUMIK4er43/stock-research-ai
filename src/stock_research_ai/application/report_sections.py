@@ -964,6 +964,25 @@ def labels(ctx: Ctx, basis: ClaimBasis, period_type: str) -> dict[date, str]:
     return out
 
 
+def _one_concept_per_row(ctx: Ctx, specs: tuple[Spec, ...], basis: ClaimBasis,
+                         ends: list[date]) -> list[Spec]:
+    """A Box 4 row with alternative codes (revenue from operations / a reported 'Revenue')
+    shows ONE definition in every cell - the one with most cells here, ties in preference
+    order (Box 6's rule) - and each other definition that has values gets its own labelled
+    row, so a row never splices two accounting concepts across years."""
+    out: list[Spec] = []
+    for key, label, layer, codes, ptype in specs:
+        if layer != "B4" or len(codes) < 2:
+            out.append((key, label, layer, codes, ptype))
+            continue
+        counts = {c: sum(1 for e in ends if (c, basis.value, ptype, e) in ctx.b4) for c in codes}
+        ordered = sorted(codes, key=lambda c: (-counts[c], codes.index(c)))
+        out.append((key, label, layer, (ordered[0],), ptype))
+        out.extend((f"{key}__{c}", f"{label} ({human(c)})", layer, (c,), ptype)
+                   for c in ordered[1:] if counts[c])
+    return out
+
+
 def series_table(ctx: Ctx, section: SectionId, code: str, title: str, basis: ClaimBasis,
                  specs: tuple[Spec, ...], ends: list[date], period_type: str, *,
                  appendix: bool = False) -> UUID | None:
@@ -973,7 +992,7 @@ def series_table(ctx: Ctx, section: SectionId, code: str, title: str, basis: Cla
     columns = [col(f"P_{e.isoformat().replace('-', '_')}", names.get(e, str(e)),
                    ColumnKind.HISTORICAL, period=names.get(e), period_end=e) for e in ends]
     rows: list[TableRow] = []
-    for key, label, layer, codes, ptype in specs:
+    for key, label, layer, codes, ptype in _one_concept_per_row(ctx, specs, basis, ends):
         cells: list[TableCell] = []
         unit: str | None = None
         for e, c in zip(ends, columns, strict=True):

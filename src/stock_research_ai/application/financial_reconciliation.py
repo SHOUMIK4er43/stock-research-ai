@@ -185,18 +185,42 @@ def fiscal_year_end_month(screeners: Sequence[DetailedScreenerDataset]) -> int |
 
 # --- Screener adapter --------------------------------------------------------------------------
 
+#: a top line whose definition is the provider's own (Screener's financing-format 'Revenue':
+#: total income less the provider's 'Other Income'), never a filing's revenue line
+PROVIDER_DEFINED_TOPLINE = "PROVIDER_DEFINED_TOPLINE"
+
+
+def financing_format(screener: DetailedScreenerDataset) -> bool:
+    """Screener's lender P&L layout (Revenue / Interest / Expenses / Financing Profit),
+    recognised from the statement itself, never from the company's name or symbol."""
+    return any(
+        row.label == "Financing Profit"
+        for table in screener.tables
+        if table.kind in (ScreenerTableKind.PROFIT_LOSS, ScreenerTableKind.QUARTERLY_RESULTS)
+        for row in table.rows
+    )
+
+
 
 def screener_observations(
     screener: DetailedScreenerDataset, collector: _Collector, industry: Industry, fy_end: int | None
 ) -> None:
     mapping: dict[str, CanonicalMetric | None] = dict(SCREENER_GENERAL)
+    financing = financing_format(screener)
     if industry == Industry.BANK:
         mapping = SCREENER_BANK
-    elif industry != Industry.GENERAL:
+    elif industry != Industry.GENERAL or financing:
         # Preserve reported aggregates without interpreting them as industrial operations
         # or silently relabelling a lender's financing profit as a bank-only metric.
         mapping.update({"Revenue": CanonicalMetric.REVENUE, "Operating Profit": None,
                         "Expenses": None, "Interest": None})
+        if financing:
+            # Screener's financing format splits total income into its own 'Revenue' and
+            # 'Other Income' (Revenue - Interest - Expenses = Financing Profit). The split
+            # is the provider's, not the filing's revenue from operations / other income,
+            # so its residual 'Other Income' is never OTHER_INCOME.
+            mapping["Other Income"] = None
+    provider_topline = financing and industry != Industry.BANK
     source = screener.source
     for table in screener.tables:
         statement = _SCREENER_TABLES.get(table.kind)
@@ -268,6 +292,9 @@ def screener_observations(
                         confidence=Confidence.HIGH
                         if end or period.period_type == PeriodType.TTM
                         else Confidence.LOW,
+                        warnings=(PROVIDER_DEFINED_TOPLINE,)
+                        if provider_topline and metric == CanonicalMetric.REVENUE
+                        else (),
                     )
                 )
 

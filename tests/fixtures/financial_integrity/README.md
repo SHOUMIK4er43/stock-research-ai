@@ -37,6 +37,12 @@ provider precision and do not silently replace them with primary values. This
 isolates the extraction fix from the separately known revenue-definition, tax,
 equity-definition and reporting-basis issues.
 
+Revenue definition (2026-10-19): the same page's Schedule III top-line rows are now recognised
+(Total Revenue from Operations (A) 13,150.40 / 10,311.29; Other Income 176.73 / 37.09; Total
+Income 13,327.13 / 10,348.38). Screener's lender-format 'Revenue' is its own split of total
+income and stays a separate metric, so the employee-cost ratio uses 268.08 / 13,150.40 =
+2.038569 % (previously 2.038631 % on Screener's 13,150; change approved by the user).
+
 Same-cell split controls use explicit HTML/worksheet cells or original PDF row
 separators plus period/Notes headers. An unbounded list of numeric fragments is
 not evidence that the fragments belong to one monetary cell. All tests are

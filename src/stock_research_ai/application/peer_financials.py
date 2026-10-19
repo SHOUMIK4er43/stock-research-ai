@@ -17,6 +17,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.financial_analytics import select_analytical_basis
+from stock_research_ai.application.financial_metrics import REVENUE
 from stock_research_ai.application.peer_registry import (
     BENCHMARK_METRICS,
     NEAR_ALIGNED_DAYS,
@@ -64,6 +65,12 @@ class Value:
     currency: Currency | None
     upstream: tuple[UUID, ...]
     locator: str | None = None
+    #: the top-line definition a Box 5 value rests on (revenue from operations vs a
+    #: reported / provider 'Revenue'); peers compare only on the same one
+    concept: str | None = None
+
+
+_TOPLINE = {m.value for m in REVENUE}
 
 
 def values_of(company: CompanyLayers, metric: BenchmarkMetric) -> list[Value]:
@@ -89,6 +96,8 @@ def values_of(company: CompanyLayers, metric: BenchmarkMetric) -> list[Value]:
                     m.currency,
                     m.input_value_ids,
                     m.formula_id,
+                    next((i.metric.value for i in m.provenance if i.metric.value in _TOPLINE),
+                         None),
                 )
             )
     if metric.layer == "BOX4" and company.box4 is not None:
@@ -240,6 +249,14 @@ def peer_observation(
             key,
             alignment=Alignment.ALIGNED,
             detail=f"upstream status {v.status_text}",
+        )
+    if v.concept != anchor.concept:
+        return _observation(
+            v,
+            OS.DEFINITION_MISMATCH,
+            key,
+            alignment=Alignment.ALIGNED,
+            detail=f"top line {v.concept} vs {anchor.concept}",
         )
     if metric.money and v.currency != anchor.currency:
         return _observation(

@@ -2,7 +2,7 @@
 
 Values are selected from trusted Box 5 calculated metrics / Box 4 canonical values only
 (never recalculated). The target's latest period of the metric's period type, in its
-preferred basis (consolidated when it has one), anchors every comparison:
+analytical basis (select_analytical_basis; never per metric), anchors every comparison:
 
   * a peer value counts only with the SAME period type, period end and reporting basis
     (different fiscal calendars are NEAR_ALIGNED / NOT_ALIGNED and never pooled)
@@ -16,6 +16,7 @@ from datetime import date
 from decimal import ROUND_HALF_EVEN, Decimal
 from uuid import UUID, uuid5
 
+from stock_research_ai.application.financial_analytics import select_analytical_basis
 from stock_research_ai.application.peer_registry import (
     BENCHMARK_METRICS,
     NEAR_ALIGNED_DAYS,
@@ -116,29 +117,45 @@ def values_of(company: CompanyLayers, metric: BenchmarkMetric) -> list[Value]:
     return sorted(out, key=lambda v: (v.period_end or date.min, v.basis.value, str(v.record_id)))
 
 
-def _anchor(values: list[Value]) -> Value | None:
+def target_basis(company: CompanyLayers) -> ReportingBasis | None:
+    """The target's analytical basis (financial_analytics.select_analytical_basis over its
+    Box 4; from its Box 5 frames when no Box 4 is supplied): the one basis of every anchor."""
+    if company.box4 is not None:
+        chosen = select_analytical_basis(company.box4)
+        return chosen[0] if chosen else None
+    if company.box5 is not None:
+        bases = {f.reporting_basis for f in company.box5.frames}
+        for basis in (ReportingBasis.CONSOLIDATED, ReportingBasis.STANDALONE):
+            if basis in bases:
+                return basis
+    return None
+
+
+def _anchor(values: list[Value], basis: ReportingBasis | None) -> Value | None:
     """The target's latest calculated value of its main period type (FY first, then
-    POINT_IN_TIME), consolidated before standalone."""
+    POINT_IN_TIME) in the analytical basis only: a metric missing there is never filled
+    from the other basis."""
     for period_type in (PeriodType.FY, PeriodType.POINT_IN_TIME):
-        usable = [
+        chosen = [
             v
             for v in values
             if v.period_type == period_type
             and v.calculated
             and v.period_end is not None
             and v.value is not None
+            and v.basis == basis
         ]
-        if not usable:
-            continue
-        for basis in (
-            ReportingBasis.CONSOLIDATED,
-            ReportingBasis.STANDALONE,
-            ReportingBasis.UNKNOWN,
-        ):
-            chosen = [v for v in usable if v.basis == basis]
-            if chosen:
-                return max(chosen, key=lambda v: (v.period_end or date.min, str(v.record_id)))
+        if chosen:
+            return max(chosen, key=lambda v: (v.period_end or date.min, str(v.record_id)))
     return None
+
+
+def _other_basis_only(values: list[Value], basis: ReportingBasis | None) -> list[str]:
+    return sorted({
+        v.basis.value for v in values
+        if v.basis != basis and v.calculated and v.value is not None
+        and v.period_type in (PeriodType.FY, PeriodType.POINT_IN_TIME)
+    })
 
 
 def _ref(v: Value) -> EvidenceRef:
@@ -288,9 +305,13 @@ def financial_benchmarks(
     peers: list[CompanyLayers],
     family: str,
     min_peers: int,
-) -> tuple[list[PeerFinancialBenchmark], list[NotApplicableMetric]]:
+) -> tuple[list[PeerFinancialBenchmark], list[NotApplicableMetric], list[tuple[str, str]]]:
+    """(benchmarks, sector-blocked metrics, warnings). A metric the target has only on the
+    other basis gets no benchmark and a TARGET_BASIS_UNAVAILABLE warning."""
     benchmarks: list[PeerFinancialBenchmark] = []
     blocked: list[NotApplicableMetric] = []
+    warnings: list[tuple[str, str]] = []
+    basis = target_basis(target)
     for metric in BENCHMARK_METRICS:
         if not applies(metric, family):
             blocked.append(
@@ -301,8 +322,16 @@ def financial_benchmarks(
                 )
             )
             continue
-        anchor = _anchor(values_of(target, metric))
+        values = values_of(target, metric)
+        anchor = _anchor(values, basis)
         if anchor is None or anchor.period_end is None or anchor.value is None:
+            others = _other_basis_only(values, basis)
+            if others:
+                warnings.append((
+                    "TARGET_BASIS_UNAVAILABLE",
+                    f"{metric.code}: no calculated {basis.value if basis else 'known-basis'} "
+                    f"value; {', '.join(others)} not substituted",
+                ))
             continue
         observations = [peer_observation(anchor, metric, p) for p in peers]
         comparable = [
@@ -338,7 +367,7 @@ def financial_benchmarks(
                 missing_peers=tuple(o.company_key for o in observations if o.status == OS.MISSING),
             )
         )
-    return benchmarks, blocked
+    return benchmarks, blocked, warnings
 
 
 _DIMENSIONS = {m.code: m.dimension for m in BENCHMARK_METRICS}

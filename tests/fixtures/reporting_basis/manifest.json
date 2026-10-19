@@ -1,0 +1,26 @@
+{
+  "fixtures": [
+    {
+      "file": "hudco_standalone.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/HUDCO/",
+      "retrieved_at": "2026-10-18T05:37:29.419470Z",
+      "raw_artifact_id": "857540a3-b8f7-4bf4-be51-06f9ef5ce840",
+      "extraction_id": "bb3daa23-c933-4592-95fc-6d3db34fec5a",
+      "capture_sha256": "bc7d431247f54e2a1139ce8aaa1ceeb93474ec7e15afd4cfd3bbea5de72baa1e",
+      "sha256": "db3cdebc4f453248b4dd9f9414f30cfebded0bedc01333634d294b822d06d3c0",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    },
+    {
+      "file": "hudco_consolidated.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/HUDCO/consolidated/",
+      "retrieved_at": "2026-10-06T05:34:29.378265Z",
+      "raw_artifact_id": "92e27e85-ead2-4031-bc9d-c45194899970",
+      "extraction_id": "d377e2c8-bfbc-4746-a752-7adff34b6a42",
+      "capture_sha256": "93dce1e7780e9fd06d0afdc7fcd86d13e4aa75b1056e2eda7287fefdec43fa6b",
+      "sha256": "34678e81dd11a88250d33c75e9a8266bacf0952e9a8a782d9b4f387ee0b95482",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    }
+  ]
+}

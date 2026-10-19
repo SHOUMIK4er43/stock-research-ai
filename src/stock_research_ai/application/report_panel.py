@@ -72,6 +72,10 @@ class FinalReportPanel(BaseModel):
     data_limitations: PanelList
     open_diligence: PanelList
     recommendation: str = "NONE"
+    #: the one reporting basis of every comparable figure above (the Summary acquires the
+    #: same basis); the control basis appears only as the report's labelled control layer
+    analytical_basis: str | None = None
+    control_basis: str | None = None
 
 
 def _list(items: Iterable[PanelItem]) -> PanelList:
@@ -138,7 +142,8 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         red=_list(risk_items(report.risks.red)), yellow=_list(risk_items(report.risks.yellow)),
         positive_controls=_list(risk_items(report.risks.positive_controls)),
         input_conflicts=_list(conflicts), data_limitations=_list(limitations),
-        open_diligence=_list(diligence))
+        open_diligence=_list(diligence), analytical_basis=m.analytical_basis.value,
+        control_basis=m.control_basis.value if m.control_basis else None)
 
 
 __all__ = ["FinalReportPanel", "PanelItem", "PanelList", "PanelSection", "build_panel"]

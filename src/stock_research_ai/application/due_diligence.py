@@ -51,6 +51,7 @@ from stock_research_ai.application.earnings_quality import build_forensics, posi
 from stock_research_ai.application.financial_analytics import (
     canonical_analytics_json,
     frame_currencies,
+    select_analytical_basis,
 )
 from stock_research_ai.application.financial_metrics import (
     REVENUE,
@@ -183,6 +184,29 @@ def _money_currencies(request: DueDiligenceRequest) -> set[Currency]:
             if isinstance(currency, Currency):
                 out.add(currency)
     return out
+
+
+def _check_basis(
+    analytical: ReportingBasis,
+    box9: IndustryIntelligenceDataset | None,
+    box10: ForecastDataset | None,
+    box11: ValuationDataset | None,
+) -> None:
+    """A peer benchmark, forecast or valuation on another basis than the analytical one is
+    refused (never mixed into this company's research beside figures of another basis)."""
+    found: dict[str, ReportingBasis] = {}
+    if box9 is not None:
+        found.update({f"Box 9 {b.metric_code}": b.reporting_basis
+                      for b in box9.financial_benchmarks})
+    if box10 is not None:
+        found["Box 10 forecast"] = box10.base.reporting_basis
+    if box11 is not None:
+        found["Box 11 valuation"] = box11.reporting_basis
+    wrong = sorted(f"{k} is {v.value}" for k, v in found.items() if v != analytical)
+    if wrong:
+        raise DueDiligenceInputError(
+            "BASIS_MISMATCH", f"the analytical basis is {analytical.value}; "
+            + "; ".join(wrong)[:400])
 
 
 def _check_lineage(
@@ -592,14 +616,11 @@ def build_due_diligence(
     _check_lineage(request, box4, box5, box4_sha, box5_sha, bundle, bundle_sha, box7, box8, box9,
                    box10, box10_sha, box11, box12)
     currencies = frame_currencies(box4)
-    if ReportingBasis.CONSOLIDATED in currencies:
-        analytical = ReportingBasis.CONSOLIDATED
-        selection = "CONSOLIDATED: the primary analytical basis"
-    elif ReportingBasis.STANDALONE in currencies:
-        analytical = ReportingBasis.STANDALONE
-        selection = "STANDALONE: Box 4 holds no consolidated statements"
-    else:
+    chosen = select_analytical_basis(box4)
+    if chosen is None:
         raise DueDiligenceInputError("NO_FINANCIAL_BASIS", "Box 4 has no stated basis")
+    analytical, selection = chosen
+    _check_basis(analytical, box9, box10, box11)
     currency = currencies[analytical]
     if currency in (Currency.UNKNOWN, Currency.OTHER):
         raise DueDiligenceInputError("CURRENCY_UNKNOWN", "the analytical currency is not known")

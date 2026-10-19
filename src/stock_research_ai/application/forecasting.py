@@ -24,7 +24,10 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from uuid import UUID, uuid5
 
-from stock_research_ai.application.financial_analytics import frame_currencies
+from stock_research_ai.application.financial_analytics import (
+    frame_currencies,
+    select_analytical_basis,
+)
 from stock_research_ai.application.financial_formulas import cagr
 from stock_research_ai.application.financial_metrics import (
     REVENUE,
@@ -1385,23 +1388,17 @@ def _compute(
 def _select_basis(
     data: CanonicalFinancialDataset,
     request: ForecastRequest,
-    currencies: dict[ReportingBasis, Currency],
 ) -> tuple[ReportingBasis, str]:
+    """The research's analytical basis (financial_analytics.select_analytical_basis), never a
+    basis chosen here: a consolidated history without annual revenue gives UNAVAILABLE lines,
+    it does not switch the forecast to standalone. An explicit request is honoured (and
+    Boxes 13/14 refuse it when it is not the analytical basis)."""
     if request.reporting_basis is not None:
         return request.reporting_basis, "requested"
-
-    def has_annual_revenue(basis: ReportingBasis) -> bool:
-        return any(
-            v.reporting_basis == basis
-            and v.metric in REVENUE
-            and v.period.period_type == PeriodType.FY
-            for v in data.canonical_values
-        )
-
-    for basis in (ReportingBasis.CONSOLIDATED, ReportingBasis.STANDALONE):
-        if basis in currencies and has_annual_revenue(basis):
-            return basis, "first basis with annual revenue (consolidated preferred)"
-    return ReportingBasis.CONSOLIDATED, "no basis has annual revenue"
+    chosen = select_analytical_basis(data)
+    if chosen is None:
+        return ReportingBasis.CONSOLIDATED, "Box 4 has no stated basis"
+    return chosen
 
 
 def _anchor(
@@ -1479,7 +1476,7 @@ def build_forecast(
     box4_hash = hashlib.sha256(canonical_dataset_json(data).encode()).hexdigest()
     issues = Issues()
     currencies = frame_currencies(data)
-    basis, selection = _select_basis(data, req, currencies)
+    basis, selection = _select_basis(data, req)
     currency = currencies.get(basis, Currency.UNKNOWN)
     other = (
         ReportingBasis.STANDALONE

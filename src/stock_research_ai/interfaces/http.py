@@ -41,7 +41,7 @@ from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.rendering.generate import LiveFinalReportGenerator
 from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
-from stock_research_ai.adapters.screener.source import validate_url
+from stock_research_ai.adapters.screener.source import analytical_page_urls, validate_url
 from stock_research_ai.application.browser_jobs import (
     BrowserJobManager,
     BrowserResearchJob,
@@ -57,7 +57,7 @@ from stock_research_ai.application.summary_generation import SummaryModel, gener
 from stock_research_ai.bootstrap import browser_engine, browser_execution_spec, research_engine
 from stock_research_ai.config import LOOPBACK_BIND_HOSTS, Settings
 from stock_research_ai.domain.company import Company, CompanyRegistration
-from stock_research_ai.domain.extraction import ExtractionRequest
+from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.report import ResearchReportSnapshot
 from stock_research_ai.domain.summary import (
     SummaryErrorCode,
@@ -626,12 +626,28 @@ def create_app(
         finally:
             summary_limiter.release()
 
+    async def _analytical_extraction(source_url: str) -> CompanyExtractionResult:
+        """The company's analytical-basis page, acquired in the SAME order Detailed Research
+        binds its primary page (consolidated, else standalone; a page that fails or names no
+        company falls through), so Summary and Detailed never silently differ in basis.
+        The last page's outcome, failure included, is returned / raised as before."""
+        urls = analytical_page_urls(source_url)
+        engine = current_job_manager().engine
+        for url in urls[:-1]:
+            try:
+                extraction = await engine.extract_company(
+                    ExtractionRequest(provider="screener", url=url)
+                )
+            except Exception:  # noqa: BLE001 - as Detailed: fall back to the next view
+                continue
+            if extraction.company is not None and extraction.raw_artifacts:
+                return extraction
+        return await engine.extract_company(ExtractionRequest(provider="screener", url=urls[-1]))
+
     async def _generate_summary(
         payload: BrowserSummaryRequest, model: SummaryModel
     ) -> SummaryResult:
-        extraction = await current_job_manager().engine.extract_company(
-            ExtractionRequest(provider="screener", url=payload.source_url)
-        )
+        extraction = await _analytical_extraction(payload.source_url)
         try:
             summary_input = project_summary_input(extraction)
         except SummaryInputBudgetExceeded:

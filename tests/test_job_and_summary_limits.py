@@ -253,7 +253,9 @@ async def test_summary_quota_threshold_429_and_recovery(summary_api, limiter):
     assert rejected.status_code == 429
     assert rejected.json()["detail"]["code"] == "SUMMARY_RATE_LIMITED"
     assert rejected.headers["Retry-After"] == "600"
-    assert len(harness.model.calls) == 3 and len(harness.screener_requests) == 3
+    # each accepted summary acquires in Detailed Research's page order: the consolidated
+    # INFY page (absent from the fixtures) and then the standalone page
+    assert len(harness.model.calls) == 3 and len(harness.screener_requests) == 3 * 2
     clock.now += 599.0
     assert (await post_summary(app, token, BODY)).status_code == 429
     clock.now += 1.0  # the first request leaves the window

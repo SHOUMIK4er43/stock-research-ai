@@ -19,13 +19,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 from uuid import uuid5
 
 from stock_research_ai.adapters.rendering.cli import build_research_stage
 from stock_research_ai.adapters.screener.peers_api import PeerFetch
 from stock_research_ai.adapters.screener.research_dataset import build_screener_dataset
-from stock_research_ai.adapters.screener.source import validate_url
+from stock_research_ai.adapters.screener.source import analytical_page_urls, validate_url
 from stock_research_ai.application.final_report_jobs import FinalReportGenerationError
 from stock_research_ai.application.report_claims import NS
 from stock_research_ai.application.report_orchestrator import (
@@ -73,12 +72,8 @@ class StageRequest:
 
 def page_urls(source_url: str) -> tuple[str, str]:
     """(consolidated, standalone) URLs of the page's company; the consolidated page is the
-    primary (analytical-basis) page."""
-    url = validate_url(source_url)
-    path = urlsplit(url).path
-    slug = path.split("/")[2]
-    base = f"https://www.screener.in/company/{slug}/"
-    return base + "consolidated/", base
+    primary (analytical-basis) page. The same order the Summary uses."""
+    return analytical_page_urls(source_url)
 
 
 def _same(declared: str | None, canonical: str | None) -> bool:

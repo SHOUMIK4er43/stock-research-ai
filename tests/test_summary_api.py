@@ -14,7 +14,7 @@ from stock_research_ai.adapters.http.browser_auth import PairingStore
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.screener.normalizer import ScreenerNormalizer
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
-from stock_research_ai.adapters.screener.source import ScreenerSource
+from stock_research_ai.adapters.screener.source import ScreenerSource, analytical_page_urls
 from stock_research_ai.adapters.sqlite import SQLiteDatabase
 from stock_research_ai.application.browser_jobs import BrowserJobManager
 from stock_research_ai.application.engine import ExtractionServices, ResearchEngine
@@ -166,7 +166,11 @@ async def test_summary_for_detected_page_comes_from_extraction(summary_api, url,
         claim["text"] in body["summary_text"].splitlines() for claim in body["grounding_claims"]
     )
     assert body["provider"] == "aicredits"
-    assert harness.screener_requests == [url.removeprefix("https://www.screener.in")]
+    # Detailed Research's acquisition order: consolidated first, then standalone (the INFY
+    # fixture has no consolidated page, so it falls back to the standalone page).
+    expected = [p.removeprefix("https://www.screener.in") for p in analytical_page_urls(url)]
+    assert harness.screener_requests == expected[: expected.index(
+        url.removeprefix("https://www.screener.in")) + 1]
     assert len(harness.model.calls) == 1
     _system, user = harness.model.calls[0]
     assert user.startswith("SUMMARY_CLAIM_CATALOG_V2 JSON:\n")

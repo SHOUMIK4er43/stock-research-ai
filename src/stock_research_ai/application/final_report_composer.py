@@ -246,6 +246,23 @@ def _integrity(request: FinalReportRequest, box4: CanonicalFinancialDataset,
             verified = ident.nse_symbol if name == "nse" else ident.isin
             if verified is not None and verified != asked[name]:
                 raise _fail("IDENTITY_MISMATCH", f"Box 12 verified {name} {verified} differs")
+    # basis: one analytical basis (Box 13's) for every comparable company-level layer
+    analytical = box13.analytical_basis.value
+    bases: dict[str, str] = {}
+    box9 = supplied.get(Layer.BOX9)
+    if isinstance(box9, IndustryIntelligenceDataset):
+        bases.update({f"Box 9 {b.metric_code}": b.reporting_basis.value
+                      for b in box9.financial_benchmarks})
+    box10_ = supplied.get(Layer.BOX10)
+    if isinstance(box10_, ForecastDataset):
+        bases["Box 10 forecast"] = box10_.base.reporting_basis.value
+    box11_ = supplied.get(Layer.BOX11)
+    if isinstance(box11_, ValuationDataset):
+        bases["Box 11 valuation"] = box11_.reporting_basis.value
+    wrong = sorted(f"{k} is {v}" for k, v in bases.items() if v != analytical)
+    if wrong:
+        raise _fail("BASIS_MISMATCH", f"the analytical basis is {analytical}; "
+                    + "; ".join(wrong)[:400])
     # time
     as_of = request.as_of
     if box13.as_of > as_of:

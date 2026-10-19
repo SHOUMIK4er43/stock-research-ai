@@ -178,6 +178,25 @@ def frame_currencies(data: CanonicalFinancialDataset) -> dict[ReportingBasis, Cu
     }
 
 
+ANALYTICAL_CONSOLIDATED = "CONSOLIDATED: the primary analytical basis"
+ANALYTICAL_STANDALONE = "STANDALONE: Box 4 holds no consolidated statements"
+
+
+def select_analytical_basis(
+    data: CanonicalFinancialDataset,
+) -> tuple[ReportingBasis, str] | None:
+    """THE reporting basis of one company's research (Boxes 9, 10, 13, 14 and the report):
+    CONSOLIDATED when Box 4 holds consolidated MONEY values, else STANDALONE; None when it
+    holds neither. Every consumer of comparable company-level figures uses this one decision
+    instead of choosing its own; the other basis is only ever a labelled control layer."""
+    currencies = frame_currencies(data)
+    if ReportingBasis.CONSOLIDATED in currencies:
+        return ReportingBasis.CONSOLIDATED, ANALYTICAL_CONSOLIDATED
+    if ReportingBasis.STANDALONE in currencies:
+        return ReportingBasis.STANDALONE, ANALYTICAL_STANDALONE
+    return None
+
+
 def select_periods(
     e: Engine, annual: Sequence[date], quarters: Sequence[date]
 ) -> list[AnalyticalPeriod]:

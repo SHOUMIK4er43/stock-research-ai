@@ -69,6 +69,7 @@ _SEVERITY = {
     "PEER_TABLE_MISSING": Severity.HIGH,
     "SOURCE_MISSING": Severity.MEDIUM,
     "NO_CANONICAL_PEERS": Severity.MEDIUM,
+    "TARGET_BASIS_UNAVAILABLE": Severity.MEDIUM,
 }
 
 
@@ -193,7 +194,10 @@ def build_industry_intelligence(
     if not canonical:
         warnings.append(("NO_CANONICAL_PEERS", "no INCLUDED / INCLUDED_LIMITED peer"))
 
-    financial, blocked = financial_benchmarks(target, canonical, family, bounds.min_peers_for_rank)
+    financial, blocked, basis_warnings = financial_benchmarks(
+        target, canonical, family, bounds.min_peers_for_rank
+    )
+    warnings.extend(basis_warnings)
     kpis = kpi_benchmarks(target, canonical, bounds.min_peers_for_rank)
     segments = segment_comparisons(target, canonical)
     comparability = [

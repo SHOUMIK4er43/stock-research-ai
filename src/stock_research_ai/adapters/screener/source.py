@@ -40,6 +40,17 @@ def validate_url(url: str) -> str:
     return url
 
 
+def analytical_page_urls(source_url: str) -> tuple[str, str]:
+    """(consolidated, standalone) pages of the URL's company, in acquisition order: the
+    first page that yields the company is the primary (analytical-basis) page. Summary and
+    Detailed Research both acquire through this one order, so a company page opened in
+    either view gives both products the same reporting basis."""
+    url = validate_url(source_url)
+    slug = urlsplit(url).path.split("/")[2]
+    base = f"https://www.screener.in/company/{slug}/"
+    return base + "consolidated/", base
+
+
 class ScreenerSource:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.transport = transport

@@ -1367,7 +1367,9 @@ def test_cash_is_read_on_the_forecast_basis_only():
 
 
 def test_forecast_without_years_or_currency_fails_closed():
-    no_currency = make([V(M.TOTAL_BORROWINGS, pit(2026), 100, basis=B.STANDALONE)])
+    # the only (hence analytical) basis really has no known currency: Box 10 forecasts on it
+    no_currency = make([V(M.TOTAL_BORROWINGS, pit(2026), 100, basis=B.STANDALONE,
+                          currency=Currency.UNKNOWN)])
     f = build_forecast(no_currency, generated_at=NOW)
     v = value(f, no_currency)
     assert v.status == ValuationStatus.UNAVAILABLE and "CURRENCY_UNKNOWN" in codes(v)

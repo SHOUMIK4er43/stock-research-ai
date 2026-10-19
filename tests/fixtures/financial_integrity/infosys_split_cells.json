@@ -1,0 +1,27 @@
+{
+  "source_url": "https://www.bseindia.com/xml-data/corpfiling/AttachHis/19dd605c-2b6b-4084-8dca-9d578a3eb7a0.pdf",
+  "source_sha256": "889ee382d055a528a645ae28017b17df9da306328997dfc1d14d9b98757d88c2",
+  "document_id": "e3df9387-d468-52a9-8b81-ab2851e97279",
+  "company_key": "screener:INFY",
+  "parser": "pypdf/6.18.0;document-text/1;chunks/1",
+  "pages": [
+    {
+      "number": 210,
+      "text": "Infosys Integrated Annual Report 2025-26\n240\nStandalone Statement of Profit and Loss\n(In ` crore, except equity share and per equity share data)\nParticulars Note Year ended March 31,\n2026 2025\nRevenue from operations 2.18  1,48,819  1,36,592 \nOther income, net 2.19  6,491  4,782 \nTotal income   1,55,310  1,41,374 \nExpenses    \nEmployee benefit expenses 2.20  73,239  67, 4 6 6 \nCost of technical sub-contractors   22,388  19,353 \nTravel expenses   1,596  1,467 \nCost of software packages and others 2.20  9,274  9,617 \nCommunication expenses   419  448 \nConsultancy and professional charges   1,846  1,245 \nDepreciation and amortization expenses 2.1, 2.3  2,394  2,619 \nFinance cost   207  221 \nOther expenses 2.20  4,044  3,497 \nTotal expenses   1,15,407  1,05,933 \nProfit before exceptional item and tax  39,903  35,441 \nExceptional item   \nImpact of Labour Codes 2.20.1  1,146 \u2013\nProfit before tax    38,757  35,441 \nTax expense:    \nCurrent tax 2.17  10,459  10,836 \nDeferred tax 2.17  (913)  (963)\nProfit for the year   29, 211  25,568 ",
+      "printed_label": null,
+      "spans": null,
+      "tables": [],
+      "warnings": []
+    }
+  ],
+  "source_truth_crore": {
+    "PAT": [
+      "29211",
+      "25568"
+    ],
+    "EMPLOYEE_COST": [
+      "73239",
+      "67466"
+    ]
+  }
+}

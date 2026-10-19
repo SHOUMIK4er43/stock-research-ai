@@ -39,6 +39,7 @@ from stock_research_ai.application.financial_formulas import (
     ratio,
 )
 from stock_research_ai.application.financial_parsing import period_from
+from stock_research_ai.application.financial_reconciliation import extraction_integrity_issue
 from stock_research_ai.domain.evidence import AUTHORITY_RANK, SourceAuthority
 from stock_research_ai.domain.financial_analytics import (
     DERIVED_QUANTUM,
@@ -216,6 +217,9 @@ class Frame:
             r.record_id: r for r in data.reconciliation
         }
         self.values: dict[tuple[CanonicalMetric, str], CanonicalFinancialValue] = {}
+        rejected = {o.observation_id: issue for o in data.observations
+                    if (issue := extraction_integrity_issue(o)) is not None}
+        self.invalid_values: dict[tuple[CanonicalMetric, str], str] = {}
         self.other_currency: set[tuple[CanonicalMetric, str]] = set()
         consumed = 0
         for value in sorted(data.canonical_values, key=lambda v: str(v.canonical_value_id)):
@@ -225,6 +229,9 @@ class Frame:
             ):
                 continue
             key = (value.metric, value.period.key())
+            if value.selected_observation_id in rejected:
+                self.invalid_values[key] = rejected[value.selected_observation_id]
+                continue
             if value.currency != currency:
                 self.other_currency.add(key)
                 continue
@@ -263,6 +270,10 @@ class Frame:
                 return self._fact(value)
         names = "/".join(m.value for m in metrics)
         what = f"{names} @ {period.label}"
+        for metric in metrics:
+            issue = self.invalid_values.get((metric, key))
+            if issue is not None:
+                return Missing(S.INVALID_INPUT, f"{what}: extraction integrity rejected ({issue})")
         for metric in metrics:
             record = self.unresolved.get((metric, key))
             if record is not None and record.outcome in (Outcome.CONFLICT, Outcome.AMBIGUOUS):

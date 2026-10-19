@@ -204,6 +204,11 @@ def make(
         )
         oid = uuid5(NS, f"obs|{n}")
         raw = "0" if row.value is None else str(row.value)
+        if isinstance(row.value, Decimal):
+            # These fixtures model statement cells, whose parser accepts decimal
+            # notation, not Decimal's automatic exponent notation for tiny values.
+            # Keep the exact financial value and every expected result unchanged.
+            raw = format(row.value, "f")
         number = None if row.value is None else Decimal(str(row.value))
         source = (
             SourceReference(

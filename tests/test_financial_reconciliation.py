@@ -570,7 +570,12 @@ def test_split_numbers_are_rejoined_only_when_unambiguous():
         5: ("211", False),
         6: ("25,568", False),
     }
-    assert _row_values(row, [5, 6]) == ([("29, 211", 4), ("25,568", 6)], "SPLIT_NUMBER_REJOINED")
+    # Numeric tokens are not logical columns. Reconstruction requires explicit
+    # evidence that fragments occupy the SAME monetary cell.
+    assert _row_values(row, [5, 6], cell_groups=[[4, 5], [6]]) == (
+        [("29, 211", 4), ("25,568", 6)], "SPLIT_NUMBER_REJOINED"
+    )
+    assert _row_values(row, [5, 6])[1] == "SPLIT_NUMBER_SUSPECT"
     shifted = {
         0: ("Employee benefit expenses", False),
         1: ("2.20", False),
@@ -580,7 +585,7 @@ def test_split_numbers_are_rejoined_only_when_unambiguous():
         5: ("6", False),
         6: ("6", False),
     }
-    assert _row_values(shifted, [5, 6]) == (
+    assert _row_values(shifted, [5, 6], note_columns=(1,), cell_groups=[[2], [3, 4, 5, 6]]) == (
         [("73,239", 2), ("67, 4 6 6", 3)],
         "SPLIT_NUMBER_REJOINED",
     )

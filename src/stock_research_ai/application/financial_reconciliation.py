@@ -284,6 +284,7 @@ class _TableFrame:
     statement: StatementType
     inference: str | None = None  # CONTINUATION_INFERRED / STATEMENT_FROM_PAGE_TITLE
     period_mismatch: bool = False
+    notes_declared: bool = False
 
 
 def _cells(table: ExtractedTable) -> dict[int, dict[int, tuple[str, bool]]]:
@@ -326,10 +327,12 @@ def _first_data_row(grid: dict[int, dict[int, tuple[str, bool]]]) -> int:
 
 
 def _numeric_columns(grid: dict[int, dict[int, tuple[str, bool]]], rows: list[int]) -> list[int]:
-    """Columns holding a value in at least half of the rows that hold any value; a column
-    of note references ('2.17') is not a value column."""
+    """Fallback occupancy only. A decimal's spelling cannot identify a Notes column.
+
+    Explicit period/header structure takes precedence in _frame. In particular 2.08
+    and 5.55 are amounts unless their COLUMN, not their spelling, identifies references.
+    """
     counts: Counter[int] = Counter()
-    notes: Counter[int] = Counter()
     numeric_rows = 0
     for r in rows:
         found = False
@@ -337,14 +340,12 @@ def _numeric_columns(grid: dict[int, dict[int, tuple[str, bool]]], rows: list[in
             token = text.strip()
             if c == 0 or not token:
                 continue
-            if _NOTE.match(token):
-                notes[c] += 1
-            elif _valid_value(token):
+            if _valid_value(token):
                 counts[c] += 1
                 found = True
         numeric_rows += found
     return sorted(
-        c for c, n in counts.items() if n * 2 >= numeric_rows and n > notes[c] and numeric_rows
+        c for c, n in counts.items() if n * 2 >= numeric_rows and numeric_rows
     )
 
 
@@ -450,12 +451,34 @@ def _frame(
             c
             for r in header_rows
             for c, (text, _) in grid[r].items()
-            if c > 0 and _YEAR.fullmatch(text.strip())
+            if c > 0 and (
+                _YEAR.search(text) if table.method in {"html-table", "xlsx-sheet"}
+                else _YEAR.fullmatch(text.strip())
+            )
         }
     )
     context = _context_lines(extraction, table, first_row)
+    header = _header_lines(context)
+    # Text-table columns are right-aligned TOKEN positions, not physical PDF cells.
+    # Establish the number of logical value columns from complete period headers,
+    # before considering numeric occupancy (which also counts note references).
+    candidates = [
+        interpret_columns(header, n, statement, fy_end)
+        for n in range(1, min(table.column_count - 1, len(_YEAR.findall(" ".join(header)))) + 1)
+    ]
+    complete = [p for p in candidates if p and not any(c.ambiguous for c in p)]
+    header_periods = complete[-1] if complete else None
+    notes_declared = any(_NOTE_HEADER.search(line) for line in context) or bool(
+        head and head.notes_declared and not year_columns
+    )
     numeric = _numeric_columns(grid, data_rows)
-    if year_columns and (not numeric or numeric == year_columns):
+    if header_periods is not None and table.method == "text-rows/right-aligned-numbers":
+        value_columns = list(range(table.column_count - len(header_periods), table.column_count))
+    elif (head is not None and not year_columns and not header_periods
+          and table.column_count - 1 >= len(head.periods)):
+        value_columns = list(range(table.column_count - len(head.periods), table.column_count))
+    elif year_columns and (table.method in {"html-table", "xlsx-sheet"}
+                           or not numeric or numeric == year_columns):
         value_columns = year_columns
     elif numeric and (head is None or year_columns or len(numeric) == len(head.value_columns)):
         value_columns = numeric  # the data's own columns (headers may be merged by pypdf)
@@ -464,10 +487,11 @@ def _frame(
         value_columns = list(range(table.column_count - k, table.column_count))
     else:
         value_columns = year_columns or numeric
-    if head is not None and not year_columns and len(value_columns) == len(head.value_columns):
+    if header_periods is not None and len(header_periods) == len(value_columns):
+        periods = header_periods
+    elif head is not None and not year_columns and len(value_columns) == len(head.value_columns):
         periods = head.periods
     else:
-        header = _header_lines(context)
         periods = interpret_columns(header, len(value_columns), statement, fy_end)
         phrase = (
             _page_period_phrase(extraction, table) if any(p.ambiguous for p in periods) else None
@@ -510,7 +534,9 @@ def _frame(
         collector.warn("UNKNOWN_UNIT", table.locator)
     if basis == ReportingBasis.UNKNOWN:
         collector.warn("UNKNOWN_BASIS", table.locator)
-    return _TableFrame(value_columns, periods, unit, basis, statement, None, mismatch), first_row
+    return _TableFrame(
+        value_columns, periods, unit, basis, statement, None, mismatch, notes_declared
+    ), first_row
 
 
 def _has_year_header(table: ExtractedTable) -> bool:
@@ -519,8 +545,12 @@ def _has_year_header(table: ExtractedTable) -> bool:
     return any(_YEAR.search(text) for r in grid if r < first for text, _ in grid[r].values())
 
 
-_NOTE = re.compile(r"^\d{1,2}(?:\s?\.\s?\d{1,3}){1,3}(?:,|\s+and)?$")
-_SPLIT_LIMIT = 14
+_NOTE_HEADER = re.compile(
+    r"\b(?:(?:particulars|description|items?).*\bnotes?|notes?\s+no\.?|"
+    r"ref(?:erence)?\.?)(?:\b|$)|(?:^|\|)\s*notes?\s*(?:$|\|)", re.I
+)
+_NOTE = re.compile(r"^\d+(?:\.\d+)*(?:[A-Za-z]|\([A-Za-z0-9]+\))?$")
+_CELL_METHOD = "; logical-cells/1"
 _LOW_WARNINGS = {
     "UNKNOWN_PERIOD",
     "UNKNOWN_UNIT",
@@ -550,52 +580,110 @@ def _valid_value(token: str) -> bool:
 
 
 def _row_values(
-    row: dict[int, tuple[str, bool]], value_columns: list[int]
+    row: dict[int, tuple[str, bool]], value_columns: list[int], *,
+    note_columns: tuple[int, ...] = (),
+    cell_groups: list[list[int]] | None = None,
 ) -> tuple[list[tuple[str, int]], str | None]:
-    """(raw text, source column) per value column, plus a row-level warning.
+    """Read logical cells, never search for a syntactically convenient partition.
 
-    pypdf sometimes breaks one number into fragments ('29, 211', '11, 28 6'), which Box 3
-    then spreads over cells and can shift into the wrong value column. Such a row is
-    re-read from its fragments only when exactly one reading makes every value a validly
-    grouped number (optionally after one leading note reference); a re-read value points
-    at the cell holding its first fragment. Otherwise the row is flagged and every value
-    in it is kept as low confidence. Nothing is guessed."""
+    Ordinarily a Box 3 cell is the boundary. For flattened PDF token tables, the caller
+    may supply groups established by the source row's cell separators AND the period /
+    Notes header. Without that evidence, extra tokens make the row ambiguous. Joining
+    arbitrary adjacent valid numbers is forbidden, even if only one Decimal results.
+    """
     values = [(row.get(c, ("", False))[0], c) for c in value_columns]
-    extra = [
-        text.strip()
-        for c, (text, _) in sorted(row.items())
-        if c > 0 and c not in value_columns and any(ch.isdigit() for ch in text)
-    ]
-    notes = [t for t in extra if _NOTE.match(t)]
-    suspect = len(extra) - min(len(notes), 1) > 0 or any(
-        v.strip().endswith(",") or v.strip().startswith(",") for v, _ in values
-    )
-    if not suspect:
-        return values, None
-    fragments = [
-        (text.strip(), c) for c, (text, _) in sorted(row.items()) if c > 0 and text.strip()
-    ]
-    if len(fragments) > _SPLIT_LIMIT:
+    groups = [[c] for c in value_columns] if cell_groups is None else cell_groups
+    used = [c for group in groups for c in group]
+    if (len(groups) != len(value_columns) or any(not g for g in groups)
+            or len(used) != len(set(used)) or set(used) & set(note_columns)
+            or any(c <= 0 for c in used)):
         return values, "SPLIT_NUMBER_SUSPECT"
-    readings: set[tuple[tuple[str, int], ...]] = set()
+    extra = [(c, text.strip()) for c, (text, _) in row.items()
+             if c > 0 and c not in used and text.strip()]
+    if any(c not in note_columns or not _NOTE.fullmatch(text) for c, text in extra):
+        return values, "SPLIT_NUMBER_SUSPECT"
+    result = [(" ".join(row.get(c, ("", False))[0] for c in group), group[0])
+              for group in groups]
+    rejoined = False
+    for raw, _ in result:
+        if _valid_value(raw) or not raw.strip():
+            continue
+        # Whitespace is removed only INSIDE a proven cell, never across groups.
+        compact = re.sub(r"\s+", "", raw)
+        if cell_groups is None or compact == raw or not _valid_value(compact):
+            return values, "SPLIT_NUMBER_SUSPECT"
+        rejoined = True
+    return result, "SPLIT_NUMBER_REJOINED" if rejoined else None
 
-    def walk(start: int, tokens: list[tuple[str, int]]) -> None:
-        if start == len(fragments):
-            n = len(value_columns)
-            if len(tokens) == n:
-                readings.add(tuple(tokens))
-            elif len(tokens) == n + 1 and _NOTE.match(tokens[0][0]):
-                readings.add(tuple(tokens[1:]))
-            return
-        for end in range(start + 1, len(fragments) + 1):
-            joined = " ".join(text for text, _ in fragments[start:end])
-            if _valid_value(joined.replace(" ", "")):
-                walk(end, [*tokens, (joined, fragments[start][1])])
 
-    walk(0, [])
-    if len(readings) == 1:
-        return list(next(iter(readings))), "SPLIT_NUMBER_REJOINED"
-    return values, "SPLIT_NUMBER_SUSPECT"
+def _row_structure(
+    extraction: DocumentExtraction, table: ExtractedTable, row: int, frame: _TableFrame,
+    cells: dict[int, tuple[str, bool]],
+) -> tuple[tuple[int, ...], list[list[int]] | None]:
+    """Keep text-table token positions distinct from logical monetary columns.
+
+    Repeated period columns establish width. A declared Notes column may occupy the
+    single preceding token position. Recover split amounts only when original row
+    separators preserve exactly those logical cells. Otherwise no regrouping occurs.
+    HTML/spreadsheet cells already have boundaries and never take this PDF path.
+    """
+    notes: tuple[int, ...] = ()
+    extras = [c for c, (text, _) in sorted(cells.items())
+              if c > 0 and c not in frame.value_columns and text.strip()]
+    if (frame.notes_declared and frame.value_columns and len(extras) == 1
+            and extras[0] < min(frame.value_columns)):
+        notes = (extras[0],)
+    if table.method in {"html-table", "xlsx-sheet"}:
+        return notes, [[c] for c in frame.value_columns]
+    if table.method != "text-rows/right-aligned-numbers" or row >= len(table.block_ids):
+        return notes, None
+    block = next(b for b in extraction.blocks if b.block_id == table.block_ids[row])
+    page = next(p for p in extraction.pages if p.page_number == block.page_number)
+    line = page.raw_text[block.start:block.end].rstrip()
+    tokens = [(c, text.strip()) for c, (text, _) in sorted(cells.items()) if c > 0 and text.strip()]
+    # Locate the exact suffix; don't let spaces/tabs in a label become numeric cells.
+    suffix = (
+        re.search(r"\s+".join(re.escape(t) for _, t in tokens) + r"\s*$", line)
+        if tokens else None
+    )
+    if suffix is None:
+        return notes, None
+    parts = re.split(r"(?:[^\S\n]{2,}|\t)", suffix.group().strip())
+    parts = [p for p in parts if p.strip()]
+    n = len(frame.value_columns)
+    has_note = frame.notes_declared and len(parts) == n + 1 and bool(_NOTE.fullmatch(parts[0]))
+    # A note attached to the label, followed by separated money cells, cannot
+    # become the first amount when one year is missing. Preserve the row as
+    # ambiguous rather than right-shifting the note into a monetary column.
+    before = line[:suffix.start()]
+    attached_note = (frame.notes_declared and bool(_NOTE.fullmatch(parts[0]))
+                     and before.endswith(" ") and not before.endswith("  "))
+    if attached_note and 1 < len(parts) <= n:
+        return (), []
+    if len(parts) != n + int(has_note):
+        return notes, None
+    if len(parts) == 1 and len(tokens) > 1:
+        return notes, None  # a flattened single-cell row has no visible column boundary
+    groups: list[list[int]] = []
+    offset = 0
+    for part in parts:
+        words = part.split()
+        found = tokens[offset:offset + len(words)]
+        if [t for _, t in found] != words:
+            return notes, None
+        groups.append([c for c, _ in found])
+        offset += len(words)
+    if offset != len(tokens):
+        return notes, None
+    if has_note:
+        notes = tuple(groups.pop(0))
+    else:
+        notes = ()  # the separators account for every token as monetary-cell content
+        if any(len(g) > 1 and all(_valid_value(cells[c][0]) for c in g) for g in groups):
+            # Without a separate reference cell, e.g. '31 268.08' could be either a
+            # space-grouped amount or note + amount. Header width alone cannot decide.
+            return (), []
+    return notes, groups
 
 
 _STATEMENT_TITLE = re.compile(
@@ -766,7 +854,10 @@ def _table_observations(
         if row < first_row:
             continue
         label = grid[row].get(0, ("", False))[0].strip()
-        values, row_warning = _row_values(grid[row], frame.value_columns)
+        note_columns, groups = _row_structure(extraction, table, row, frame, grid[row])
+        values, row_warning = _row_values(
+            grid[row], frame.value_columns, note_columns=note_columns, cell_groups=groups
+        )
         if label and not any(v.strip() for v, _ in values):
             caption = normalize_label(label)
             if caption in ("assets", "equity and liabilities", "liabilities") or (
@@ -804,7 +895,7 @@ def _table_observations(
         )
         for position, (raw, column) in enumerate(values):
             rejoined = row_warning == "SPLIT_NUMBER_REJOINED"
-            parsed = parse_financial_number(raw.replace(" ", "") if rejoined else raw)
+            parsed = parse_financial_number(re.sub(r"\s+", "", raw) if rejoined else raw)
             if parsed.status == NumberStatus.BLANK:
                 continue
             column_period = frame.periods[position] if position < len(frame.periods) else None
@@ -887,7 +978,9 @@ def _table_observations(
                         column_index=column,
                         locator=f"{table.locator}/r{row}/c{column}",
                     ),
-                    extraction_method=f"box3-table/{table.method}",
+                    extraction_method=f"box3-table/{table.method}" + (
+                        _CELL_METHOD if row_warning in (None, "SPLIT_NUMBER_REJOINED") else ""
+                    ),
                     confidence=confidence,
                     audited=column_period.audited if column_period else None,
                     restated=True if column_period and column_period.restated else None,
@@ -954,6 +1047,33 @@ def _order(o: SourceFinancialObservation) -> tuple[object, ...]:
     )
 
 
+def extraction_integrity_issue(o: SourceFinancialObservation) -> str | None:
+    """Authority ranks evidence only AFTER structural and scalar integrity checks.
+
+    Legacy text-table/rejoined observations have no logical-cell attestation and must
+    be re-extracted, not promoted by their existing Decimal or confidence. Evidence is
+    retained with an explicit exclusion; a valid independent fallback may be selected.
+    """
+    structural = {"SPLIT_NUMBER_SUSPECT", "UNLABELLED_ROW", "STATEMENT_PERIOD_MISMATCH"}
+    if structural.intersection(o.warnings):
+        reasons = ", ".join(sorted(structural.intersection(o.warnings)))
+        return "ambiguous table structure: " + reasons
+    bounded = o.extraction_method.endswith(_CELL_METHOD)
+    if o.source.source_type == SourceType.FILING and not bounded and (
+        "text-rows/right-aligned-numbers" in o.extraction_method
+        or "SPLIT_NUMBER_REJOINED" in o.warnings
+    ):
+        return "numeric cell boundaries not verified; re-extraction required"
+    raw = (re.sub(r"\s+", "", o.raw_value)
+           if bounded and "SPLIT_NUMBER_REJOINED" in o.warnings else o.raw_value)
+    parsed = parse_financial_number(raw)
+    if parsed.value != o.parsed.value or parsed.status != o.parsed.status:
+        return "raw cell and parsed number disagree"
+    if _normalized(parsed, o.value_kind, o.scale) != o.normalized_value:
+        return "parsed number and normalized value disagree"
+    return None
+
+
 def reconcile(
     observations: Sequence[SourceFinancialObservation],
     policy: TolerancePolicy,
@@ -1012,13 +1132,19 @@ def _decide(
     collector: _Collector,
 ) -> ReconciliationRecord:
     sample = members[0]
-    numeric = [o for o in members if o.normalized_value is not None and _comparable(o)]
+    rejected = {o.observation_id: issue for o in members
+                if (issue := extraction_integrity_issue(o)) is not None}
+    for oid, issue in rejected.items():
+        collector.warn("EXTRACTION_INTEGRITY_REJECTED", issue, [oid])
+    numeric = [o for o in members if o.observation_id not in rejected
+               and o.normalized_value is not None and _comparable(o)]
     excluded = [o for o in members if o not in numeric]
     if not numeric:
         return _record(
             key,
             sample,
             Outcome.NOT_COMPARABLE,
+            "extraction integrity rejected; no eligible observation" if rejected else
             "no numeric observation with a known period, basis and unit",
             excluded=excluded,
         )
@@ -1039,6 +1165,7 @@ def _decide(
             key,
             sample,
             Outcome.SINGLE_SOURCE,
+            "single usable observation; invalid extraction excluded" if rejected else
             "single usable observation",
             best,
             [best],
@@ -1154,6 +1281,8 @@ def canonical_values(
         if record.selected_observation_id is None:
             continue
         selected = observations[record.selected_observation_id]
+        if extraction_integrity_issue(selected) is not None:
+            continue  # defense against a stale/inconsistent externally supplied selection
         assert selected.normalized_value is not None
         values.append(
             CanonicalFinancialValue(
@@ -1488,7 +1617,7 @@ def verify_financial_provenance(
             (c for c in table.cells if c.row == src.row_index and c.column == src.column_index),
             None,
         )
-        if "SPLIT_NUMBER_REJOINED" in o.warnings:
+        if "SPLIT_NUMBER_REJOINED" in o.warnings and (cell is None or cell.raw_text != o.raw_value):
             row = [
                 c.raw_text.strip()
                 for c in sorted(table.cells, key=lambda c: c.column)

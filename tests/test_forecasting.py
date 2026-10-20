@@ -66,6 +66,10 @@ from stock_research_ai.domain.forecasting import (
 M = CanonicalMetric
 B = ReportingBasis
 L = ForecastLine
+#: the NON_FINANCIAL (industrial) model's lines; the lender model's own lines are separate
+LENDER_ONLY = {L.TOTAL_ASSETS, L.EQUITY, L.NON_EQUITY_FUNDING, L.TOTAL_BORROWINGS,
+               L.TOTAL_INCOME}
+INDUSTRIAL_LINES = [line for line in L if line not in LENDER_ONLY]
 D = Driver
 S = Scenario
 NOW = datetime(2026, 10, 10, 9, 0, tzinfo=UTC)
@@ -800,7 +804,7 @@ def test_financial_identities_hold_exactly():
             prior_debt = next(a for a in f.actuals if a.line == L.GROSS_DEBT).value
             prior_wc = next(a for a in f.actuals if a.line == L.TRADE_WORKING_CAPITAL).value
             for y in range(2027, 2032):
-                g = {line: num(f, line, s, y) for line in L}
+                g = {line: num(f, line, s, y) for line in INDUSTRIAL_LINES}
                 assert g[L.EBITDA] == g[L.OPERATING_PROFIT] + g[L.OTHER_INCOME]
                 assert g[L.EBIT] == g[L.EBITDA] - g[L.DEPRECIATION_AMORTIZATION]
                 assert g[L.PBT] == g[L.EBIT] - g[L.FINANCE_COST]
@@ -1138,7 +1142,7 @@ def test_max_horizon_with_many_assumptions_is_fast_and_bounded():
     f = run(rows, horizon=5, explicit_assumptions=many)
     assert time.perf_counter() - started < 5
     assert f.status == ForecastStatus.COMPLETE
-    assert len(f.values) == 5 * 3 * len(L)
+    assert len(f.values) == 5 * 3 * len(INDUSTRIAL_LINES)
     assert all(a.source == AssumptionSource.EXPLICIT for a in f.assumptions)
     assert num(f, L.CAPEX) == 50  # an amount takes precedence over the ratio
 

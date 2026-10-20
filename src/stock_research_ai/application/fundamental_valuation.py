@@ -35,6 +35,7 @@ from stock_research_ai.application.forecasting import (
     EPS_METRICS,
     History,
     canonical_forecast_json,
+    forecast_model,
 )
 from stock_research_ai.domain.financial_analytics import MetricInput
 from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
@@ -43,6 +44,7 @@ from stock_research_ai.domain.financial_canonical import (
     CanonicalMetric,
     Confidence,
     Currency,
+    Industry,
     ReportingBasis,
     Scale,
 )
@@ -51,6 +53,7 @@ from stock_research_ai.domain.forecasting import (
     ForecastAssumption,
     ForecastDataset,
     ForecastLine,
+    ForecastModel,
     OperatingRoute,
     Scenario,
 )
@@ -890,6 +893,27 @@ def value_scenario(
     return ledger.values, results
 
 
+def _model_problem(forecast: ForecastDataset, box4: CanonicalFinancialDataset | None
+                   ) -> tuple[str, str] | None:
+    """Box 11 never consumes a forecast built by a model it cannot value, nor one whose model
+    is not the company's (an industrial forecast for a financial company, or the reverse)."""
+    model = forecast.base.forecast_model
+    if model is None:
+        return None  # a dataset written before the model was recorded: the industry gate applies
+    expected = forecast_model(box4) if box4 is not None else (
+        ForecastModel.NON_FINANCIAL if forecast.industry == Industry.GENERAL
+        else ForecastModel.BANK if forecast.industry == Industry.BANK else None)
+    if expected is not None and model != expected or (
+            expected is None and model in (ForecastModel.NON_FINANCIAL, ForecastModel.BANK)):
+        return ("FORECAST_MODEL_MISMATCH",
+                f"a {model.value} forecast for a {forecast.industry.value} company")
+    if model == ForecastModel.NON_BANK_FINANCIAL:
+        return ("FORECAST_MODEL_NOT_VALUED",
+                "NON_BANK_FINANCIAL lender forecast: no lender valuation method exists yet; "
+                "industrial DCF / multiples never consume it")
+    return None
+
+
 def _refused(
     plan: Plan,
     scenario: Scenario,
@@ -1406,6 +1430,8 @@ def build_valuation(
         fatal = ("CURRENCY_UNKNOWN", "the forecast currency is not a known currency")
     elif not all_years or base.latest_actual is None:
         fatal = ("NO_FORECAST_YEARS", "the Box 10 forecast has no forecast years")
+    elif (problem := _model_problem(forecast, box4)) is not None:
+        fatal = problem
     values: list[ValuationValue] = []
     results: list[MethodResult] = []
     if fatal is not None:

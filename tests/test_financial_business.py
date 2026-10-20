@@ -191,14 +191,25 @@ def test_forecast_and_valuation_do_not_use_industrial_drivers(industry):
     data = make(tv.rows(), industry)
     forecast = build_forecast(data, generated_at=NOW)
     assert forecast.base.operating_route == OperatingRoute.UNAVAILABLE
-    assert all(v.line == ForecastLine.REVENUE for v in forecast.values)
+    lender = forecast.base.forecast_model.value == "NON_BANK_FINANCIAL"
+    allowed = {"TOTAL_ASSETS", "PAT", "EQUITY", "NON_EQUITY_FUNDING", "TOTAL_BORROWINGS",
+               "FINANCE_COST", "TOTAL_INCOME"} if lender else {"REVENUE"}
+    assert all(v.line.value in allowed for v in forecast.values)  # never an industrial line
+    assert not {v.line for v in forecast.values} & {
+        ForecastLine.EBITDA, ForecastLine.CAPEX, ForecastLine.TRADE_WORKING_CAPITAL,
+        ForecastLine.GROSS_DEBT, ForecastLine.FCF_ESTIMATE}
     valuation = build_valuation(forecast, request=tv.request(
         methods=(tv.VM.DCF_FCFF_GORDON, tv.VM.EV_EBITDA, tv.VM.PE), scenarios=(tv.S.BASE,),
         multiples=[tv.multiple(tv.VM.EV_EBITDA, 8), tv.multiple(tv.VM.PE, 12)]),
         box4=data, generated_at=NOW)
     for method in (tv.VM.DCF_FCFF_GORDON, tv.VM.EV_EBITDA):
         result = tv.result(valuation, method)
-        assert result.reason == "UNSUPPORTED_SECTOR" and result.enterprise_value is None
+        # a non-bank financial company now gets the lender forecast model, which Box 11
+        # refuses as a whole (no lender valuation yet); both reasons are fail-closed
+        expected = ("FORECAST_MODEL_NOT_VALUED"
+                    if forecast.base.forecast_model.value == "NON_BANK_FINANCIAL"
+                    else "UNSUPPORTED_SECTOR")
+        assert result.reason == expected and result.enterprise_value is None
     # Box 7's family refines Box 4's ONE classification; it never re-guesses an UNKNOWN one
     # from breadcrumbs (formerly UNKNOWN + 'Manufacturing' became GENERAL)
     assert sector_family(industry, ["Manufacturing"])[0].value == (

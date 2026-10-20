@@ -42,11 +42,13 @@ from stock_research_ai.application.financial_reconciliation import canonical_dat
 from stock_research_ai.domain.financial_analytics import AnalyticsLimits, MetricInput
 from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
+    BusinessClass,
     CanonicalFinancialDataset,
     CanonicalMetric,
     Confidence,
     Currency,
     FinancialPeriod,
+    Industry,
     PeriodType,
     ReportingBasis,
     Scale,
@@ -72,6 +74,7 @@ from stock_research_ai.domain.forecasting import (
     ForecastIssue,
     ForecastLine,
     ForecastManifest,
+    ForecastModel,
     ForecastRequest,
     ForecastStatus,
     ForecastValue,
@@ -297,6 +300,60 @@ _formula(
     ("CFO_ESTIMATE", "CAPEX"),
     lambda v: v["CFO_ESTIMATE"] - v["CAPEX"],
 )
+# NON_BANK_FINANCIAL (lender) model: balance sheet first, every line from Box 4 facts
+_formula(
+    "TOTAL_ASSETS/1",
+    L.TOTAL_ASSETS,
+    "prior total assets x (1 + asset growth / 100)",
+    ("PRIOR_TOTAL_ASSETS", "ASSET_GROWTH"),
+    lambda v: v["PRIOR_TOTAL_ASSETS"] * (1 + v["ASSET_GROWTH"] / HUNDRED),
+)
+_formula(
+    "PAT/1/ROA_ON_AVERAGE_ASSETS",
+    L.PAT,
+    "ROA / 100 x average(prior, current total assets) (never an industrial margin)",
+    ("PRIOR_TOTAL_ASSETS", "TOTAL_ASSETS", "ROA"),
+    lambda v: v["ROA"] / HUNDRED * (v["PRIOR_TOTAL_ASSETS"] + v["TOTAL_ASSETS"]) / 2,
+)
+_formula(
+    "EQUITY/1/EQUITY_CHANGE_TO_PAT",
+    L.EQUITY,
+    "prior equity + PAT x historical (equity change / PAT) / 100 (retention, dividends, "
+    "capital raised and OCI as one observed relationship)",
+    ("PRIOR_EQUITY", "PAT", "EQUITY_CHANGE_TO_PAT"),
+    lambda v: v["PRIOR_EQUITY"] + v["PAT"] * v["EQUITY_CHANGE_TO_PAT"] / HUNDRED,
+)
+_formula(
+    "NON_EQUITY_FUNDING/1",
+    L.NON_EQUITY_FUNDING,
+    "total assets - shareholders' equity (the funding identity; borrowings + other liabilities)",
+    ("TOTAL_ASSETS", "EQUITY"),
+    lambda v: v["TOTAL_ASSETS"] - v["EQUITY"],
+)
+_formula(
+    "TOTAL_BORROWINGS/1/SHARE_OF_FUNDING",
+    L.TOTAL_BORROWINGS,
+    "non-equity funding x historical borrowings share of non-equity funding / 100",
+    ("NON_EQUITY_FUNDING", "BORROWINGS_SHARE_OF_FUNDING"),
+    lambda v: v["NON_EQUITY_FUNDING"] * v["BORROWINGS_SHARE_OF_FUNDING"] / HUNDRED,
+)
+_formula(
+    "FINANCE_COST/1/COST_OF_BORROWINGS_PROXY",
+    L.FINANCE_COST,
+    "cost-of-borrowings PROXY (finance cost / average borrowings, historical) / 100 x "
+    "average(prior, current borrowings); not a contractual cost of funds",
+    ("PRIOR_TOTAL_BORROWINGS", "TOTAL_BORROWINGS", "COST_OF_BORROWINGS"),
+    lambda v: v["COST_OF_BORROWINGS"] / HUNDRED
+    * (v["PRIOR_TOTAL_BORROWINGS"] + v["TOTAL_BORROWINGS"]) / 2,
+)
+_formula(
+    "TOTAL_INCOME/1/INCOME_ON_AVERAGE_ASSETS",
+    L.TOTAL_INCOME,
+    "historical total income / average total assets / 100 x average(prior, current assets)",
+    ("PRIOR_TOTAL_ASSETS", "TOTAL_ASSETS", "TOTAL_INCOME_TO_AVERAGE_ASSETS"),
+    lambda v: v["TOTAL_INCOME_TO_AVERAGE_ASSETS"] / HUNDRED
+    * (v["PRIOR_TOTAL_ASSETS"] + v["TOTAL_ASSETS"]) / 2,
+)
 #: actual anchors built from several Box 4 values (recorded, not projected)
 ACTUAL_COMPOSITES = {
     "ACTUAL_TRADE_WORKING_CAPITAL/1": (
@@ -307,7 +364,23 @@ ACTUAL_COMPOSITES = {
         L.GROSS_DEBT,
         "long-term + short-term borrowings (as Box 5 GROSS_DEBT/COMPONENTS)",
     ),
+    "ACTUAL_EQUITY/1/CAPITAL_PLUS_RESERVES": (
+        L.EQUITY,
+        "equity share capital + reserves (as Box 5 SHAREHOLDERS_EQUITY/CAPITAL_PLUS_RESERVES)",
+    ),
+    "ACTUAL_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY": (
+        L.EQUITY,
+        "equity share capital + other equity (as Box 5, no reserves line reported)",
+    ),
 }
+#: Box 10 lines per forecast model (the key line decides a scenario's completeness)
+LENDER_LINES = (L.TOTAL_ASSETS, L.PAT, L.EQUITY, L.NON_EQUITY_FUNDING,
+                L.TOTAL_BORROWINGS, L.FINANCE_COST, L.TOTAL_INCOME)
+LENDER_ANCHORS = frozenset({L.TOTAL_ASSETS, L.EQUITY, L.TOTAL_BORROWINGS, L.PAT,
+                            L.FINANCE_COST, L.TOTAL_INCOME})
+LENDER_DRIVERS = frozenset({D.ASSET_GROWTH, D.ROA, D.EQUITY_CHANGE_TO_PAT,
+                            D.BORROWINGS_SHARE_OF_FUNDING, D.COST_OF_BORROWINGS,
+                            D.TOTAL_INCOME_TO_AVERAGE_ASSETS})
 POLICIES: tuple[tuple[str, str], ...] = (
     ("HISTORY", "only contiguous 12-month fiscal years ending at the latest fiscal year"),
     ("REVENUE_GROWTH_BASE", "CAGR over the usable window (single YoY when only two years)"),
@@ -324,6 +397,19 @@ POLICIES: tuple[tuple[str, str], ...] = (
     ("TAX_ON_LOSS", "no tax and no tax credit when PBT <= 0"),
     ("NON_RECURRING", "exceptional items and share of associates are not forecast"),
     ("EPS", "only with an explicit share count and a known attributable PAT"),
+    ("FORECAST_MODEL", "chosen from Box 4's business classification: GENERAL -> NON_FINANCIAL; "
+     "BANK -> BANK; FINANCIAL class (not a bank) -> NON_BANK_FINANCIAL; else UNKNOWN"),
+    ("RESTRICTED_MODELS", "BANK and UNKNOWN: revenue only; no industrial or lender line"),
+    ("LENDER_MODEL", "NON_BANK_FINANCIAL: total assets -> PAT (ROA on average assets) -> equity "
+     "-> non-equity funding (assets - equity) -> borrowings (share of funding) -> finance cost "
+     "(cost-of-borrowings proxy on average borrowings); total income on average assets. No "
+     "EBITDA, working capital, capex, revenue or gross-debt driver"),
+    ("LENDER_GROWTH", "asset growth: CAGR (BASE), highest / lowest YoY in the window (BULL / "
+     "BEAR), as revenue growth"),
+    ("LENDER_PROFITABILITY", "ROA: median (BASE), highest / lowest (BULL / BEAR) in the window"),
+    ("LENDER_OTHER_DRIVERS", "equity change / PAT, borrowings share of funding, cost of "
+     "borrowings and income on average assets: median of the window, every scenario"),
+    ("LENDER_AVERAGES", "average balances need BOTH the opening and the closing balance"),
 )
 
 
@@ -408,6 +494,25 @@ class History:
                 formula_id="ACTUAL_GROSS_DEBT/1/COMPONENTS",
             )
         return reported
+
+    def equity(self, end: date) -> Fact | Missing:
+        """Shareholders' equity with Box 5's own precedence: share capital + reserves (else
+        + other equity), else total equity as reported."""
+        capital = self.balance([M.EQUITY_SHARE_CAPITAL], end)
+        reserves = self.balance([M.RESERVES], end)
+        formula = "ACTUAL_EQUITY/1/CAPITAL_PLUS_RESERVES"
+        if isinstance(reserves, Missing):
+            reserves = self.balance([M.OTHER_EQUITY], end)
+            formula = "ACTUAL_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY"
+        if isinstance(capital, Fact) and isinstance(reserves, Fact):
+            return Fact(
+                value=capital.value + reserves.value,
+                inputs=capital.inputs + reserves.inputs,
+                confidence=weakest([capital.confidence, reserves.confidence]),
+                warnings=capital.warnings + reserves.warnings,
+                formula_id=formula,
+            )
+        return self.balance([M.TOTAL_EQUITY], end)
 
     def trade_working_capital(self, end: date) -> Fact | Missing:
         parts = [
@@ -620,8 +725,14 @@ class Deriver:
     def revenue(self, end: date) -> Fact | Missing:
         return self.h.flow(REVENUE, end)
 
-    def growth(self) -> dict[Scenario, Candidate] | None:
-        points = [(end, self.revenue(end)) for end in self.ends]
+    def growth(
+        self,
+        driver: Driver = D.REVENUE_GROWTH,
+        values: Callable[[date], Fact | Missing] | None = None,
+        what: str = "revenue",
+    ) -> dict[Scenario, Candidate] | None:
+        get = values or self.revenue
+        points = [(end, get(end)) for end in self.ends]
         facts = [(end, got) for end, got in points if isinstance(got, Fact)]
         latest_end = self.ends[-1]
         yoy: list[Observation] = []
@@ -633,8 +744,8 @@ class Deriver:
                 self.issues.add(
                     "NEGATIVE_DENOMINATOR" if prev.value < 0 else "ZERO_DENOMINATOR",
                     Severity.INFO,
-                    f"{label}: prior revenue {prev.value} (FY ending {prev_end})",
-                    subject=D.REVENUE_GROWTH.value,
+                    f"{label}: prior {what} {prev.value} (FY ending {prev_end})",
+                    subject=driver.value,
                 )
                 continue
             with localcontext() as ctx:
@@ -658,8 +769,8 @@ class Deriver:
             self.issues.add(
                 "INSUFFICIENT_HISTORY",
                 Severity.WARNING,
-                "revenue growth needs revenue for two contiguous fiscal years",
-                subject=D.REVENUE_GROWTH.value,
+                f"{what} growth needs {what} for two contiguous fiscal years",
+                subject=driver.value,
             )
             return None
         start_end, start_fact = start
@@ -671,8 +782,8 @@ class Deriver:
             self.issues.add(
                 "HISTORY_NOT_APPLICABLE",
                 Severity.WARNING,
-                f"revenue CAGR refused: {result.status.value} {result.interpretation}",
-                subject=D.REVENUE_GROWTH.value,
+                f"{what} CAGR refused: {result.status.value} {result.interpretation}",
+                subject=driver.value,
             )
             return None
         label_start, label_end = (
@@ -692,13 +803,13 @@ class Deriver:
         completeness = _completeness(years, expected)
         sparse = () if completeness == HistoryCompleteness.FULL else ("SPARSE_HISTORY",)
         method = DM.HISTORICAL_CAGR if years > 1 else DM.HISTORICAL_SINGLE_YOY
-        problem = driver_bounds_error(D.REVENUE_GROWTH, quantize(result))
+        problem = driver_bounds_error(driver, quantize(result))
         if problem:
             self.issues.add(
                 "HISTORY_OUT_OF_BOUNDS",
                 Severity.WARNING,
                 problem,
-                subject=D.REVENUE_GROWTH.value,
+                subject=driver.value,
             )
             return None
         base = Candidate(
@@ -725,7 +836,7 @@ class Deriver:
         # a year without revenue inside the CAGR span can put the CAGR outside the observed
         # year-on-year range: the scenario then keeps the base value, never an inverted one
         return self._scenarios(
-            D.REVENUE_GROWTH,
+            driver,
             base,
             yoy,
             (DM.HISTORICAL_MAX_YOY, DM.HISTORICAL_MIN_YOY),
@@ -1110,6 +1221,7 @@ class Plan:
     minority: bool | None  # True: consolidated with minority; False: standalone; None: unknown
     years: tuple[FinancialPeriod, ...]
     anchors: dict[ForecastLine, ForecastValue]
+    model: ForecastModel = ForecastModel.NON_FINANCIAL
 
 
 Ref = ForecastValue | ForecastAssumption | None
@@ -1146,6 +1258,29 @@ def project(
             out.append(value)
             return value
 
+        if plan.model == ForecastModel.NON_BANK_FINANCIAL:
+            assets = emit(L.TOTAL_ASSETS, "TOTAL_ASSETS/1", [
+                ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)),
+                ("ASSET_GROWTH", a(D.ASSET_GROWTH))])
+            pat = emit(L.PAT, "PAT/1/ROA_ON_AVERAGE_ASSETS", [
+                ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)), ("TOTAL_ASSETS", assets),
+                ("ROA", a(D.ROA))])
+            equity = emit(L.EQUITY, "EQUITY/1/EQUITY_CHANGE_TO_PAT", [
+                ("PRIOR_EQUITY", prior.get(L.EQUITY)), ("PAT", pat),
+                ("EQUITY_CHANGE_TO_PAT", a(D.EQUITY_CHANGE_TO_PAT))])
+            funding = emit(L.NON_EQUITY_FUNDING, "NON_EQUITY_FUNDING/1", [
+                ("TOTAL_ASSETS", assets), ("EQUITY", equity)])
+            borrowings = emit(L.TOTAL_BORROWINGS, "TOTAL_BORROWINGS/1/SHARE_OF_FUNDING", [
+                ("NON_EQUITY_FUNDING", funding),
+                ("BORROWINGS_SHARE_OF_FUNDING", a(D.BORROWINGS_SHARE_OF_FUNDING))])
+            emit(L.FINANCE_COST, "FINANCE_COST/1/COST_OF_BORROWINGS_PROXY", [
+                ("PRIOR_TOTAL_BORROWINGS", prior.get(L.TOTAL_BORROWINGS)),
+                ("TOTAL_BORROWINGS", borrowings), ("COST_OF_BORROWINGS", a(D.COST_OF_BORROWINGS))])
+            emit(L.TOTAL_INCOME, "TOTAL_INCOME/1/INCOME_ON_AVERAGE_ASSETS", [
+                ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)), ("TOTAL_ASSETS", assets),
+                ("TOTAL_INCOME_TO_AVERAGE_ASSETS", a(D.TOTAL_INCOME_TO_AVERAGE_ASSETS))])
+            prior = cur
+            continue
         revenue = emit(
             L.REVENUE,
             "REVENUE/1",
@@ -1523,7 +1658,20 @@ def build_forecast(
     finance_method: Driver | None = None
     minority: bool | None = None
     candidates: dict[Driver, dict[Scenario, Candidate]] = {}
-    if fatal is None and latest is not None and latest.period_end is not None:
+    model = forecast_model(data)
+    lender = model == ForecastModel.NON_BANK_FINANCIAL
+    if lender and fatal is None and latest is not None and latest.period_end is not None:
+        anchors.update(lender_anchors(box4_hash, basis, currency, history, latest,
+                                      latest.period_end))
+        for anchor in anchors.values():
+            if anchor.value is None:
+                issues.add("ACTUAL_UNAVAILABLE", Severity.WARNING,
+                           f"{anchor.reason}: {'; '.join(anchor.missing_inputs)}",
+                           subject=anchor.line.value)
+        if anchors[L.TOTAL_ASSETS].value is None:
+            fatal = ("ASSET_BASE_MISSING",
+                     f"no usable total assets at {latest.label}: {anchors[L.TOTAL_ASSETS].reason}")
+    elif fatal is None and latest is not None and latest.period_end is not None:
         end = latest.period_end
         pit = history.periods.pit(end)
         anchors[L.REVENUE] = _anchor(
@@ -1553,7 +1701,13 @@ def build_forecast(
                 "REVENUE_BASE_MISSING",
                 f"no usable revenue for {latest.label}: {anchors[L.REVENUE].reason}",
             )
-    if fatal is None and latest is not None:
+    if lender and fatal is None and latest is not None:
+        _derive_lender(history, Deriver(history, chain.ends, req.history_years, issues),
+                       candidates)
+        issues.add("FORECAST_MODEL", Severity.INFO,
+                   "NON_BANK_FINANCIAL: balance-sheet lender model (no revenue, EBITDA, "
+                   "working-capital, capex or gross-debt driver)")
+    elif fatal is None and latest is not None:
         derive = Deriver(history, chain.ends, req.history_years, issues)
         revenue = derive.revenue
         growth = derive.growth()
@@ -1676,7 +1830,8 @@ def build_forecast(
                     ("DEBT_HELD_FLAT", "FALLBACK_ASSUMPTION"),
                 )
                 candidates[D.DEBT_CHANGE] = {s: fallback for s in SC}
-    drivers = _drivers(route, finance_method, minority, data.industry in RESTRICTED_INDUSTRIES)
+    drivers = set(LENDER_DRIVERS) if lender else _drivers(
+        route, finance_method, minority, data.industry in RESTRICTED_INDUSTRIES)
     for a in req.explicit_assumptions:
         if fatal is None and a.driver not in drivers:
             raise ForecastInputError(
@@ -1720,7 +1875,8 @@ def build_forecast(
         (a.driver, a.scenario, a.fiscal_year): _from_input(a, currency)
         for a in req.explicit_assumptions
     }
-    plan = Plan(box4_hash, basis, currency, route, finance_method, minority, years, anchors)
+    plan = Plan(box4_hash, basis, currency, route, finance_method, minority, years, anchors,
+                model)
     all_assumptions: list[ForecastAssumption] = []
     values: list[ForecastValue] = []
     completeness: list[ScenarioCompleteness] = []
@@ -1768,7 +1924,8 @@ def build_forecast(
             sorted(chosen.values(), key=lambda x: (x.fiscal_year, x.driver.value))
         )
         values.extend(projected)
-        completeness.append(_scenario_completeness(scenario, projected, chosen.values()))
+        completeness.append(_scenario_completeness(
+            scenario, projected, chosen.values(), L.TOTAL_ASSETS if lender else L.REVENUE))
         for v in projected:
             if v.status == "UNAVAILABLE" and v.reason not in REPORTED_ELSEWHERE:
                 issues.add(
@@ -1821,6 +1978,7 @@ def build_forecast(
             ignored_period_types=dict(sorted(ignored.items())),
             operating_route=route,
             other_basis_available=other in currencies,
+            forecast_model=model,
         ),
         forecast_years=years,
         scenarios=req.scenarios,
@@ -2029,7 +2187,8 @@ def _share_check(
 
 
 def _scenario_completeness(
-    scenario: Scenario, values: Sequence[ForecastValue], assumptions: Iterable[ForecastAssumption]
+    scenario: Scenario, values: Sequence[ForecastValue], assumptions: Iterable[ForecastAssumption],
+    key_line: ForecastLine = L.REVENUE,
 ) -> ScenarioCompleteness:
     lines: dict[ForecastLine, bool] = {}
     for v in values:
@@ -2037,7 +2196,7 @@ def _scenario_completeness(
     available = tuple(sorted((k for k, ok in lines.items() if ok), key=lambda x: x.value))
     unavailable = tuple(sorted((k for k, ok in lines.items() if not ok), key=lambda x: x.value))
     sources = Counter(a.source.value for a in assumptions)
-    revenue_ok = lines.get(L.REVENUE, False)
+    revenue_ok = lines.get(key_line, False)  # the model's key line
     status = (
         ForecastStatus.UNAVAILABLE
         if not revenue_ok
@@ -2053,3 +2212,92 @@ def _scenario_completeness(
         sources=dict(sorted(sources.items())),
         fallback_assumptions=sources.get(SRC.FALLBACK.value, 0),
     )
+
+
+# --- NON_BANK_FINANCIAL (lender) model --------------------------------------------------------
+
+
+def forecast_model(data: CanonicalFinancialDataset) -> ForecastModel:
+    """Box 4's ONE business classification decides the model (never a Box 10 guess)."""
+    if data.industry == Industry.BANK:
+        return ForecastModel.BANK
+    if data.industry == Industry.GENERAL:
+        return ForecastModel.NON_FINANCIAL
+    if data.classification == BusinessClass.FINANCIAL:
+        return ForecastModel.NON_BANK_FINANCIAL
+    return ForecastModel.UNKNOWN
+
+
+def _combined(a: Fact | Missing, b: Fact | Missing, fn: Callable[[Decimal, Decimal], Decimal]
+              ) -> Fact | Missing:
+    if isinstance(a, Missing):
+        return a
+    if isinstance(b, Missing):
+        return b
+    with localcontext() as ctx:
+        ctx.prec = PRECISION
+        value = fn(a.value, b.value)
+    return Fact(value=value, inputs=a.inputs + b.inputs,
+                confidence=weakest([a.confidence, b.confidence]),
+                warnings=a.warnings + b.warnings)
+
+
+def lender_anchors(box4_hash: str, basis: ReportingBasis, currency: Currency, history: History,
+                   latest: FinancialPeriod, end: date) -> dict[ForecastLine, ForecastValue]:
+    """The lender model's actual anchors at the latest fiscal year (balances and flows)."""
+    pit = history.periods.pit(end)
+    return {
+        L.TOTAL_ASSETS: _anchor(box4_hash, basis, currency, L.TOTAL_ASSETS, pit,
+                                history.balance([M.TOTAL_ASSETS], end)),
+        L.EQUITY: _anchor(box4_hash, basis, currency, L.EQUITY, pit,
+                                       history.equity(end)),
+        L.TOTAL_BORROWINGS: _anchor(box4_hash, basis, currency, L.TOTAL_BORROWINGS, pit,
+                                    history.balance([M.TOTAL_BORROWINGS], end)),
+        L.PAT: _anchor(box4_hash, basis, currency, L.PAT, latest, history.flow([M.PAT], end)),
+        L.FINANCE_COST: _anchor(box4_hash, basis, currency, L.FINANCE_COST, latest,
+                                history.flow([M.FINANCE_COST], end)),
+        L.TOTAL_INCOME: _anchor(box4_hash, basis, currency, L.TOTAL_INCOME, latest,
+                                history.flow([M.TOTAL_INCOME], end)),
+    }
+
+
+def _derive_lender(history: History, derive: Deriver,
+                   candidates: dict[Driver, dict[Scenario, Candidate]]) -> None:
+    """Every lender driver from the SAME basis' Box 4 facts at contiguous fiscal years;
+    averages need the opening AND the closing balance; a driver without history is absent
+    (its lines become ASSUMPTION_MISSING), never a constant."""
+    def assets(e: date) -> Fact | Missing:
+        return history.balance([M.TOTAL_ASSETS], e)
+
+    def borrowings(e: date) -> Fact | Missing:
+        return history.balance([M.TOTAL_BORROWINGS], e)
+
+    def average(get: Callable[[date], Fact | Missing]) -> Callable[[date], Fact | Missing]:
+        return lambda e: _combined(get(shift(e, -12)), get(e), lambda a, b: (a + b) / 2)
+
+    pat, finance = _flow(history, M.PAT), _flow(history, M.FINANCE_COST)
+    income = _flow(history, M.TOTAL_INCOME)
+    growth = derive.growth(D.ASSET_GROWTH, assets, "total assets")
+    if growth:
+        candidates[D.ASSET_GROWTH] = growth
+    series: tuple[tuple[Driver, Callable[[date], Fact | Missing],
+                        Callable[[date], Fact | Missing], str, bool], ...] = (
+        (D.ROA, pat, average(assets), "average total assets", True),
+        (D.EQUITY_CHANGE_TO_PAT,
+         lambda e: _combined(history.equity(e), history.equity(shift(e, -12)),
+                             lambda a, b: a - b), pat, "PAT", False),
+        (D.BORROWINGS_SHARE_OF_FUNDING, borrowings,
+         lambda e: _combined(assets(e), history.equity(e), lambda a, b: a - b),
+         "total assets - equity", False),
+        (D.COST_OF_BORROWINGS, finance, average(borrowings), "average borrowings", False),
+        (D.TOTAL_INCOME_TO_AVERAGE_ASSETS, income, average(assets), "average total assets",
+         False),
+    )
+    for driver, numerator, denominator, what, scenarios in series:
+        extra = (lambda _e: ("COST_OF_BORROWINGS_PROXY",)) \
+            if driver == D.COST_OF_BORROWINGS else None
+        found = derive.spread(driver, derive.ratio_series(
+            driver, numerator, denominator, what=what, extra_warnings=extra),
+            scenario_range=scenarios)
+        if found:
+            candidates[driver] = found

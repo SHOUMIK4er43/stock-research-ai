@@ -43,7 +43,7 @@ from stock_research_ai.domain.financial_canonical import (
 FORECAST_SCHEMA: Literal["FORECAST_DATASET_V1"] = "FORECAST_DATASET_V1"
 FORECAST_ENGINE_VERSION = "forecasting/1"
 FORECAST_FORMULA_VERSION = "forecast-formulas/1"
-FORECAST_POLICY_VERSION = "forecast-policy/1"
+FORECAST_POLICY_VERSION = "forecast-policy/2"
 DEFAULT_HORIZON = 3
 MAX_HORIZON = 5
 DEFAULT_HISTORY_YEARS = 5
@@ -99,6 +99,13 @@ class Driver(StrEnum):
     WORKING_CAPITAL_TO_REVENUE = "WORKING_CAPITAL_TO_REVENUE"  # trade working capital %
     DEBT_CHANGE = "DEBT_CHANGE"  # gross debt movement in the year
     SHARE_COUNT = "SHARE_COUNT"  # weighted shares for EPS (explicit only)
+    # NON_BANK_FINANCIAL (lender) model: balance-sheet driven, Box 4 canonical facts only
+    ASSET_GROWTH = "ASSET_GROWTH"  # total assets % year on year
+    ROA = "ROA"  # PAT / average total assets %
+    EQUITY_CHANGE_TO_PAT = "EQUITY_CHANGE_TO_PAT"  # (equity - prior equity) / PAT %
+    BORROWINGS_SHARE_OF_FUNDING = "BORROWINGS_SHARE_OF_FUNDING"  # borrowings / (assets - equity) %
+    COST_OF_BORROWINGS = "COST_OF_BORROWINGS"  # finance cost / average borrowings % (a proxy)
+    TOTAL_INCOME_TO_AVERAGE_ASSETS = "TOTAL_INCOME_TO_AVERAGE_ASSETS"  # total income / avg assets %
 
 
 class DriverSpec(BaseModel):
@@ -131,6 +138,18 @@ DRIVER_SPECS: dict[Driver, DriverSpec] = {
     Driver.DEBT_CHANGE: DriverSpec(unit=_M, minimum=-MAX_MONEY, maximum=MAX_MONEY),
     Driver.SHARE_COUNT: DriverSpec(
         unit=_C, minimum=Decimal(0), maximum=MAX_SHARE_COUNT, minimum_exclusive=True
+    ),
+    Driver.ASSET_GROWTH: DriverSpec(
+        unit=_P, minimum=Decimal(-100), maximum=MAX_PERCENT, minimum_exclusive=True
+    ),
+    Driver.ROA: DriverSpec(unit=_P, minimum=-MAX_PERCENT, maximum=MAX_PERCENT),
+    Driver.EQUITY_CHANGE_TO_PAT: DriverSpec(unit=_P, minimum=-MAX_PERCENT, maximum=MAX_PERCENT),
+    Driver.BORROWINGS_SHARE_OF_FUNDING: DriverSpec(
+        unit=_P, minimum=Decimal(0), maximum=Decimal(100)
+    ),
+    Driver.COST_OF_BORROWINGS: DriverSpec(unit=_P, minimum=Decimal(0), maximum=MAX_PERCENT),
+    Driver.TOTAL_INCOME_TO_AVERAGE_ASSETS: DriverSpec(
+        unit=_P, minimum=Decimal(0), maximum=MAX_PERCENT
     ),
 }
 
@@ -195,6 +214,21 @@ class ForecastLine(StrEnum):
     GROSS_DEBT = "GROSS_DEBT"
     CFO_ESTIMATE = "CFO_ESTIMATE"
     FCF_ESTIMATE = "FCF_ESTIMATE"
+    # NON_BANK_FINANCIAL (lender) model lines
+    TOTAL_ASSETS = "TOTAL_ASSETS"
+    EQUITY = "EQUITY"  # book equity (Box 5 SHAREHOLDERS_EQUITY precedence)
+    NON_EQUITY_FUNDING = "NON_EQUITY_FUNDING"  # total assets - equity (borrowings + others)
+    TOTAL_BORROWINGS = "TOTAL_BORROWINGS"
+    TOTAL_INCOME = "TOTAL_INCOME"
+
+
+class ForecastModel(StrEnum):
+    """The forecast model Box 10 applies, chosen from Box 4's ONE business classification."""
+
+    NON_FINANCIAL = "NON_FINANCIAL"  # industrial P&L route (Box 4 industry GENERAL)
+    BANK = "BANK"  # revenue only (no bank model exists; industrial drivers do not apply)
+    NON_BANK_FINANCIAL = "NON_BANK_FINANCIAL"  # balance-sheet driven lender model
+    UNKNOWN = "UNKNOWN"  # business class unresolved: revenue only, no sector-specific line
 
 
 class OperatingRoute(StrEnum):
@@ -439,6 +473,8 @@ class HistoricalBase(BaseModel):
     ignored_period_types: dict[str, int]  # quarter / TTM / half-year values never used
     operating_route: OperatingRoute
     other_basis_available: bool  # informational: the other basis is never blended in
+    #: None only in datasets written before the model was recorded
+    forecast_model: ForecastModel | None = None
 
 
 class Box4Source(BaseModel):

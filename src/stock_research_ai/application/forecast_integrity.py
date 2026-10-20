@@ -34,9 +34,11 @@ from stock_research_ai.application.financial_metrics import REVENUE
 from stock_research_ai.application.forecasting import (
     ACTUAL_COMPOSITES,
     FORMULAS,
+    LENDER_ANCHORS,
     History,
     _anchor,
     evaluate,
+    lender_anchors,
     quantize,
 )
 from stock_research_ai.domain.financial_analytics import MetricInput
@@ -59,6 +61,7 @@ from stock_research_ai.domain.forecasting import (
     ForecastDataset,
     ForecastFormula,
     ForecastLine,
+    ForecastModel,
     ForecastValue,
     OperatingRoute,
     Scenario,
@@ -74,13 +77,33 @@ PRIOR_ROLES = {
     "PRIOR_REVENUE": L.REVENUE,
     "OPENING_GROSS_DEBT": L.GROSS_DEBT,
     "PRIOR_TRADE_WORKING_CAPITAL": L.TRADE_WORKING_CAPITAL,
+    "PRIOR_TOTAL_ASSETS": L.TOTAL_ASSETS,
+    "PRIOR_EQUITY": L.EQUITY,
+    "PRIOR_TOTAL_BORROWINGS": L.TOTAL_BORROWINGS,
 }
 ANCHOR_LINES = frozenset({L.REVENUE, L.GROSS_DEBT, L.TRADE_WORKING_CAPITAL})
+#: the NON_BANK_FINANCIAL model: its own lines, anchors and the one formula per line
+LENDER_FORMULAS: dict[ForecastLine, str] = {
+    L.TOTAL_ASSETS: "TOTAL_ASSETS/1",
+    L.PAT: "PAT/1/ROA_ON_AVERAGE_ASSETS",
+    L.EQUITY: "EQUITY/1/EQUITY_CHANGE_TO_PAT",
+    L.NON_EQUITY_FUNDING: "NON_EQUITY_FUNDING/1",
+    L.TOTAL_BORROWINGS: "TOTAL_BORROWINGS/1/SHARE_OF_FUNDING",
+    L.FINANCE_COST: "FINANCE_COST/1/COST_OF_BORROWINGS_PROXY",
+    L.TOTAL_INCOME: "TOTAL_INCOME/1/INCOME_ON_AVERAGE_ASSETS",
+}
+LENDER_ONLY_LINES = frozenset(LENDER_FORMULAS) - {L.PAT, L.FINANCE_COST}
 #: the Box 4 metrics a single-value anchor may carry (as History.flow / History.gross_debt)
 ANCHOR_METRICS: dict[ForecastLine, frozenset[CanonicalMetric]] = {
     L.REVENUE: frozenset(REVENUE),
     L.GROSS_DEBT: frozenset({M.TOTAL_DEBT, M.TOTAL_BORROWINGS}),
     L.TRADE_WORKING_CAPITAL: frozenset(),  # always the composite
+    L.TOTAL_ASSETS: frozenset({M.TOTAL_ASSETS}),
+    L.TOTAL_BORROWINGS: frozenset({M.TOTAL_BORROWINGS}),
+    L.EQUITY: frozenset({M.TOTAL_EQUITY}),
+    L.PAT: frozenset({M.PAT}),
+    L.FINANCE_COST: frozenset({M.FINANCE_COST}),
+    L.TOTAL_INCOME: frozenset({M.TOTAL_INCOME}),
 }
 #: composite anchors: (component metrics in order, signs)
 COMPOSITE_PARTS: dict[str, tuple[tuple[CanonicalMetric, ...], tuple[int, ...]]] = {
@@ -91,6 +114,12 @@ COMPOSITE_PARTS: dict[str, tuple[tuple[CanonicalMetric, ...], tuple[int, ...]]] 
     "ACTUAL_GROSS_DEBT/1/COMPONENTS": (
         (M.LONG_TERM_BORROWINGS, M.SHORT_TERM_BORROWINGS),
         (1, 1),
+    ),
+    "ACTUAL_EQUITY/1/CAPITAL_PLUS_RESERVES": (
+        (M.EQUITY_SHARE_CAPITAL, M.RESERVES), (1, 1),
+    ),
+    "ACTUAL_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY": (
+        (M.EQUITY_SHARE_CAPITAL, M.OTHER_EQUITY), (1, 1),
     ),
 }
 METHODS: dict[AssumptionSource, frozenset[DerivationMethod]] = {
@@ -278,7 +307,13 @@ def _check_formula_choice(v: ForecastValue, ix: Index) -> None:
     def a(driver: Driver) -> ForecastAssumption | None:
         return ix.assumptions.get((driver, scenario, fy))
 
-    if route == OperatingRoute.UNAVAILABLE and v.line != L.REVENUE:
+    if _lender(ix.forecast):
+        if LENDER_FORMULAS.get(v.line) != v.formula_id:
+            raise ForecastIntegrityError(f"{_where(v)}: not the formula Box 10 applies here")
+        return
+    if v.line in LENDER_ONLY_LINES or v.formula_id in LENDER_FORMULAS.values():
+        wrong = True  # a lender line / formula in another model's forecast
+    elif route == OperatingRoute.UNAVAILABLE and v.line != L.REVENUE:
         wrong = True
     elif v.line in (L.OPERATING_PROFIT, L.OTHER_INCOME):
         wrong = route != OperatingRoute.OPERATING_PROFIT
@@ -366,13 +401,18 @@ def _signed_sum(components: tuple[MetricInput, ...], signs: tuple[int, ...]) -> 
     return sum((c.value * s for c, s in zip(components, signs, strict=True)), Decimal(0))
 
 
+def _lender(forecast: ForecastDataset) -> bool:
+    return forecast.base.forecast_model == ForecastModel.NON_BANK_FINANCIAL
+
+
 def _check_anchors(forecast: ForecastDataset, box4: CanonicalFinancialDataset | None) -> None:
     actuals = forecast.actuals
     latest = forecast.base.latest_actual
     if not actuals:
         return
     lines = [v.line for v in actuals]
-    if len(set(lines)) != len(lines) or set(lines) != ANCHOR_LINES or latest is None:
+    expected = LENDER_ANCHORS if _lender(forecast) else ANCHOR_LINES
+    if len(set(lines)) != len(lines) or set(lines) != expected or latest is None:
         raise ForecastIntegrityError("actual anchors are not Box 10's anchors")
     for v in actuals:
         where = _where(v)
@@ -381,7 +421,8 @@ def _check_anchors(forecast: ForecastDataset, box4: CanonicalFinancialDataset | 
             or v.unit != "MONEY"
             or v.scale != Scale.CRORES
             or v.period.period_end != latest.period_end
-            or (v.line == L.REVENUE and v.period != latest)
+            or (v.line in (L.REVENUE, L.PAT, L.FINANCE_COST, L.TOTAL_INCOME)
+                and v.period != latest)
         ):
             raise ForecastIntegrityError(f"{where}: anchor is not at the latest fiscal year")
         if v.status == "UNAVAILABLE" or v.value is None:
@@ -424,6 +465,13 @@ def _check_anchors(forecast: ForecastDataset, box4: CanonicalFinancialDataset | 
     end = latest.period_end
     pit = history.periods.pit(end)
     box4_hash = forecast.source_box4.canonical_sha256
+    if _lender(forecast):
+        lender = lender_anchors(box4_hash, base.reporting_basis, base.currency, history, latest,
+                                end)
+        for v in actuals:
+            if lender[v.line] != v:
+                raise ForecastIntegrityError(f"{_where(v)}: anchor differs from Box 4")
+        return
     rebuilt = {
         L.REVENUE: _anchor(
             box4_hash,

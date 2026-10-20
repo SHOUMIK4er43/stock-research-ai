@@ -54,12 +54,15 @@ from stock_research_ai.domain.forecasting import (
     ForecastDataset,
     ForecastLine,
     ForecastModel,
+    ForecastValue,
     OperatingRoute,
     Scenario,
 )
 from stock_research_ai.domain.fundamental_valuation import (
     CRORE,
     DCF_METHODS,
+    DEFAULT_METHODS,
+    LENDER_METHODS,
     MAX_ABS_VALUE,
     MAX_ISSUES,
     MULTIPLE_BASIS,
@@ -319,6 +322,13 @@ _formula(
     lambda v, _: v["METRIC"] * v["MULTIPLE"],
 )
 _formula(
+    "EQUITY_VALUE/1/PB",
+    "owners' book equity (Box 10 EQUITY) x P/B (an equity multiple: no bridge)",
+    ("METRIC", "MULTIPLE"),
+    U.MONEY,
+    lambda v, _: v["METRIC"] * v["MULTIPLE"],
+)
+_formula(
     "FAIR_VALUE_PER_SHARE/1",
     "equity value (crore) x 10^7 / shares outstanding (ones)",
     ("EQUITY_VALUE", "SHARE_COUNT"),
@@ -371,6 +381,15 @@ _formula(
 )
 
 POLICIES: tuple[tuple[str, str], ...] = (
+    ("VALUATION_MODEL", "from the Box 10 forecast model: NON_BANK_FINANCIAL -> P/B and P/E on "
+     "owners' equity / PAT only (no DCF, EV or bridge); other models -> the existing methods"),
+    ("LENDER_MULTIPLES", "P/B prices Box 10 EQUITY, P/E prices Box 10 PAT - each only its own "
+     "metric; explicit or cited peer-reference multiples only, never a default"),
+    ("LENDER_ATTRIBUTION", "owners only: standalone basis, or consolidated with Box 4 evidence "
+     "(equity from share capital + reserves / other equity; PAT equal to PAT attributable to "
+     "owners); otherwise ATTRIBUTION_UNKNOWN"),
+    ("LENDER_YEAR", "the multiple's own forecast year (the request's choice), that scenario's "
+     "Box 10 value only"),
     ("FORECAST_SOURCE", "every forecast number is a Box 10 value of the same scenario"),
     ("FCFF", "NOPAT on operating EBIT (other income excluded) + D&A - WC change - capex"),
     ("TAX_ON_OPERATING_EBIT", "Box 10 tax-rate assumption of the scenario and year; 0 on a loss"),
@@ -579,6 +598,29 @@ class Shared:
     price: ValuationAssumption | None
 
 
+def _shared_lender(
+    forecast: ForecastDataset,
+    box4: CanonicalFinancialDataset | None,
+    explicit: dict[tuple[AssumptionKind, Scenario | None], ValuationAssumption],
+    ledger: Ledger,
+) -> Shared:
+    """NON_BANK_FINANCIAL: equity multiples need no enterprise bridge, so gross debt, cash and
+    minority interest are recorded NOT_APPLICABLE (never computed); only the share count is."""
+    base = forecast.base
+    end = base.latest_actual.period_end if base.latest_actual else None
+    history = History(box4, base.reporting_basis, base.currency) if box4 and end else None
+
+    def not_applicable(name: str) -> ValuationValue:
+        return ledger.unavailable(name, U.MONEY, "NOT_APPLICABLE_LENDER", (
+            "NON_BANK_FINANCIAL equity valuation: no enterprise-to-equity bridge",))
+
+    shares = _shares(explicit.get((K.SHARE_COUNT, None)), history, end, base.reporting_basis,
+                     ledger)
+    return Shared(not_applicable("GROSS_DEBT"), not_applicable("CASH"),
+                  not_applicable("MINORITY_INTEREST"), None, shares,
+                  explicit.get((K.MARKET_PRICE, None)))
+
+
 def _shared(
     forecast: ForecastDataset,
     box4: CanonicalFinancialDataset | None,
@@ -766,6 +808,8 @@ class Plan:
     all_years: tuple[int, ...]  # every forecast year (multiples may price any)
     financial: bool
     shared: Shared
+    lender: bool = False
+    attribution: dict[ValuationMethod, str | None] | None = None
 
 
 def value_scenario(
@@ -779,6 +823,8 @@ def value_scenario(
     f = plan.forecast
     ledger = Ledger(f"{plan.forecast_hash}|{scenario.value}", scenario, plan.currency, issues)
     lines = {(v.line, v.period.fiscal_year): v for v in f.values if v.scenario == scenario}
+    if plan.lender:
+        return _value_lender(plan, scenario, multiples, ledger, lines, issues)
     taxes = {
         a.fiscal_year: a
         for a in f.assumptions
@@ -858,6 +904,9 @@ def value_scenario(
         )
     elif wants_dcf:
         results.extend(_dcf(plan, scenario, explicit, ledger, box10, tax, operating_lines))
+    if VM.PB in plan.methods:
+        results.append(_refused(plan, scenario, VM.PB, "LENDER_METHOD_ONLY", (
+            "P/B is the NON_BANK_FINANCIAL model's method",)))
     for method in MULTIPLE_METHODS:
         if method not in plan.methods:
             continue
@@ -907,11 +956,96 @@ def _model_problem(forecast: ForecastDataset, box4: CanonicalFinancialDataset | 
             expected is None and model in (ForecastModel.NON_FINANCIAL, ForecastModel.BANK)):
         return ("FORECAST_MODEL_MISMATCH",
                 f"a {model.value} forecast for a {forecast.industry.value} company")
-    if model == ForecastModel.NON_BANK_FINANCIAL:
-        return ("FORECAST_MODEL_NOT_VALUED",
-                "NON_BANK_FINANCIAL lender forecast: no lender valuation method exists yet; "
-                "industrial DCF / multiples never consume it")
     return None
+
+
+def _attribution(forecast: ForecastDataset, box4: CanonicalFinancialDataset | None
+                 ) -> dict[ValuationMethod, str | None]:
+    """Whether the lender metrics are OWNERS' figures (else the reason they cannot be)."""
+    if forecast.base.reporting_basis == ReportingBasis.STANDALONE:
+        return {VM.PB: None, VM.PE: None}  # a standalone entity has no minority interest
+    equity = next((v for v in forecast.actuals if v.line == L.EQUITY), None)
+    owners_equity = equity is not None and (equity.formula_id or "").startswith(
+        "ACTUAL_EQUITY/1/CAPITAL_PLUS_")
+    pat_reason: str | None = "consolidated PAT: no Box 4 PAT attributable to owners"
+    if box4 is not None and forecast.base.latest_actual is not None:
+        period = forecast.base.latest_actual.key()
+        values = {v.metric: v.value for v in box4.canonical_values
+                  if v.reporting_basis == forecast.base.reporting_basis
+                  and v.period.key() == period}
+        owners = values.get(CanonicalMetric.PAT_ATTRIBUTABLE_TO_OWNERS)
+        pat = values.get(CanonicalMetric.PAT)
+        if owners is not None and pat is not None:
+            pat_reason = None if owners == pat else (
+                f"consolidated PAT {pat} differs from PAT attributable to owners {owners}")
+    return {VM.PB: None if owners_equity else
+            "consolidated equity not built from share capital + reserves / other equity",
+            VM.PE: pat_reason}
+
+
+def _value_lender(
+    plan: Plan,
+    scenario: Scenario,
+    multiples: Sequence[tuple[UUID, MultipleInput]],
+    ledger: Ledger,
+    lines: dict[tuple[ForecastLine, int | None], ForecastValue],
+    issues: Issues,
+) -> tuple[list[ValuationValue], list[MethodResult]]:
+    """NON_BANK_FINANCIAL: equity multiples on owners' figures of THIS scenario only. P/B
+    prices Box 10 EQUITY and P/E prices Box 10 PAT (never another metric); industrial DCF / EV
+    methods are refused; a method without an explicit multiple is unavailable."""
+    results: list[MethodResult] = []
+    attribution = plan.attribution or {}
+    for method in plan.methods:
+        if method not in LENDER_METHODS:
+            issues.add("UNSUPPORTED_SECTOR", Severity.WARNING,
+                       f"{method.value}: an industrial method does not value a lender",
+                       scenario=scenario, method=method)
+            results.append(_refused(plan, scenario, method, "UNSUPPORTED_SECTOR", (
+                "NON_BANK_FINANCIAL: no FCFF, EBITDA / EBIT or enterprise bridge",)))
+            continue
+        mine = [(i, m) for i, m in multiples if m.method == method]
+        if not mine:
+            results.append(_refused(plan, scenario, method, "MULTIPLE_MISSING", (
+                f"no {method.value} multiple for {scenario.value}: an explicit or cited "
+                "peer-reference multiple is required (none is assumed)",)))
+            continue
+        reason = attribution.get(method)
+        for multiple_id, m in sorted(mine, key=lambda x: x[1].fiscal_year):
+            if reason is not None:
+                results.append(_refused(plan, scenario, method, "ATTRIBUTION_UNKNOWN",
+                                        (reason,)))
+                continue
+            line, name = (L.EQUITY, "BOOK_EQUITY") if method == VM.PB else (L.PAT, "PAT_OWNERS")
+            v = lines.get((line, m.fiscal_year))
+            if v is None or v.status != "AVAILABLE" or v.value is None:
+                metric = Src(InputKind.BOX10_FORECAST, v.value_id if v else None, None,
+                             f"Box 10 {v.reason if v else 'has no ' + line.value}")
+            elif v.unit != "MONEY" or not _unit_ok(v.currency, v.scale, plan.currency):
+                metric = Src(InputKind.BOX10_FORECAST, v.value_id, None, "UNIT_MISMATCH")
+            else:
+                metric = Src(InputKind.BOX10_FORECAST, v.value_id, v.value)
+            detail = MultipleDetail(
+                metric=name, fiscal_year=m.fiscal_year, multiple=m.multiple,
+                basis=MultipleBasis.EQUITY, source=m.source, reference=m.reference,
+                evidence_ids=m.evidence_ids, metric_value=metric.value,
+                metric_value_id=metric.ref_id)
+            if metric.value is not None and metric.value <= 0:
+                missing = (f"{name} FY{m.fiscal_year} = {metric.value}",)
+                bad = ledger.unavailable("EQUITY_VALUE", U.MONEY, "NON_POSITIVE_METRIC",
+                                         missing, method=method, fiscal_year=m.fiscal_year)
+                results.append(_refused(plan, scenario, method, "NON_POSITIVE_METRIC", missing,
+                                        (bad.value_id,)).model_copy(update={"multiple": detail}))
+                continue
+            equity = ledger.compute(
+                "EQUITY_VALUE", "EQUITY_VALUE/1/PB" if method == VM.PB else "EQUITY_VALUE/1/PE",
+                [("METRIC", metric), ("MULTIPLE", Src(InputKind.MULTIPLE, multiple_id,
+                                                      m.multiple))],
+                method=method, fiscal_year=m.fiscal_year)
+            result = _finish(plan, scenario, method, ledger, None, equity, [equity],
+                             m.fiscal_year)
+            results.append(result.model_copy(update={"multiple": detail}))
+    return ledger.values, results
 
 
 def _refused(
@@ -1368,6 +1502,9 @@ def build_valuation(
     except ForecastIntegrityError as exc:
         raise ValuationInputError("FORECAST_INTEGRITY_FAILED", str(exc)) from None
     base = forecast.base
+    lender = base.forecast_model == ForecastModel.NON_BANK_FINANCIAL
+    if "methods" not in req.model_fields_set:  # the forecast model's own default
+        req = req.model_copy(update={"methods": LENDER_METHODS if lender else DEFAULT_METHODS})
     if req.reporting_basis is not None and req.reporting_basis != base.reporting_basis:
         raise ValuationInputError(
             "BASIS_MISMATCH",
@@ -1450,7 +1587,7 @@ def build_valuation(
             )
     else:
         ledger = Ledger(f"{forecast_hash}|SHARED", None, currency, issues)
-        shared = _shared(forecast, box4, explicit, ledger)
+        shared = (_shared_lender if lender else _shared)(forecast, box4, explicit, ledger)
         values.extend(ledger.values)
         plan = Plan(
             forecast=forecast,
@@ -1461,6 +1598,8 @@ def build_valuation(
             all_years=all_years,
             financial=forecast.industry in RESTRICTED_INDUSTRIES,
             shared=shared,
+            lender=lender,
+            attribution=_attribution(forecast, box4) if lender else None,
         )
         for scenario in req.scenarios:
             own = {k: a for (k, s), a in explicit.items() if s == scenario}

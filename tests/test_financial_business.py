@@ -204,12 +204,7 @@ def test_forecast_and_valuation_do_not_use_industrial_drivers(industry):
         box4=data, generated_at=NOW)
     for method in (tv.VM.DCF_FCFF_GORDON, tv.VM.EV_EBITDA):
         result = tv.result(valuation, method)
-        # a non-bank financial company now gets the lender forecast model, which Box 11
-        # refuses as a whole (no lender valuation yet); both reasons are fail-closed
-        expected = ("FORECAST_MODEL_NOT_VALUED"
-                    if forecast.base.forecast_model.value == "NON_BANK_FINANCIAL"
-                    else "UNSUPPORTED_SECTOR")
-        assert result.reason == expected and result.enterprise_value is None
+        assert result.reason == "UNSUPPORTED_SECTOR" and result.enterprise_value is None
     # Box 7's family refines Box 4's ONE classification; it never re-guesses an UNKNOWN one
     # from breadcrumbs (formerly UNKNOWN + 'Manufacturing' became GENERAL)
     assert sector_family(industry, ["Manufacturing"])[0].value == (

@@ -59,6 +59,7 @@ from stock_research_ai.domain.forecasting import (
     Scenario,
 )
 from stock_research_ai.domain.fundamental_valuation import (
+    DEFAULT_METHODS,
     AssumptionInput,
     AssumptionKind,
     InputKind,
@@ -1056,7 +1057,7 @@ def test_huge_but_finite_cash_flows_and_out_of_range():
 def test_every_number_has_a_traceable_path():
     f, box4 = forecast(basis=B.CONSOLIDATED, minority=10)
     req = request(
-        methods=tuple(VM),
+        methods=DEFAULT_METHODS,  # every industrial method (P/B is the lender model's)
         extra=[
             a(K.MINORITY_INTEREST, 150),
             a(K.MARKET_PRICE, 100),
@@ -1265,7 +1266,7 @@ def test_maximum_horizon_three_scenarios_all_methods():
     flows = {s: [100 + 10 * i + k for i in range(5)] for k, s in enumerate(S)}
     f, box4 = forecast(flows)
     req = request(
-        methods=tuple(VM),
+        methods=DEFAULT_METHODS,  # every industrial method (P/B is the lender model's)
         extra=[a(K.MARKET_PRICE, 100), *(a(K.TERMINAL_EV_EBITDA, 8, s) for s in S)],
         multiples=[
             multiple(m, 10, s, y)

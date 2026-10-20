@@ -305,7 +305,9 @@ def test_r_hudco_exact_lender_forecast(hudco):
                     L.TOTAL_INCOME: D("16884.632244")}
     verify_forecast_integrity(f, data)  # Box 10's own arithmetic, rebuilt from Box 4
     valuation = build_valuation(f, box4=data, generated_at=NOW)  # U
-    assert {r.reason for r in valuation.results} == {"FORECAST_MODEL_NOT_VALUED"}
+    # the lender valuation model: P/B and P/E only, unavailable without a supplied multiple
+    assert {r.method.value for r in valuation.results} == {"PB", "PE"}
+    assert {r.reason for r in valuation.results} == {"MULTIPLE_MISSING"}
     assert all(r.status.value == "UNAVAILABLE" for r in valuation.results)
 
 

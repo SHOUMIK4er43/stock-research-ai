@@ -79,10 +79,15 @@ class ValuationMethod(StrEnum):
     PE = "PE"  # equity value = attributable PAT x P/E
     EV_EBITDA = "EV_EBITDA"  # enterprise value = operating EBITDA x EV/EBITDA
     EV_EBIT = "EV_EBIT"  # enterprise value = operating EBIT x EV/EBIT
+    PB = "PB"  # equity value = owners' book equity x P/B (NON_BANK_FINANCIAL lender model)
 
 
 DCF_METHODS = (ValuationMethod.DCF_FCFF_GORDON, ValuationMethod.DCF_FCFF_EXIT_MULTIPLE)
 MULTIPLE_METHODS = (ValuationMethod.PE, ValuationMethod.EV_EBITDA, ValuationMethod.EV_EBIT)
+#: the industrial default (unchanged); P/B is the lender model's, never a default here
+DEFAULT_METHODS = (*DCF_METHODS, *MULTIPLE_METHODS)
+#: NON_BANK_FINANCIAL: equity methods only (owners' book equity, owners' PAT)
+LENDER_METHODS = (ValuationMethod.PB, ValuationMethod.PE)
 
 
 class MultipleBasis(StrEnum):
@@ -94,6 +99,7 @@ MULTIPLE_BASIS: dict[ValuationMethod, MultipleBasis] = {
     ValuationMethod.PE: MultipleBasis.EQUITY,
     ValuationMethod.EV_EBITDA: MultipleBasis.ENTERPRISE,
     ValuationMethod.EV_EBIT: MultipleBasis.ENTERPRISE,
+    ValuationMethod.PB: MultipleBasis.EQUITY,
 }
 
 
@@ -285,7 +291,9 @@ class MultipleInput(BaseModel):
     qualitative text: explicit, or citing structured comparable-company data."""
 
     model_config = _model()
-    method: Literal[ValuationMethod.PE, ValuationMethod.EV_EBITDA, ValuationMethod.EV_EBIT]
+    method: Literal[
+        ValuationMethod.PE, ValuationMethod.EV_EBITDA, ValuationMethod.EV_EBIT, ValuationMethod.PB
+    ]
     scenario: Scenario
     fiscal_year: FiscalYear
     multiple: ExactDecimal = Field(gt=0, le=MAX_MULTIPLE)
@@ -305,7 +313,9 @@ class MultipleInput(BaseModel):
 class ValuationRequest(BaseModel):
     model_config = _model()
     scenarios: tuple[Scenario, ...] = (Scenario.BASE, Scenario.BULL, Scenario.BEAR)
-    methods: tuple[ValuationMethod, ...] = tuple(ValuationMethod)
+    #: not stated: the forecast model's default (industrial: DEFAULT_METHODS; NON_BANK_FINANCIAL:
+    #: LENDER_METHODS); stated: exactly these, each applied or refused with a reason
+    methods: tuple[ValuationMethod, ...] = DEFAULT_METHODS
     #: forecast years discounted explicitly; None = every Box 10 forecast year
     dcf_horizon: int | None = Field(default=None, ge=1, le=MAX_HORIZON)
     #: the basis the caller expects; must equal the forecast's basis when stated
@@ -344,7 +354,9 @@ class ValuationRequest(BaseModel):
                 )
             if m.scenario not in self.scenarios:
                 raise ValueError(f"multiple for unrequested scenario {m.scenario.value}")
-            if m.method not in self.methods:
+            if m.method not in self.methods and (
+                "methods" in self.model_fields_set or m.method not in LENDER_METHODS
+            ):
                 raise ValueError(f"multiple for unrequested method {m.method.value}")
             multiples.add(key_m)
         if any(a.kind == K.TERMINAL_EV_EBITDA for a in self.assumptions) and (

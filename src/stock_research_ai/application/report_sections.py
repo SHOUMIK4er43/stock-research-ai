@@ -2144,6 +2144,8 @@ def valuation(ctx: Ctx) -> ValuationView:
         ctx.drafts[sec].reason = "some Box 11 methods are unavailable"
     values = {x.value_id: x for x in v.values}
     shared = [x for x in v.values if x.scenario is None and x.status == "AVAILABLE"]
+    lender = ctx.box10 is not None and ctx.box10.base.forecast_model is not None and \
+        ctx.box10.base.forecast_model.value == "NON_BANK_FINANCIAL"
     methods: list[ValuationMethodView] = []
     rows: list[TableRow] = []
     for r in v.results:
@@ -2177,20 +2179,49 @@ def valuation(ctx: Ctx) -> ValuationView:
             result_claim_ids=tuple(dict.fromkeys(result_ids + [
                 named[n] for n in VALUATION_ROWS if n in named])),
             limitation_claim_ids=tuple(limits)))
+        if lender:
+            m = r.multiple
+            rows.append(row(f"{r.method.value}|{sc.value}", f"{r.method.value} - {sc.value}",
+                            RowKind.VALUATION, [
+                                text("STATUS", r.status.value, origin="REPORT"),
+                                text("METRIC", f"{m.metric} FY{m.fiscal_year}" if m else
+                                     r.reason or "UNAVAILABLE", origin="REPORT"),
+                                text("MULTIPLE", f"{m.multiple}x ({m.source.value.lower()}"
+                                     f"{': ' + m.reference if m.reference else ''})" if m else
+                                     "none supplied", origin="REPORT"),
+                                *(cell(n, ctx.book, named.get(n), note=r.reason or "UNAVAILABLE")
+                                  for n in ("EQUITY_VALUE", "FAIR_VALUE_PER_SHARE"))]))
+            continue
         rows.append(row(f"{r.method.value}|{sc.value}", f"{r.method.value} - {sc.value}",
                         RowKind.VALUATION, [
                             text("STATUS", r.status.value, origin="REPORT"),
                             *(cell(n, ctx.book, named.get(n), note=r.reason or "UNAVAILABLE")
                               for n in ("ENTERPRISE_VALUE", "EQUITY_VALUE",
                                         "FAIR_VALUE_PER_SHARE"))]))
-    ctx_table(ctx, sec, "VALUATION_METHODS", "Valuation by method and scenario (never blended)",
-              basis_of(v.reporting_basis), [
-                  col("STATUS", "Status", ColumnKind.TEXT),
-                  col("ENTERPRISE_VALUE", "Enterprise value", ColumnKind.FORECAST),
-                  col("EQUITY_VALUE", "Equity value", ColumnKind.FORECAST),
-                  col("FAIR_VALUE_PER_SHARE", "Per-share value", ColumnKind.FORECAST)], rows,
-              footnotes=("Each method and scenario is shown separately: no blended value, "
-                         "midpoint or target is derived.",))
+    if lender:
+        ctx_table(ctx, sec, "VALUATION_METHODS", "Valuation by method and scenario (Box 11 "
+                  "NON_BANK_FINANCIAL model: P/B and P/E on owners' equity / PAT; never "
+                  "blended)", basis_of(v.reporting_basis), [
+                      col("STATUS", "Status", ColumnKind.TEXT),
+                      col("METRIC", "Priced metric (forecast year)", ColumnKind.TEXT),
+                      col("MULTIPLE", "Multiple (source)", ColumnKind.TEXT),
+                      col("EQUITY_VALUE", "Equity value", ColumnKind.FORECAST),
+                      col("FAIR_VALUE_PER_SHARE", "Per-share value", ColumnKind.FORECAST)], rows,
+                  footnotes=(
+                      "Valuation model: NON_BANK_FINANCIAL. Multiples are request assumptions "
+                      "(explicit or cited peer reference), never source facts or defaults; "
+                      "no DCF, EV multiple or enterprise bridge is used for a lender.",
+                      "Each method and scenario is shown separately: no blended value, "
+                      "midpoint or target is derived."))
+    else:
+        ctx_table(ctx, sec, "VALUATION_METHODS", "Valuation by method and scenario (never "
+                  "blended)", basis_of(v.reporting_basis), [
+                      col("STATUS", "Status", ColumnKind.TEXT),
+                      col("ENTERPRISE_VALUE", "Enterprise value", ColumnKind.FORECAST),
+                      col("EQUITY_VALUE", "Equity value", ColumnKind.FORECAST),
+                      col("FAIR_VALUE_PER_SHARE", "Per-share value", ColumnKind.FORECAST)], rows,
+                  footnotes=("Each method and scenario is shown separately: no blended value, "
+                             "midpoint or target is derived.",))
     arows = [row(f"{a.assumption_id}|{sc.value}", f"{a.kind.value} ({sc.value})",
                  RowKind.ASSUMPTION, [cell("VALUE", ctx.book, valuation_assumption(ctx, a, sc))])
              for a in v.assumptions for sc in (

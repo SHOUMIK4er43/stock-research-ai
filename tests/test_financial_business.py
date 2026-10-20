@@ -34,7 +34,7 @@ from stock_research_ai.domain.financial_business import (
     classify_business,
     declaration_compatible,
 )
-from stock_research_ai.domain.financial_canonical import Industry
+from stock_research_ai.domain.financial_canonical import BusinessClass, Industry
 from stock_research_ai.domain.forecasting import ForecastLine, OperatingRoute
 from stock_research_ai.domain.screener_dataset import ClassificationLevel
 
@@ -198,10 +198,14 @@ def test_forecast_and_valuation_do_not_use_industrial_drivers(industry):
     for method in (tv.VM.DCF_FCFF_GORDON, tv.VM.EV_EBITDA):
         result = tv.result(valuation, method)
         assert result.reason == "UNSUPPORTED_SECTOR" and result.enterprise_value is None
+    # Box 7's family refines Box 4's ONE classification; it never re-guesses an UNKNOWN one
+    # from breadcrumbs (formerly UNKNOWN + 'Manufacturing' became GENERAL)
     assert sector_family(industry, ["Manufacturing"])[0].value == (
-        "GENERAL" if industry == IND.UNKNOWN else "FINANCIAL"
+        "UNKNOWN" if industry == IND.UNKNOWN else "FINANCIAL"
     )
-    assert sector_family(IND.UNKNOWN, ["Financial Services"])[0].value == "FINANCIAL"
+    assert sector_family(IND.UNKNOWN, ["Financial Services"])[0].value == "UNKNOWN"
+    assert sector_family(IND.UNKNOWN, ["Financial Services"],
+                         BusinessClass.FINANCIAL)[0].value == "FINANCIAL"
 
 
 @pytest.mark.parametrize("name,expected", [

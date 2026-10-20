@@ -10,7 +10,7 @@ unmapped rows survive as UnmappedFinancialLine, ambiguity stays ambiguous.
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
 from pydantic import (
@@ -148,6 +148,33 @@ class Industry(StrEnum):
     NBFC = "NBFC"
     INSURANCE = "INSURANCE"
     UNKNOWN = "UNKNOWN"
+
+
+class BusinessClass(StrEnum):
+    """The coarse level of the SAME classification as Industry (never a second guess):
+    FINANCIAL = BANK / NBFC / INSURANCE, or financial evidence whose subtype is unresolved
+    (Industry UNKNOWN); NON_FINANCIAL = Industry GENERAL; UNKNOWN = no usable evidence."""
+
+    FINANCIAL = "FINANCIAL"
+    NON_FINANCIAL = "NON_FINANCIAL"
+    UNKNOWN = "UNKNOWN"
+
+
+def business_class_allowed(industry: Industry, business_class: BusinessClass) -> bool:
+    if industry in (Industry.BANK, Industry.NBFC, Industry.INSURANCE):
+        return business_class == BusinessClass.FINANCIAL
+    if industry == Industry.GENERAL:
+        return business_class == BusinessClass.NON_FINANCIAL
+    return business_class in (BusinessClass.FINANCIAL, BusinessClass.UNKNOWN)
+
+
+def default_business_class(industry: Industry) -> BusinessClass:
+    """For datasets written before the class was recorded: only what Industry implies."""
+    if industry in (Industry.BANK, Industry.NBFC, Industry.INSURANCE):
+        return BusinessClass.FINANCIAL
+    if industry == Industry.GENERAL:
+        return BusinessClass.NON_FINANCIAL
+    return BusinessClass.UNKNOWN
 
 
 class CanonicalMetric(StrEnum):
@@ -496,6 +523,9 @@ class CanonicalFinancialDataset(BaseModel):
     company_key: str
     company_name: Label
     industry: Industry
+    #: the authoritative business classification's coarse class (with Industry, one decision)
+    business_class: BusinessClass | None = None
+    classification_reason: Label | None = None
     fiscal_year_end_month: int | None = Field(default=None, ge=1, le=12)
     generated_at: AwareDatetime
     screener_source_sha256s: tuple[Sha256Hex, ...]
@@ -512,8 +542,18 @@ class CanonicalFinancialDataset(BaseModel):
     warnings: tuple[FinancialWarning, ...]
     statistics: FinancialStatistics
 
+    @model_validator(mode="before")
+    @classmethod
+    def classified(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("business_class") is None and "industry" in data:
+            data = {**data, "business_class": default_business_class(Industry(data["industry"]))}
+        return data
+
     @model_validator(mode="after")
     def traceable(self) -> Self:
+        assert self.business_class is not None
+        if not business_class_allowed(self.industry, self.business_class):
+            raise ValueError("business_class contradicts industry: one classification only")
         observed = {o.observation_id for o in self.observations}
         if len(observed) != len(self.observations):
             raise ValueError("Observation IDs must be unique")
@@ -524,6 +564,15 @@ class CanonicalFinancialDataset(BaseModel):
             ):
                 raise ValueError("Every canonical value must reach a source observation")
         return self
+
+    @property
+    def classification(self) -> BusinessClass:
+        """THE business class every box reads (with `industry`, one decision): the recorded
+        class when it is consistent with `industry`, else what `industry` implies."""
+        recorded = self.business_class
+        if recorded is not None and business_class_allowed(self.industry, recorded):
+            return recorded
+        return default_business_class(self.industry)
 
     def statement(
         self,

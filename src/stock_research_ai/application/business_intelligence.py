@@ -137,7 +137,8 @@ def build_business_intelligence(
     if bundle is not None and bundle.company_key != box4.company_key:
         raise ValueError("the Box 3 bundle belongs to another company")
     classification = list(screener.profile.classification) if screener else []
-    family, family_reason = sector_family(box4.industry, [c.name for c in classification])
+    family, family_reason = sector_family(box4.industry, [c.name for c in classification],
+                                          box4.classification)
     extractor = Extractor(
         company_key=box4.company_key,
         family=family,
@@ -234,7 +235,7 @@ def build_business_intelligence(
         presented, events, renamed_pairs
     )
     relations = sorted([*relations, *possible], key=lambda r: str(r.relation_id))
-    financial = family == SectorFamily.FINANCIAL
+    financial = family in (SectorFamily.FINANCIAL, SectorFamily.UNKNOWN)  # restricted
     totals = [*segment_totals(segments, box4, financial), *geography_totals(geographies, box4)]
 
     canonical_of: dict[UUID, UUID] = {}

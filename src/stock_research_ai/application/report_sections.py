@@ -1622,8 +1622,9 @@ def order_book(ctx: Ctx) -> OrderBookView:
     q = ctx.box13.order_book_quality
     b12 = ctx.box12
     if not q.applicable:
-        reason = "bank / NBFC / insurer" if ctx.financial else \
-            "the company is not declared order-book driven to Box 13"
+        reason = ("bank / NBFC / insurer" if ctx.box13.sector_gate.value == "FINANCIAL"
+                  else "business classification unresolved" if ctx.financial
+                  else "the company is not declared order-book driven to Box 13")
         ctx.drafts[sec].status = SectionStatus.NOT_APPLICABLE
         ctx.drafts[sec].reason = f"NOT_APPLICABLE: {reason}"
         return OrderBookView(applicable=False, applicability=reason, buckets=(),

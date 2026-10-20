@@ -36,6 +36,7 @@ from stock_research_ai.domain.financial_analytics import (
     HealthState,
     Severity,
     TrendClass,
+    sector_applies,
 )
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
@@ -1170,7 +1171,7 @@ SPECIAL = {
 
 
 def plan_chart(ctx: Context, definition: ChartDefinition) -> Planned:
-    if ctx.box5.sector not in definition.sectors:
+    if not sector_applies(ctx.box5.sector, definition.sectors):
         return skip(
             ctx,
             definition,

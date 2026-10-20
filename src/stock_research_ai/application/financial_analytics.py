@@ -41,6 +41,7 @@ from stock_research_ai.application.financial_metrics import (
     base_flow_metrics,
     quantize,
     quarterly_metrics,
+    sector_of,
     shift,
     ttm_metrics,
     window_metrics,
@@ -83,13 +84,13 @@ from stock_research_ai.domain.financial_analytics import (
     HealthDimension,
     HealthState,
     PeriodRole,
-    Sector,
     SeriesPoint,
     Severity,
     TrendAssessment,
     TrendClass,
     UnmappedLineReference,
     UnmappedSummary,
+    sector_applies,
 )
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
@@ -432,7 +433,7 @@ def classify_trend(
 def build_trends(e: Engine, annual: Sequence[date]) -> list[TrendAssessment]:
     out = []
     for rule in TREND_RULES:
-        if e.sector not in rule.sectors:
+        if not sector_applies(e.sector, rule.sectors):
             continue
         window = annual[-TREND_WINDOW:]
         metrics = [e.find(rule.code, _series_period(e, rule.code, end)) for end in window]
@@ -564,7 +565,7 @@ def build_anomalies(
 ) -> list[AnomalySignal]:
     out: list[AnomalySignal] = []
     for rule in ANOMALY_RULES:
-        if e.sector not in rule.sectors:
+        if not sector_applies(e.sector, rule.sectors):
             continue
         periods = (
             [e.periods.fy(end) for end in annual]
@@ -964,7 +965,7 @@ def build_financial_analytics(
             ", ".join(f"{k}: {v}" for k, v in sorted(unresolved.items()))
             + "; dependent calculations report INPUT_CONFLICT",
         )
-    sector = Sector.GENERAL
+    sector = sector_of(data.industry, data.classification)
     for basis, currency in frame_currencies(data).items():
         remaining = max(bounds.max_canonical_values - consumed, 1)
         frame = Frame(data, basis, currency, remaining)
@@ -984,6 +985,7 @@ def build_financial_analytics(
             data.industry,
             analytics_key,
             bounds.max_provenance_refs,
+            business_class=data.classification,
         )
         sector = engine.sector
         annual_all, quarters_all = frame.periods(PeriodType.FY), frame.periods(PeriodType.QUARTER)

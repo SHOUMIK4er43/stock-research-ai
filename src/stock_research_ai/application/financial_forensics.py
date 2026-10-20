@@ -38,6 +38,7 @@ from stock_research_ai.domain.financial_analytics import (
     ForensicModel,
     ForensicModelResult,
     Severity,
+    sector_applies,
 )
 from stock_research_ai.domain.financial_canonical import CanonicalMetric, FinancialPeriod
 
@@ -63,7 +64,8 @@ def grade(rule: GradedRule, observed: Decimal) -> Severity:
 
 def earnings_quality(e: Engine, latest: date | None) -> list[EarningsQualityCheck]:
     p = e.periods.fy(latest) if latest else None
-    checks = [_check(e, rule, p) for rule in EARNINGS_QUALITY_RULES if e.sector in rule.sectors]
+    checks = [_check(e, rule, p) for rule in EARNINGS_QUALITY_RULES
+              if sector_applies(e.sector, rule.sectors)]
     if not e.financial:
         checks.append(_negative_fcf(e, latest))
     return checks

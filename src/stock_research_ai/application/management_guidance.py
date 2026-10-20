@@ -254,6 +254,8 @@ def numeric_targets(sentence: str) -> list[Target]:
 def _applicable(rule_sectors: str, family: str) -> bool:
     if rule_sectors == UNIVERSAL:
         return True
+    if family == "UNKNOWN":
+        return False  # an unresolved business gets universal rules only
     return (rule_sectors == FINANCIAL) == (family == FINANCIAL)
 
 

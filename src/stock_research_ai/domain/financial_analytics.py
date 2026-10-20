@@ -94,7 +94,16 @@ class AnalyticsUnit(StrEnum):
 
 class Sector(StrEnum):
     GENERAL = "GENERAL"  # industrial / services companies
-    FINANCIAL = "FINANCIAL"  # banks, NBFCs, insurers
+    FINANCIAL = "FINANCIAL"  # banks, NBFCs, insurers, or financial with an unresolved subtype
+    UNKNOWN = "UNKNOWN"  # business class unresolved: business-neutral formulas only
+
+
+def sector_applies(sector: Sector, sectors: tuple[Sector, ...]) -> bool:
+    """UNKNOWN never acts as GENERAL or FINANCIAL: only a formula / rule registered for
+    both (business-neutral) applies to it."""
+    if sector == Sector.UNKNOWN:
+        return Sector.GENERAL in sectors and Sector.FINANCIAL in sectors
+    return sector in sectors
 
 
 class PeriodRole(StrEnum):

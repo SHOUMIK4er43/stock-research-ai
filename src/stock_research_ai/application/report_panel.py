@@ -76,6 +76,9 @@ class FinalReportPanel(BaseModel):
     #: same basis); the control basis appears only as the report's labelled control layer
     analytical_basis: str | None = None
     control_basis: str | None = None
+    #: the report's ONE business classification (Box 4): coarse class + Industry subtype
+    business_class: str | None = None
+    industry: str | None = None
 
 
 def _list(items: Iterable[PanelItem]) -> PanelList:
@@ -143,7 +146,8 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         positive_controls=_list(risk_items(report.risks.positive_controls)),
         input_conflicts=_list(conflicts), data_limitations=_list(limitations),
         open_diligence=_list(diligence), analytical_basis=m.analytical_basis.value,
-        control_basis=m.control_basis.value if m.control_basis else None)
+        control_basis=m.control_basis.value if m.control_basis else None,
+        business_class=m.business_class, industry=m.industry.value)
 
 
 __all__ = ["FinalReportPanel", "PanelItem", "PanelList", "PanelSection", "build_panel"]

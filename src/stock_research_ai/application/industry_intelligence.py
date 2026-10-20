@@ -148,7 +148,7 @@ def build_industry_intelligence(
     warnings: list[tuple[str, str | None]] = []
     partial = False
     family, _family_reason = target.family()
-    family = family or "GENERAL"
+    family = family or "UNKNOWN"  # never assumed GENERAL
     for name, layer in (
         ("Box 4", target.box4),
         ("Box 5", target.box5),

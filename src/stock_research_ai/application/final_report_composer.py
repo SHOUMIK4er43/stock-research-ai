@@ -109,6 +109,7 @@ from stock_research_ai.domain.final_research_report import (
 )
 from stock_research_ai.domain.financial_analytics import FinancialAnalyticsDataset
 from stock_research_ai.domain.financial_canonical import (
+    BusinessClass,
     CanonicalFinancialDataset,
     Currency,
     Industry,
@@ -201,6 +202,46 @@ def _fail(code: str, detail: str) -> ReportCompositionError:
     return ReportCompositionError(code, detail)
 
 
+def _business_class(box4: CanonicalFinancialDataset) -> BusinessClass:
+    return box4.classification
+
+
+_GATE = {BusinessClass.FINANCIAL: "FINANCIAL", BusinessClass.NON_FINANCIAL: "NON_FINANCIAL",
+         BusinessClass.UNKNOWN: "UNKNOWN"}
+
+
+def _classification(box4: CanonicalFinancialDataset, box13: DueDiligenceDataset,
+                    supplied: dict[Layer, Any]) -> None:
+    """ONE business classification per report: every layer must state Box 4's (its
+    industry, or the family / gate that Box 4's class implies); a contradiction is refused."""
+    cls = _business_class(box4)
+    family = {BusinessClass.FINANCIAL: {"FINANCIAL"}, BusinessClass.UNKNOWN: {"UNKNOWN"}}.get(
+        cls)  # NON_FINANCIAL: any non-financial, resolved family
+    wrong: list[str] = []
+    if box13.industry != box4.industry or box13.sector_gate.value != _GATE[cls]:
+        wrong.append(f"Box 13 {box13.industry.value}/{box13.sector_gate.value}")
+    for layer in (Layer.BOX10, Layer.BOX11):
+        ds = supplied.get(layer)
+        if ds is not None and getattr(ds, "industry", box4.industry) != box4.industry:
+            wrong.append(f"{layer.value} {ds.industry.value}")
+    families = []
+    box7 = supplied.get(Layer.BOX7)
+    if isinstance(box7, BusinessIntelligenceDataset):
+        families.append(("Box 7", box7.sector.value))
+        if box7.business_structure.industry != box4.industry:
+            wrong.append(f"Box 7 industry {box7.business_structure.industry.value}")
+    box9 = supplied.get(Layer.BOX9)
+    if isinstance(box9, IndustryIntelligenceDataset):
+        families.append(("Box 9", box9.sector_family))
+    for name, value in families:
+        ok = value in family if family is not None else value not in ("FINANCIAL", "UNKNOWN")
+        if not ok:
+            wrong.append(f"{name} family {value}")
+    if wrong:
+        raise _fail("CLASSIFICATION_MISMATCH", f"Box 4 is {box4.industry.value} / {cls.value}; "
+                    + "; ".join(wrong)[:400])
+
+
 def _integrity(request: FinalReportRequest, box4: CanonicalFinancialDataset,
                box5: FinancialAnalyticsDataset, box13: DueDiligenceDataset,
                shas: dict[Layer, str], supplied: dict[Layer, Any]) -> list[str]:
@@ -263,6 +304,7 @@ def _integrity(request: FinalReportRequest, box4: CanonicalFinancialDataset,
     if wrong:
         raise _fail("BASIS_MISMATCH", f"the analytical basis is {analytical}; "
                     + "; ".join(wrong)[:400])
+    _classification(box4, box13, supplied)
     # time
     as_of = request.as_of
     if box13.as_of > as_of:
@@ -361,7 +403,7 @@ def build_final_report(
               box9=supplied.get(Layer.BOX9), box10=supplied.get(Layer.BOX10),
               box11=supplied.get(Layer.BOX11), box12=supplied.get(Layer.BOX12),
               analytical=analytical, control=control, currency=b13.currency,
-              financial=b13.sector_gate.value == "FINANCIAL")
+              financial=b13.sector_gate.value != "NON_FINANCIAL")  # restricted
     # --- substantive sections first (the summary is built last, from these)
     build_signals(ctx)
     overview(ctx)
@@ -436,7 +478,9 @@ def build_final_report(
         unit_note="Money values carry their upstream unit (Box 4 scale; crore for Box 12 / "
                   "Box 13 inputs). Box 14 never rescales.",
         as_of=request.as_of, latest_fiscal_year_end=b13.latest_fiscal_year_end,
-        generated_at=generated_at, inputs=tuple(inputs), limits=bounds)
+        generated_at=generated_at, inputs=tuple(inputs), limits=bounds,
+        business_class=_business_class(b4).value,
+        classification_reason=b4.classification_reason)
     return FinalResearchReportDataset(
         report_id=uuid5(NS, f"report|{report_key}"), metadata=metadata, sections=sections,
         due_diligence_status=status_zero, executive_summary=summary, investment_case=case,

@@ -895,9 +895,9 @@ class ReportMetadata(BaseModel):
     isin: Label | None
     bse_code: Label | None
     identity_status: Label
-    industry: Industry
+    industry: Industry  # Box 4's subtype of the ONE business classification
     sector_gate: Code
-    business_model: Code
+    business_model: Code  # Box 13's order-book dimension (GENERAL = not order-book driven)
     analytical_basis: ClaimBasis
     control_basis: ClaimBasis | None
     currency: Currency
@@ -907,6 +907,10 @@ class ReportMetadata(BaseModel):
     generated_at: AwareDatetime  # injected; never part of an ID
     inputs: tuple[InputReference, ...]
     limits: ReportLimits
+    #: Box 4's coarse business class (FINANCIAL / NON_FINANCIAL / UNKNOWN) and its reason;
+    #: None only in reports written before the class was recorded
+    business_class: Code | None = None
+    classification_reason: Label | None = None
     engine_version: Label = FINAL_REPORT_ENGINE_VERSION
     selection_rules_version: Label = SELECTION_RULES_VERSION
 

@@ -41,7 +41,10 @@ from stock_research_ai.application.business_lines import (
 from stock_research_ai.application.document_intelligence import extract_evidence
 from stock_research_ai.application.evidence_catalogue import assemble_catalogue
 from stock_research_ai.application.evidence_retrieval import retrieve_evidence
-from stock_research_ai.application.financial_reconciliation import build_canonical_dataset
+from stock_research_ai.application.financial_reconciliation import (
+    build_canonical_dataset,
+    detect_classification,
+)
 from stock_research_ai.domain.business_intelligence import (
     AnalyticStatus,
     Attribution,
@@ -301,8 +304,16 @@ async def business(
         catalogue=catalogue,
         generated_at=NOW,
     )
+    if industry is None and screener is None:
+        # the synthetic filings describe an industrial company; it is declared, never
+        # inferred (an unclassified Box 4 is UNKNOWN and gets no industrial treatment)
+        industry = Industry.GENERAL
     if industry is not None:
         box4 = box4.model_copy(update={"industry": industry})
+    elif screener is not None:  # as production: Box 4 classifies the acquired page itself
+        decided = detect_classification([screener])
+        box4 = box4.model_copy(update={"industry": decided.industry,
+                                       "business_class": decided.business_class})
     data = build_business_intelligence(
         box4=box4, bundle=bundle, catalogue=catalogue, screener=screener, generated_at=NOW, **kw
     )

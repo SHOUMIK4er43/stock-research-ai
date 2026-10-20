@@ -73,6 +73,7 @@ class SectorFamily(StrEnum):
     RETAIL = "RETAIL"
     HOTELS = "HOTELS"
     OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"  # Box 4's business class unresolved: no sector-specific treatment
 
 
 class BusinessEvidenceKind(StrEnum):

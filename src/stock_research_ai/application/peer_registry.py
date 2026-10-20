@@ -101,6 +101,8 @@ METRIC_INDEX = {m.code: m for m in BENCHMARK_METRICS}
 def applies(metric: BenchmarkMetric, family: str) -> bool:
     if metric.families == "ALL":
         return True
+    if family == "UNKNOWN":
+        return False  # an unresolved business gets business-neutral metrics only
     return (metric.families == FINANCIAL) == (family == FINANCIAL)
 
 

@@ -107,7 +107,7 @@ def build_management_intelligence(
     if box7 is not None:
         family = box7.sector.value
     else:
-        family = sector_family(box4.industry, [])[0].value
+        family = sector_family(box4.industry, [], box4.classification)[0].value
         warnings.append(("SOURCE_MISSING", "no Box 7 dataset: sector from Box 4 industry only"))
     if box5 is None:
         warnings.append(("SOURCE_MISSING", "no Box 5 dataset: Box 5 actuals unavailable"))

@@ -151,7 +151,10 @@ def test_svg_snapshot_hash():
     assert digest == spec.artifact_sha256 == SNAPSHOT_REVENUE_ANNUAL
 
 
-SNAPSHOT_REVENUE_ANNUAL = "e7bf9e2ea9470f98c3cafab791ec0f70ff26da3428715985623988a3f931442a"
+# 2026-10-20 (user-approved): Box 4 now records its business classification, so the
+# content-addressed chart id prefix changed (f9b70fb0 -> 1749b147); every other SVG byte is
+# identical to the previous snapshot e7bf9e2e....
+SNAPSHOT_REVENUE_ANNUAL = "256ceaf7a0a2a5cf091968397830605ca8d529ff8a4071b624e5783fdf013e8e"
 
 
 def test_contract_is_strict():

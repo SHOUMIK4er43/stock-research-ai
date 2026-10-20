@@ -866,6 +866,7 @@ def test_a_crossed_threshold_without_evidence_is_unsupported_not_red():
     ctx = red_flags.Ctx.__new__(red_flags.Ctx)
     ctx.signals, ctx.persistence, ctx.gated, ctx.dd_key = [], {}, set(), "k"
     ctx.financial = False
+    ctx.box4 = make([])  # a GENERAL Box 4: the gate reads Box 4's classification
     rid = ctx.emit("PROMOTER_PLEDGE", ctx_ev)
     (s,) = ctx.signals
     assert s.risk_id == rid and s.status == ST.UNSUPPORTED and s.severity is None

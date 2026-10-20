@@ -24,6 +24,7 @@ from stock_research_ai.domain.final_research_report import (
     ColumnKind,
     FinalResearchReportDataset,
     OrderBucketKind,
+    ReportMetadata,
     ReportSection,
     ReportSource,
     ReportTable,
@@ -81,6 +82,16 @@ _BUCKET_TITLES = {
     OrderBucketKind.UNRESOLVED_L1: "UNRESOLVED L1",
     OrderBucketKind.SOURCE_INCOMPLETE: "SOURCE INCOMPLETE",
 }
+
+
+def classification_text(m: ReportMetadata) -> str:
+    """The ONE business classification (Box 4): its class, subtype and reason."""
+    cls = m.business_class or {"GENERAL": "NON_FINANCIAL", "UNKNOWN": "UNKNOWN"}.get(
+        m.industry.value, "FINANCIAL")
+    subtype = "subtype unresolved" if m.industry.value == "UNKNOWN" else m.industry.value
+    if cls == "UNKNOWN":
+        return "UNKNOWN (business classification unresolved)"
+    return f"{cls} ({subtype})" if cls == "FINANCIAL" else f"{cls} ({m.industry.value})"
 
 
 def box14_sha256(report: FinalResearchReportDataset) -> str:
@@ -680,8 +691,9 @@ class _Builder:
             ("Latest fiscal year end", str(m.latest_fiscal_year_end or "Not stated")),
             ("Analytical basis", m.analytical_basis.value),
             ("Control basis", m.control_basis.value if m.control_basis else "None"),
-            ("Industry / sector gate", f"{m.industry.value} / {m.sector_gate}"),
-            ("Business model", m.business_model),
+            ("Business classification", classification_text(m)),
+            ("Order-book model", "order-book driven" if m.business_model == "ORDER_BOOK_DRIVEN"
+             else "not order-book driven"),
             ("Identity status", m.identity_status),
             ("Currency", m.currency.value),
             ("Units", m.unit_note),

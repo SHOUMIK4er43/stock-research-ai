@@ -48,9 +48,10 @@ from stock_research_ai.domain.financial_analytics import (
     CalculationStatus,
     MetricInput,
     Sector,
+    sector_applies,
 )
-from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
+    BusinessClass,
     CanonicalFinancialDataset,
     CanonicalFinancialValue,
     CanonicalMetric,
@@ -63,6 +64,7 @@ from stock_research_ai.domain.financial_canonical import (
     ReconciliationRecord,
     ReportingBasis,
     ValueKind,
+    default_business_class,
 )
 
 M = CanonicalMetric
@@ -361,6 +363,14 @@ class Frame:
 # --- the engine --------------------------------------------------------------------------------
 
 
+def sector_of(industry: Industry, business_class: BusinessClass | None) -> Sector:
+    """Box 4's ONE classification, never re-derived: FINANCIAL for a financial class
+    (including an unresolved subtype), GENERAL for GENERAL, else UNKNOWN."""
+    if (business_class or default_business_class(industry)) == BusinessClass.FINANCIAL:
+        return Sector.FINANCIAL
+    return Sector.GENERAL if industry == Industry.GENERAL else Sector.UNKNOWN
+
+
 @dataclass
 class Engine:
     frame: Frame
@@ -372,14 +382,16 @@ class Engine:
     metrics: dict[UUID, CalculatedMetric] = field(default_factory=dict)
     index: dict[tuple[str, str], CalculatedMetric] = field(default_factory=dict)
     provenance_overflows: int = 0
+    business_class: BusinessClass | None = None  # Box 4's (None: implied by industry)
 
     @property
     def sector(self) -> Sector:
-        return Sector.FINANCIAL if self.industry in RESTRICTED_INDUSTRIES else Sector.GENERAL
+        return sector_of(self.industry, self.business_class)
 
     @property
     def financial(self) -> bool:
-        return self.sector == Sector.FINANCIAL
+        """Restricted: industrial models are withheld (financial or unresolved)."""
+        return self.sector != Sector.GENERAL
 
     def find(self, code: str, period: FinancialPeriod) -> CalculatedMetric | None:
         return self.index.get((code, period.key()))
@@ -452,7 +464,7 @@ class Engine:
             "formula_id": formula_id,
             "formula_text": expression,
         }
-        if self.sector not in definition.sectors or (
+        if not sector_applies(self.sector, definition.sectors) or (
             definition.sectors == (Sector.FINANCIAL,) and self.industry != Industry.BANK
         ):
             metric = CalculatedMetric(

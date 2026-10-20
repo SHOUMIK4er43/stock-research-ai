@@ -54,7 +54,12 @@ from stock_research_ai.domain.document_intelligence import (
 )
 from stock_research_ai.domain.evidence import AUTHORITY_RANK, EvidenceCatalogue, SourceAuthority
 from stock_research_ai.domain.financial import ReportingScope, UnitKind
-from stock_research_ai.domain.financial_business import CLASSIFICATION_VERSION, classify_business
+from stock_research_ai.domain.financial_business import (
+    CLASSIFICATION_VERSION,
+    BusinessClassification,
+    classify,
+    combine,
+)
 from stock_research_ai.domain.financial_canonical import (
     CANONICAL_SCALE,
     SCALE_FACTOR,
@@ -158,16 +163,21 @@ def _normalized(parsed: ParsedNumber, kind: ValueKind, scale: Scale) -> Decimal 
     return parsed.value
 
 
-def detect_industry(screeners: Sequence[DetailedScreenerDataset]) -> Industry:
-    decisions = {
-        classify_business(
+def detect_classification(screeners: Sequence[DetailedScreenerDataset]) -> BusinessClassification:
+    """The run's ONE business classification (Industry + BusinessClass), from every acquired
+    page of the company through the shared classifier; Box 4 records it for all boxes."""
+    return combine([
+        classify(
             [c.name for c in s.profile.classification],
             description=s.profile.about or "",
             labels=[row.label for table in s.tables for row in table.rows],
         )
         for s in screeners
-    }
-    return decisions.pop() if len(decisions) == 1 else Industry.UNKNOWN
+    ])
+
+
+def detect_industry(screeners: Sequence[DetailedScreenerDataset]) -> Industry:
+    return detect_classification(screeners).industry
 
 
 def fiscal_year_end_month(screeners: Sequence[DetailedScreenerDataset]) -> int | None:
@@ -1534,7 +1544,8 @@ def build_canonical_dataset(
             "Screener dataset company key does not match the canonical dataset company",
         )
         screeners = ()
-    industry = detect_industry(screeners)
+    classification = detect_classification(screeners)
+    industry = classification.industry
     if industry == Industry.UNKNOWN and screeners:
         collector.warn("BUSINESS_CLASSIFICATION_UNRESOLVED",
                        f"{CLASSIFICATION_VERSION}: absent, ambiguous or conflicting business "
@@ -1574,6 +1585,8 @@ def build_canonical_dataset(
         company_key=company_key,
         company_name=company_name,
         industry=industry,
+        business_class=classification.business_class,
+        classification_reason=classification.reason,
         fiscal_year_end_month=fy_end,
         generated_at=generated_at,
         screener_source_sha256s=tuple(sorted(s.source.content_sha256 for s in screeners)),

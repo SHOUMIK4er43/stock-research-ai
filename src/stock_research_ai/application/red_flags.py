@@ -53,10 +53,12 @@ from stock_research_ai.domain.financial_analytics import (
     FinancialAnalyticsDataset,
 )
 from stock_research_ai.domain.financial_canonical import (
+    BusinessClass,
     CanonicalFinancialDataset,
     Confidence,
     Currency,
     FinancialPeriod,
+    Industry,
     ReportingBasis,
 )
 
@@ -70,7 +72,7 @@ SV = Severity
 C = RiskCategory
 G = SectorGate
 NONFIN = (G.NON_FINANCIAL,)
-ALL = (G.NON_FINANCIAL, G.FINANCIAL)
+ALL = (G.NON_FINANCIAL, G.FINANCIAL, G.UNKNOWN)
 
 
 class DueDiligenceInputError(ValueError):
@@ -695,7 +697,10 @@ class Ctx:
 
     @property
     def gate(self) -> SectorGate:
-        return G.FINANCIAL if self.financial else G.NON_FINANCIAL
+        """Box 4's ONE classification: its business class, not a Box 13 re-derivation."""
+        if self.box4.classification == BusinessClass.FINANCIAL:
+            return G.FINANCIAL
+        return G.NON_FINANCIAL if self.box4.industry == Industry.GENERAL else G.UNKNOWN
 
     def canonical(self, metrics: Sequence[object], period: FinancialPeriod,
                   basis: ReportingBasis | None = None) -> Got:

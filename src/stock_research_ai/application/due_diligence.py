@@ -754,7 +754,9 @@ def build_due_diligence(
     if ctx.financial:
         issues.append(DueDiligenceIssue(
             code="FINANCIAL_SECTOR_RULES_UNSUPPORTED", severity="INFO",
-            detail="bank / NBFC / insurer: industrial rules are UNSUPPORTED_SECTOR_RULE; no "
+            detail=("bank / NBFC / insurer" if ctx.gate.value == "FINANCIAL"
+                    else "business classification unresolved")
+            + ": industrial rules are UNSUPPORTED_SECTOR_RULE; no "
             "sector-specific financial-company rule set exists yet"))
     return DueDiligenceDataset(
         dataset_id=uuid5(NS, dd_key),

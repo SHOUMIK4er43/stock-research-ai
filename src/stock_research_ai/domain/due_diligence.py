@@ -136,8 +136,11 @@ class SignalBasis(StrEnum):
 
 
 class SectorGate(StrEnum):
+    """Box 4's business class, as Box 13 applies it (never a separate guess)."""
+
     NON_FINANCIAL = "NON_FINANCIAL"  # the industrial rule set applies
-    FINANCIAL = "FINANCIAL"  # bank / NBFC / insurer: industrial rules are not applied
+    FINANCIAL = "FINANCIAL"  # bank / NBFC / insurer (or subtype unresolved): no industrial rules
+    UNKNOWN = "UNKNOWN"  # business class unresolved: business-neutral rules only
 
 
 class BusinessModel(StrEnum):

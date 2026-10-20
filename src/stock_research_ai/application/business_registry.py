@@ -24,7 +24,14 @@ from stock_research_ai.domain.business_intelligence import (
     SegmentMetric,
     SegmentRole,
 )
-from stock_research_ai.domain.financial_canonical import CanonicalMetric, Currency, Industry, Scale
+from stock_research_ai.domain.financial_canonical import (
+    BusinessClass,
+    CanonicalMetric,
+    Currency,
+    Industry,
+    Scale,
+    default_business_class,
+)
 
 # --- names -----------------------------------------------------------------------------------
 
@@ -857,6 +864,8 @@ def qualifier(code: str, key: str) -> str | None:
 def applies(definition: KPIDefinition, family: SectorFamily) -> bool:
     if definition.family == UNIVERSAL:
         return True
+    if family == SectorFamily.UNKNOWN:
+        return False  # an unresolved business uses no sector-specific KPI definition
     if definition.family == INDUSTRIAL:
         return family not in (SectorFamily.FINANCIAL, SectorFamily.IT_SERVICES)
     return definition.family == family.value
@@ -978,33 +987,32 @@ _FAMILY_NAMES: dict[str, SectorFamily] = {
 }
 
 
-def sector_family(industry: Industry, classification: list[str]) -> tuple[SectorFamily, str]:
+def sector_family(
+    industry: Industry, classification: list[str], business_class: BusinessClass | None = None
+) -> tuple[SectorFamily, str]:
+    """A refinement of Box 4's ONE business classification, never a second guess: a
+    financial class is FINANCIAL; an unresolved class is UNKNOWN (never a profile family or
+    GENERAL); only a GENERAL company is refined by its Box 1B classification names."""
+    business_class = business_class or default_business_class(industry)
     if industry in (Industry.BANK, Industry.NBFC, Industry.INSURANCE):
         return SectorFamily.FINANCIAL, f"Box 4 industry {industry.value}"
+    if business_class == BusinessClass.FINANCIAL:
+        return SectorFamily.FINANCIAL, "Box 4: financial business, subtype unresolved"
+    if industry != Industry.GENERAL:
+        return SectorFamily.UNKNOWN, "Box 4 business classification unresolved"
     found = {
         (name, _FAMILY_NAMES[name.lower().strip()])
         for name in classification
         if name.lower().strip() in _FAMILY_NAMES
     }
-    families = {f for _, f in found}
-    if industry == Industry.UNKNOWN:
-        # UNKNOWN is also used when older callers provide no Screener financial
-        # evidence. Preserve profile-derived sector handling; a finance profile
-        # remains restricted even when Box 4 could not resolve the subtype.
-        financial_profile = " ".join(classification)
-        if re.search(
-            r"\b(?:financial|bank|insurance|insurer|nbfc|housing finance|lending)\b",
-            financial_profile,
-            re.I,
-        ):
-            return SectorFamily.FINANCIAL, "unresolved financial Box 1B classification"
+    families = {f for _, f in found} - {SectorFamily.FINANCIAL}
     if len(families) == 1:
         family = families.pop()
         names = sorted(n for n, f in found if f == family)
         return family, f"Box 1B classification {names[0]!r}"
     if len(families) > 1:
         return SectorFamily.GENERAL, "Box 1B classification names disagree"
-    return SectorFamily.GENERAL, "no registered classification name"
+    return SectorFamily.GENERAL, "Box 4 industry GENERAL; no registered classification name"
 
 
 # --- business evidence ------------------------------------------------------------------------

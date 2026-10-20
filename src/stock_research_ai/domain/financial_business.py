@@ -8,10 +8,11 @@ This is deliberately not a general sector taxonomy or a regulatory classificatio
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
-from stock_research_ai.domain.financial_canonical import Industry
+from stock_research_ai.domain.financial_canonical import BusinessClass, Industry
 
-CLASSIFICATION_VERSION = "financial-business/1"
+CLASSIFICATION_VERSION = "financial-business/2"
 FINANCIAL_INDUSTRIES = frozenset({Industry.BANK, Industry.NBFC, Industry.INSURANCE})
 RESTRICTED_INDUSTRIES = FINANCIAL_INDUSTRIES | {Industry.UNKNOWN}
 
@@ -71,16 +72,33 @@ def has_business_evidence(
     ))
 
 
-def classify_business(
+@dataclass(frozen=True)
+class BusinessClassification:
+    """THE business classification of one research run: Industry (the subtype) and its
+    coarse BusinessClass, decided together from the same evidence, with the reason."""
+
+    industry: Industry
+    business_class: BusinessClass
+    reason: str
+
+
+def _decided(industry: Industry, business_class: BusinessClass, reason: str
+             ) -> BusinessClassification:
+    return BusinessClassification(industry, business_class, f"{CLASSIFICATION_VERSION}: {reason}")
+
+
+def classify(
     classifications: Sequence[str] = (), *, description: str = "", labels: Sequence[str] = ()
-) -> Industry:
+) -> BusinessClassification:
     """Exact structured labels, corroborated descriptions, then conservative signatures.
 
     Descriptions alone cannot grant sector-specific treatment. In particular, software
     suppliers mentioning banking customers are not banks. Contradictory evidence never
     chooses a winner. Financing profit / ordinary deposits do not distinguish an NBFC
-    (including a deposit-taking HFC) from a bank.
+    (including a deposit-taking HFC) from a bank. Financial evidence whose subtype stays
+    unresolved is Industry UNKNOWN with BusinessClass FINANCIAL - never GENERAL.
     """
+    F, N, U = BusinessClass.FINANCIAL, BusinessClass.NON_FINANCIAL, BusinessClass.UNKNOWN
     names = {_key(n) for n in classifications}
     rows = {_key(n) for n in labels}
     text = _key(description)
@@ -100,14 +118,15 @@ def classify_business(
         if rows & _PREMIUM:
             found.add(Industry.INSURANCE)
     if len(found) > 1:
-        return Industry.UNKNOWN
+        kinds = "/".join(sorted(i.value for i in found))
+        return _decided(Industry.UNKNOWN, F, f"conflicting financial types {kinds}")
     if found:
         result = next(iter(found))
         if result != Industry.INSURANCE and rows & _PREMIUM:
-            return Industry.UNKNOWN
-        return result
+            return _decided(Industry.UNKNOWN, F, f"{result.value} evidence with premium rows")
+        return _decided(result, F, f"{result.value} classification evidence")
     if any(_FINANCIAL.search(n) for n in names) or rows & _FINANCIAL_ROWS:
-        return Industry.UNKNOWN
+        return _decided(Industry.UNKNOWN, F, "financial evidence, subtype unresolved")
     # An industrial statement signature may corroborate a manufacturing/services label,
     # but an explicit financial self-description must never fall through to GENERAL.
     if (nbfc or re.search(r"\b(?:insurance company|insurer|financial services|"
@@ -117,15 +136,38 @@ def classify_business(
                          r"(?:finance|financing|lending|banking|insurance) "
                          r"(?:activities|operations))\b",
                          text)):
-        return Industry.UNKNOWN
+        return _decided(Industry.UNKNOWN, F, "financial self-description, subtype unresolved")
     if rows & {"sales", "revenue", "revenue from operations"} and rows & {
         "operating profit", "ebitda", "inventory", "inventories", "cost of goods sold"
     }:
-        return Industry.GENERAL
+        return _decided(Industry.GENERAL, N, "industrial statement signature")
     if names & {"manufacturing", "information technology", "it software", "it services",
                 "technology", "software", "services"}:
-        return Industry.GENERAL
-    return Industry.UNKNOWN
+        return _decided(Industry.GENERAL, N, "non-financial classification label")
+    return _decided(Industry.UNKNOWN, U, "no usable business-model evidence")
+
+
+def classify_business(
+    classifications: Sequence[str] = (), *, description: str = "", labels: Sequence[str] = ()
+) -> Industry:
+    """The Industry (subtype) of `classify` - the same decision, not a separate rule."""
+    return classify(classifications, description=description, labels=labels).industry
+
+
+def combine(decisions: Sequence[BusinessClassification]) -> BusinessClassification:
+    """Several acquired datasets of ONE company (e.g. consolidated + standalone pages): one
+    decision. Disagreeing subtypes are UNKNOWN; the class survives only if all agree."""
+    if not decisions:
+        return _decided(Industry.UNKNOWN, BusinessClass.UNKNOWN, "no acquired dataset")
+    industries = {d.industry for d in decisions}
+    classes = {d.business_class for d in decisions}
+    if len(industries) == 1 and len(classes) == 1:
+        return decisions[0]
+    if classes == {BusinessClass.FINANCIAL}:
+        return _decided(Industry.UNKNOWN, BusinessClass.FINANCIAL,
+                        "acquired datasets disagree on the financial subtype")
+    return _decided(Industry.UNKNOWN, BusinessClass.UNKNOWN,
+                    "acquired datasets disagree on the business class")
 
 
 def reported_metric_applicable(industry: Industry, metric: str) -> bool:

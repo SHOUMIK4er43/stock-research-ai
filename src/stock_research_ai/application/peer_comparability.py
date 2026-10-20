@@ -59,7 +59,9 @@ def assess(
     target_family, _ = target.family()
     add(
         Dimension.SECTOR_FAMILY,
-        C.COMPARABLE
+        C.UNKNOWN
+        if "UNKNOWN" in (candidate.sector_family, target_family)
+        else C.COMPARABLE
         if candidate.sector_family == target_family
         else C.NOT_COMPARABLE
         if candidate.sector_family

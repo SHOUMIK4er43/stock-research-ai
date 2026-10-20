@@ -26,6 +26,8 @@ from stock_research_ai.domain.industry_intelligence import (
 from stock_research_ai.domain.management_intelligence import ManagementIntelligenceDataset
 from stock_research_ai.domain.screener_dataset import DetailedScreenerDataset
 
+UNRESOLVED = "UNKNOWN"  # SectorFamily.UNKNOWN: Box 4 business class unresolved
+
 
 @dataclass(frozen=True)
 class CompanyLayers:
@@ -63,10 +65,10 @@ class CompanyLayers:
             return self.box7.sector.value, "Box 7 sector family"
         names = list(self.levels().values())
         if self.box4 is not None:
-            family, reason = sector_family(self.box4.industry, names)
+            family, reason = sector_family(self.box4.industry, names, self.box4.classification)
             return family.value, reason
-        if names:
-            family, reason = sector_family(Industry.GENERAL, names)
+        if names:  # no Box 4 classification: unresolved, never assumed GENERAL
+            family, reason = sector_family(Industry.UNKNOWN, names)
             return family.value, reason + " (no Box 4 industry)"
         return None, "no classification"
 
@@ -114,6 +116,8 @@ def _eligibility(
         )
     if mine.get("Broad Sector") != theirs.get("Broad Sector"):
         return Eligibility.EXCLUDED, reasons, ["DIFFERENT_BROAD_SECTOR"], industry, family, "HIGH"
+    if UNRESOLVED in (target_family, family):  # an unresolved class establishes no match
+        return Eligibility.UNKNOWN, reasons, ["SECTOR_FAMILY_UNRESOLVED"], industry, family, "LOW"
     if target_family is not None and family is not None and target_family != family:
         return Eligibility.EXCLUDED, reasons, ["SECTOR_FAMILY_DIFFERS"], industry, family, "HIGH"
     if (

@@ -1292,8 +1292,11 @@ def test_registry_aliases_are_explicit_and_sector_aware():
         "ORDER_BOOK"
     )
     assert registry.match_kpi("large deal tcv", it, None).definition.code == "LARGE_DEAL_TCV"
-    assert registry.match_kpi("casa", bank, KPIUnit.PERCENT).definition.code == "CASA_RATIO"
-    assert registry.match_kpi("casa", bank, KPIUnit.MONEY).definition.code == "CASA_DEPOSITS"
+    # bank-only KPIs need Box 4 industry BANK (bank=True), not merely the FINANCIAL family
+    assert registry.match_kpi("casa", bank, KPIUnit.PERCENT, True).definition.code == "CASA_RATIO"
+    assert registry.match_kpi("casa", bank, KPIUnit.MONEY, True).definition.code == (
+        "CASA_DEPOSITS")
+    assert registry.match_kpi("casa", bank, KPIUnit.PERCENT).reason == "SECTOR_NOT_APPLICABLE"
     assert registry.match_kpi("widget velocity index", it, None).reason == "UNKNOWN_KPI"
     assert registry.read_unit("(Dollars in millions)").currency == Currency.USD
     assert registry.read_unit("MTPA").unit == KPIUnit.MTPA

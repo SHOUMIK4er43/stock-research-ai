@@ -167,7 +167,8 @@ def test_no_industrial_values_flags_or_claims_reach_boxes13_to15(industry):
     b5 = build_financial_analytics(b4, generated_at=NOW)
     d = run(pair=(b4, b5))
     for s in d.signals:
-        if len(RULES[s.code].sectors) == 1:
+        # industrial (NON_FINANCIAL-only) rules; FINANCIAL-only lender rules may evaluate
+        if tuple(g.value for g in RULES[s.code].sectors) == ("NON_FINANCIAL",):
             assert s.status.value == "UNSUPPORTED_SECTOR_RULE"
             assert s.severity is None and s.value is None
     for m in (*d.financial_forensics.metrics, *d.earnings_quality.adjusted):

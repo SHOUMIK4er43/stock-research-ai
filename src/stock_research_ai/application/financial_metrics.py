@@ -25,6 +25,7 @@ from uuid import UUID, uuid5
 from stock_research_ai.application.financial_formulas import (
     DUPONT_TOLERANCE_PP,
     FORMULAS,
+    NON_BANK_FINANCIAL,
     Refused,
     Result,
     average,
@@ -464,9 +465,11 @@ class Engine:
             "formula_id": formula_id,
             "formula_text": expression,
         }
+        lender = code in NON_BANK_FINANCIAL
         if not sector_applies(self.sector, definition.sectors) or (
-            definition.sectors == (Sector.FINANCIAL,) and self.industry != Industry.BANK
-        ):
+            definition.sectors == (Sector.FINANCIAL,) and not lender
+            and self.industry != Industry.BANK
+        ) or (lender and self.industry == Industry.BANK):
             metric = CalculatedMetric(
                 **common,
                 status=S.UNSUPPORTED_SECTOR,
@@ -1179,6 +1182,24 @@ def annual_metrics(e: Engine, end: date) -> None:
     e.ratio_metric(
         "EQUITY_TO_ASSETS", p, ("equity", equity), ("assets", assets), positive_denominator=True
     )
+
+    # non-bank financial (lender): the period-end / average balances of the SAME canonical
+    # borrowings line, the reported finance cost and the reported TOTAL_INCOME only
+    borrowings, borrowings_open = g([M.TOTAL_BORROWINGS], b), g([M.TOTAL_BORROWINGS], bp)
+    finance_cost, total_income = g([M.FINANCE_COST], p), g([M.TOTAL_INCOME], p)
+    e.ratio_metric("BORROWINGS_TO_EQUITY", p, ("borrowings", borrowings), ("equity", equity),
+                   scale=1, positive_denominator=True)
+    e.difference("BORROWINGS_TO_EQUITY_CHANGE_YOY", e.got("BORROWINGS_TO_EQUITY", p),
+                 e.got("BORROWINGS_TO_EQUITY", pp), p, pp)
+    e.yoy("BORROWINGS_GROWTH_YOY", borrowings, borrowings_open, p, pp)
+    e.averaged_ratio("COST_OF_BORROWINGS", p, ("finance_cost", finance_cost), "borrowings",
+                     borrowings, borrowings_open)
+    e.ratio_metric("FINANCE_COST_TO_TOTAL_INCOME", p, ("finance_cost", finance_cost),
+                   ("total_income", total_income), positive_denominator=True)
+    e.ratio_metric("PAT_TO_TOTAL_INCOME", p, ("pat", pat), ("total_income", total_income),
+                   positive_denominator=True)
+    e.difference("ASSETS_VS_EQUITY_GROWTH", e.got("TOTAL_ASSETS_GROWTH_YOY", p),
+                 e.got("EQUITY_GROWTH_YOY", p), p, pp)
 
     # liquidity (as at the fiscal year end)
     current_assets = g([M.TOTAL_CURRENT_ASSETS], b)

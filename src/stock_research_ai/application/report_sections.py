@@ -947,6 +947,31 @@ CASH_BALANCE: tuple[Spec, ...] = (
     ("INTEREST_COVERAGE", "Interest coverage", "B5", ("INTEREST_COVERAGE",), "FY"),
 )
 
+#: non-bank financial (lender) analytics, shown only when Box 4's class is FINANCIAL and the
+#: company is not a bank; every value is a Box 4 fact or a Box 5 calculation (no Box 14 maths)
+LENDER: tuple[Spec, ...] = (
+    ("TOTAL_INCOME", "Total income", "B4", ("TOTAL_INCOME",), "FY"),
+    ("FINANCE_COST", "Finance cost", "B4", ("FINANCE_COST",), "FY"),
+    ("TOTAL_BORROWINGS", "Total borrowings", "B4", ("TOTAL_BORROWINGS",), "POINT_IN_TIME"),
+    ("BORROWINGS_GROWTH_YOY", "Borrowings growth (YoY)", "B5", ("BORROWINGS_GROWTH_YOY",),
+     "FY"),
+    ("BORROWINGS_TO_EQUITY", "Borrowings / equity", "B5", ("BORROWINGS_TO_EQUITY",), "FY"),
+    ("COST_OF_BORROWINGS", "Finance cost / average borrowings", "B5",
+     ("COST_OF_BORROWINGS",), "FY"),
+    ("FINANCE_COST_TO_TOTAL_INCOME", "Finance cost / total income", "B5",
+     ("FINANCE_COST_TO_TOTAL_INCOME",), "FY"),
+    ("PAT_TO_TOTAL_INCOME", "PAT / total income", "B5", ("PAT_TO_TOTAL_INCOME",), "FY"),
+    ("ROA", "ROA", "B5", ("ROA",), "FY"),
+    ("ROE", "ROE", "B5", ("ROE",), "FY"),
+    ("EQUITY_TO_ASSETS", "Equity / assets", "B5", ("EQUITY_TO_ASSETS",), "FY"),
+    ("ASSETS_VS_EQUITY_GROWTH", "Asset growth less equity growth", "B5",
+     ("ASSETS_VS_EQUITY_GROWTH",), "FY"),
+)
+
+
+def lender(ctx: Ctx) -> bool:
+    return ctx.box4.classification.value == "FINANCIAL" and ctx.box4.industry.value != "BANK"
+
 
 def periods(ctx: Ctx, basis: ClaimBasis, period_type: str) -> list[date]:
     return sorted({v.period.period_end for v in ctx.box4.canonical_values
@@ -1065,6 +1090,10 @@ def cash_balance(ctx: Ctx) -> None:
     years = periods(ctx, ctx.analytical, "FY")
     series_table(ctx, sec, "CASH_FLOW_BALANCE_SHEET", "Cash conversion, working capital and "
                  "balance sheet", ctx.analytical, CASH_BALANCE, years[-5:], "FY")
+    if lender(ctx):
+        series_table(ctx, sec, "LENDER_ANALYTICS", "Lender analytics (non-bank financial; "
+                     "Box 5 calculations on Box 4 facts)", ctx.analytical, LENDER, years[-5:],
+                     "FY")
     for m in ctx.box13.earnings_quality.derived:
         if m.code.startswith("CUMULATIVE_"):
             ctx.forensic(m, sec)

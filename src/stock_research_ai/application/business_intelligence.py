@@ -81,7 +81,11 @@ from stock_research_ai.domain.business_intelligence import (
 )
 from stock_research_ai.domain.document_intelligence import EvidenceBundle
 from stock_research_ai.domain.evidence import AUTHORITY_RANK, EvidenceCatalogue, SourceAuthority
-from stock_research_ai.domain.financial_canonical import CanonicalFinancialDataset, Confidence
+from stock_research_ai.domain.financial_canonical import (
+    CanonicalFinancialDataset,
+    Confidence,
+    Industry,
+)
 from stock_research_ai.domain.screener_dataset import DetailedScreenerDataset
 
 
@@ -145,6 +149,7 @@ def build_business_intelligence(
         fy_end=box4.fiscal_year_end_month,
         catalogue=catalogue or EvidenceCatalogue.model_construct(documents=()),
         limits=bounds,
+        bank=box4.industry == Industry.BANK,
     )
     if bundle is not None and catalogue is not None:
         extractor.run(bundle)

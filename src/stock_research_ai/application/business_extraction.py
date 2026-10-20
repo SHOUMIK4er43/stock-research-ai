@@ -251,9 +251,11 @@ class Extractor:
         fy_end: int | None,
         catalogue: EvidenceCatalogue,
         limits: BusinessLimits,
+        bank: bool = False,  # Box 4 industry BANK: bank-only KPI definitions apply
     ) -> None:
         self.company_key = company_key
         self.family = family
+        self.bank = bank
         self.fy_end = fy_end
         self.urls = {d.document_id: str(d.source_url) for d in catalogue.documents}
         self.limits = limits
@@ -1151,13 +1153,13 @@ class Extractor:
             unit = parts.unit
             if unit is None and (parts.percent_sign or all(t.endswith("%") for t in row.tokens)):
                 unit = UnitReading(KPIUnit.PERCENT, Scale.ONES, None, "%")
-            match = match_kpi(parts.key, self.family, unit.unit if unit else None)
+            match = match_kpi(parts.key, self.family, unit.unit if unit else None, self.bank)
             if unit is None and ctx.unit is not None:
                 # a table caption ('Rs. in crore') types only the rows it can apply to
                 accepts = match.definition is None or ctx.unit.unit in match.definition.units
                 if accepts:
                     unit = ctx.unit
-                    match = match_kpi(parts.key, self.family, unit.unit)
+                    match = match_kpi(parts.key, self.family, unit.unit, self.bank)
             candidates.append(Candidate(index, row, scope_geo, scope_segment, parts, unit, match))
         mapped = {
             (c.match.definition.code, qualifier(c.match.definition.code, c.parts.key))

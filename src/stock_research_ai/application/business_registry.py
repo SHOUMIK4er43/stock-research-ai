@@ -861,9 +861,17 @@ def qualifier(code: str, key: str) -> str | None:
     return None
 
 
-def applies(definition: KPIDefinition, family: SectorFamily) -> bool:
+#: bank-only KPI definitions: a FINANCIAL company needs Box 4 industry BANK for these;
+#: a non-bank or unresolved-subtype financial company gets the general lender KPIs only
+BANK_ONLY_KPIS = frozenset({"DEPOSITS", "CASA_DEPOSITS", "CASA_RATIO", "ADVANCES",
+                            "CET1_RATIO", "ATMS"})
+
+
+def applies(definition: KPIDefinition, family: SectorFamily, bank: bool = False) -> bool:
     if definition.family == UNIVERSAL:
         return True
+    if definition.code in BANK_ONLY_KPIS and not bank:
+        return False
     if family == SectorFamily.UNKNOWN:
         return False  # an unresolved business uses no sector-specific KPI definition
     if definition.family == INDUSTRIAL:
@@ -883,7 +891,8 @@ class KPIMatch:
     reason: str  # MAPPED / UNKNOWN_KPI / SECTOR_NOT_APPLICABLE / ALIAS_AMBIGUOUS
 
 
-def match_kpi(key: str, family: SectorFamily, unit: KPIUnit | None) -> KPIMatch:
+def match_kpi(key: str, family: SectorFamily, unit: KPIUnit | None, bank: bool = False
+              ) -> KPIMatch:
     """Exact alias lookup, sector aware. One alias may serve several sectors
     ('utilisation' is billable utilization for IT, never plant utilization)."""
     found = _BY_ALIAS.get(key, [])
@@ -891,7 +900,7 @@ def match_kpi(key: str, family: SectorFamily, unit: KPIUnit | None) -> KPIMatch:
         found = [kpi_definition("CLIENTS_BY_REVENUE_BAND")]
     if not found:
         return KPIMatch(None, "UNKNOWN_KPI")
-    usable = [d for d in found if applies(d, family)]
+    usable = [d for d in found if applies(d, family, bank)]
     if not usable:
         return KPIMatch(None, "SECTOR_NOT_APPLICABLE")
     if len(usable) > 1 and unit is not None:

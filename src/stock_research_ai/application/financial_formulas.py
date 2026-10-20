@@ -34,6 +34,14 @@ DAYS_IN_FISCAL_YEAR = 365
 DUPONT_TOLERANCE_PP = Decimal("0.01")
 
 
+#: lender / general-financial formulas: Box 4 class FINANCIAL (NBFC, insurer, or a financial
+#: business whose subtype is unresolved) and NOT a bank, whose funding is deposits, not
+#: borrowings; industrial (GENERAL) and UNKNOWN-class companies are not applicable
+NON_BANK_FINANCIAL: set[str] = set()
+NON_BANK_NOTE = ("FINANCIAL class, not BANK (bank funding is deposits); industrial and "
+                 "UNKNOWN classes are not applicable. ")
+
+
 # --- pure arithmetic ------------------------------------------------------------------------
 
 
@@ -139,8 +147,13 @@ def _f(
     sectors: tuple[Sector, ...] = GENERAL,
     variants: tuple[tuple[str, str], ...] = (),
     notes: str = "",
+    non_bank_financial: bool = False,
 ) -> None:
     assert code not in FORMULAS, code
+    if non_bank_financial:
+        NON_BANK_FINANCIAL.add(code)
+        sectors = (Sector.FINANCIAL,)
+        notes = NON_BANK_NOTE + notes
     FORMULAS[code] = FormulaDefinition(
         formula_id=f"{code}/2",
         code=code,
@@ -155,7 +168,7 @@ def _f(
         sectors=sectors,
         variants=tuple(FormulaVariant(name=n, expression=e) for n, e in variants),
         notes=("BANK only; other financial businesses and UNKNOWN are not applicable. "
-               if sectors == (Sector.FINANCIAL,) else "") + notes,
+               if sectors == (Sector.FINANCIAL,) and not non_bank_financial else "") + notes,
     )
 
 
@@ -1258,3 +1271,33 @@ for _code, _name in (("GROSS_NPA_RATIO", "Gross NPA ratio"), ("NET_NPA_RATIO", "
 
 def formula(code: str) -> FormulaDefinition:
     return FORMULAS[code]
+
+
+# --- non-bank financial (lender) analytics: canonical inputs only, no KPI inference --------
+_f("BORROWINGS_TO_EQUITY", "Borrowings / equity (lender leverage)", C.LEVERAGE, U.TIMES,
+   "total borrowings / shareholders' equity (both at the period end)",
+   ("TOTAL_BORROWINGS", "SHAREHOLDERS_EQUITY"), non_bank_financial=True,
+   notes="Box 4 TOTAL_BORROWINGS as reported, not the industrial gross-debt construction")
+_f("BORROWINGS_TO_EQUITY_CHANGE_YOY", "Borrowings / equity change (YoY)", C.LEVERAGE,
+   U.TIMES, "borrowings / equity - borrowings / equity one year earlier",
+   ("BORROWINGS_TO_EQUITY", "BORROWINGS_TO_EQUITY prior"), non_bank_financial=True)
+_f("BORROWINGS_GROWTH_YOY", "Borrowings growth (YoY)", C.GROWTH, U.PERCENT,
+   "(borrowings / borrowings one year earlier - 1) x 100",
+   ("TOTAL_BORROWINGS", "TOTAL_BORROWINGS one year earlier"), non_bank_financial=True,
+   notes="the base must be > 0; the same canonical metric at both endpoints")
+_f("COST_OF_BORROWINGS", "Finance cost / average borrowings", C.LEVERAGE, U.PERCENT,
+   "finance cost / average(opening, closing total borrowings) x 100",
+   ("FINANCE_COST", "TOTAL_BORROWINGS opening", "TOTAL_BORROWINGS closing"),
+   non_bank_financial=True,
+   notes="a cost-of-borrowings proxy (finance cost may include non-borrowing interest); "
+   "needs both the opening and the closing balance")
+_f("FINANCE_COST_TO_TOTAL_INCOME", "Finance cost / total income", C.PROFITABILITY,
+   U.PERCENT, "finance cost / total income x 100", ("FINANCE_COST", "TOTAL_INCOME"),
+   non_bank_financial=True, notes="TOTAL_INCOME as reported (never revenue substituted)")
+_f("PAT_TO_TOTAL_INCOME", "PAT / total income", C.PROFITABILITY, U.PERCENT,
+   "PAT / total income x 100", ("PAT", "TOTAL_INCOME"), non_bank_financial=True,
+   notes="TOTAL_INCOME as reported (never revenue substituted)")
+_f("ASSETS_VS_EQUITY_GROWTH", "Asset growth less equity growth", C.LEVERAGE,
+   U.PERCENTAGE_POINTS, "total assets growth (YoY) - equity growth (YoY)",
+   ("TOTAL_ASSETS_GROWTH_YOY", "EQUITY_GROWTH_YOY"), non_bank_financial=True,
+   notes="positive: the balance sheet grows faster than equity (rising leverage)")

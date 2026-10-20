@@ -288,6 +288,22 @@ _rule("MANAGEMENT_CHURN", "CEO / CFO / auditor turnover", C.MANAGEMENT,
 # further company-risk rules
 _rule("NEGATIVE_EQUITY", "Negative net worth", C.LEVERAGE, ("Box 5 SHAREHOLDERS_EQUITY",),
       "shareholders' equity < 0", "all sectors", ALL, (T(R, "LT", 0),), "MONEY", L.HIGH)
+# non-bank financial (lender) trends: persistence, never a level threshold; BANK and every
+# non-financial class are not applicable (their funding / leverage are different concepts)
+LENDER = (G.FINANCIAL,)
+_TWO_YEARS = (T(Y, "GE", 2, "deteriorated in both of the last 2 fiscal years"),)
+_rule("RISING_LENDER_LEVERAGE", "Rising lender leverage", C.LEVERAGE,
+      ("Box 5 BORROWINGS_TO_EQUITY_CHANGE_YOY (latest FY and the FY before)",),
+      "count(borrowings / equity rose YoY) over the last 2 fiscal years",
+      "non-bank financial; both years needed", LENDER, _TWO_YEARS, "COUNT", L.MEDIUM)
+_rule("BALANCE_SHEET_OUTGROWING_EQUITY", "Balance sheet outgrowing equity", C.LEVERAGE,
+      ("Box 5 ASSETS_VS_EQUITY_GROWTH (latest FY and the FY before)",),
+      "count(total-asset growth > equity growth) over the last 2 fiscal years",
+      "non-bank financial; both years needed", LENDER, _TWO_YEARS, "COUNT", L.MEDIUM)
+_rule("RISING_COST_OF_BORROWINGS", "Rising cost of borrowings", C.LEVERAGE,
+      ("Box 5 COST_OF_BORROWINGS (latest FY and the 2 FY before it)",),
+      "count(finance cost / average borrowings rose YoY) over the last 2 fiscal years",
+      "non-bank financial; all 3 years needed", LENDER, _TWO_YEARS, "COUNT", L.MEDIUM)
 _rule("EXCHANGE_PENALTIES", "Exchange / regulator penalties", C.REGULATORY,
       ("Box 12 EXCHANGE_PENALTY events", "PenaltyInput (cited)", "Box 4 PAT"),
       "count(penalty events in the last 3 years); RED when a stated penalty >= 1 % of PAT",

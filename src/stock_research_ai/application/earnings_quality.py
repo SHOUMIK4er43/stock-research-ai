@@ -68,6 +68,7 @@ from stock_research_ai.domain.financial_analytics import (
 from stock_research_ai.domain.financial_canonical import (
     CanonicalMetric,
     FinancialPeriod,
+    Industry,
     ReportingBasis,
 )
 
@@ -933,11 +934,64 @@ ACCOUNTING_RULES = (
     ("RECURRING_EXCEPTIONALS", recurring_exceptionals),
     ("GOODWILL_HEAVY", goodwill_heavy),
 )
+def _rose_twice(ctx: Ctx, code: str, metric: str, end: date, unit: str, *, changes: bool
+                ) -> Ev:
+    """Lender trend rules: the SAME Box 5 metric in consecutive fiscal years (a change
+    metric > 0, or a level that rose), counted over the last 2 years; any missing year is
+    UNAVAILABLE, never a clean reading. BANK is not applicable (deposit funding)."""
+    if ctx.box4.industry == Industry.BANK:
+        return unavailable(basis_of(ctx.analytical), "BANK_NOT_APPLICABLE",
+                           status=S.NOT_APPLICABLE)
+    years = (end, shift(end, -12)) if changes else (end, shift(end, -12), shift(end, -24))
+    calcs = [box5_metric(ctx, metric, fy(ctx, y), unit) for y in years]
+    missing = next((c for c in calcs if not c.ok or c.value is None), None)
+    if missing is not None:
+        return _single(ctx, code, missing)
+    values = [c.value for c in calcs]
+    assert all(v is not None for v in values)
+    if changes:
+        rises = sum(1 for v in values if v is not None and v > 0)
+    else:
+        rises = sum(1 for a, b in zip(values, values[1:], strict=False)
+                    if a is not None and b is not None and a > b)
+    shown = ", ".join(str(v) for v in reversed(values))
+    return _single(ctx, code, Calc(
+        "AVAILABLE", D(rises), None, fy(ctx, end), combine(*calcs),
+        calculation=f"{metric} (oldest first) {shown}: rose in {rises} of the last 2 FY"))
+
+
+def rising_lender_leverage(ctx: Ctx, end: date) -> Ev:
+    return _rose_twice(ctx, "RISING_LENDER_LEVERAGE", "BORROWINGS_TO_EQUITY_CHANGE_YOY", end,
+                       "TIMES", changes=True)
+
+
+def balance_sheet_outgrowing_equity(ctx: Ctx, end: date) -> Ev:
+    return _rose_twice(ctx, "BALANCE_SHEET_OUTGROWING_EQUITY", "ASSETS_VS_EQUITY_GROWTH", end,
+                       "PERCENTAGE_POINTS", changes=True)
+
+
+def rising_cost_of_borrowings(ctx: Ctx, end: date) -> Ev:
+    return _rose_twice(ctx, "RISING_COST_OF_BORROWINGS", "COST_OF_BORROWINGS", end, "PERCENT",
+                       changes=False)
+
+
+#: lender trend rules: evaluated only for a non-bank FINANCIAL company (Box 4's class)
+LENDER_RULES = frozenset({"RISING_LENDER_LEVERAGE", "BALANCE_SHEET_OUTGROWING_EQUITY",
+                          "RISING_COST_OF_BORROWINGS"})
+
+
+def lender_company(ctx: Ctx) -> bool:
+    return ctx.gate.value == "FINANCIAL" and ctx.box4.industry != Industry.BANK
+
+
 LEVERAGE_RULES = (
     ("LEVERAGE", leverage),
     ("WEAK_INTEREST_COVER", weak_interest_cover),
     ("REFINANCING_RISK", refinancing_risk),
     ("NEGATIVE_EQUITY", negative_equity),
+    ("RISING_LENDER_LEVERAGE", rising_lender_leverage),
+    ("BALANCE_SHEET_OUTGROWING_EQUITY", balance_sheet_outgrowing_equity),
+    ("RISING_COST_OF_BORROWINGS", rising_cost_of_borrowings),
 )
 
 
@@ -945,6 +999,8 @@ def run_rules(ctx: Ctx, rules: Sequence[tuple[str, Callable[[Ctx, date], Ev]]],
               end: date | None) -> list[UUID]:
     ids: list[UUID] = []
     for code, fn in rules:
+        if code in LENDER_RULES and not lender_company(ctx):
+            continue  # not part of a bank's or a non-financial company's rule set
         if not ctx.applies(code):
             ids.append(ctx.emit(code, unavailable(basis_of(ctx.analytical),
                                                   "UNSUPPORTED_SECTOR_RULE",

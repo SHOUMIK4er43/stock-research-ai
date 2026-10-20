@@ -89,6 +89,12 @@ BENCHMARK_METRICS: tuple[BenchmarkMetric, ...] = (
     _m("COST_TO_INCOME", "FINANCIAL", L, "EFFICIENCY"),
     _m("GROSS_NPA_RATIO", "FINANCIAL", L, "ASSET_QUALITY"),
     _m("NET_NPA_RATIO", "FINANCIAL", L, "ASSET_QUALITY"),
+    # non-bank financial (lender) analytics: Box 5 computes them for non-bank FINANCIAL
+    # companies only, so a bank peer is NOT_CALCULATED, never another metric substituted
+    _m("BORROWINGS_TO_EQUITY", "FINANCIAL", N, "LEVERAGE"),
+    _m("COST_OF_BORROWINGS", "FINANCIAL", L, "LEVERAGE"),
+    _m("PAT_TO_TOTAL_INCOME", "FINANCIAL", H, "PROFITABILITY"),
+    _m("BORROWINGS_GROWTH_YOY", "FINANCIAL", N, "GROWTH"),
     # absolute size: shown, never ranked
     _m("REVENUE_FROM_OPERATIONS", "NON_FINANCIAL", N, "SCALE", layer="BOX4", money=True),
     _m("PAT", "ALL", N, "SCALE", layer="BOX4", money=True),

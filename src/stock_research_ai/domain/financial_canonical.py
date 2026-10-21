@@ -220,8 +220,13 @@ class CanonicalMetric(StrEnum):
     DPS = "DPS"
     # Balance sheet
     EQUITY_SHARE_CAPITAL = "EQUITY_SHARE_CAPITAL"
-    OTHER_EQUITY = "OTHER_EQUITY"
-    RESERVES = "RESERVES"
+    OTHER_EQUITY = "OTHER_EQUITY"  # Ind AS 'Other equity' as reported (never a hybrid line)
+    #: equity-classified instruments other than ordinary shares, reported as their own line
+    #: ('Instruments entirely equity in nature': e.g. perpetual debt with discretionary coupons
+    #: and no redemption obligation). Equity under Ind AS 32, but a claim senior to ordinary
+    #: shareholders - never part of ordinary (common) book equity.
+    HYBRID_EQUITY_INSTRUMENTS = "HYBRID_EQUITY_INSTRUMENTS"
+    RESERVES = "RESERVES"  # a provider's 'Reserves': total equity less share capital
     TOTAL_EQUITY = "TOTAL_EQUITY"
     LONG_TERM_BORROWINGS = "LONG_TERM_BORROWINGS"
     SHORT_TERM_BORROWINGS = "SHORT_TERM_BORROWINGS"

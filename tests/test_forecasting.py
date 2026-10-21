@@ -67,7 +67,7 @@ M = CanonicalMetric
 B = ReportingBasis
 L = ForecastLine
 #: the NON_FINANCIAL (industrial) model's lines; the lender model's own lines are separate
-LENDER_ONLY = {L.TOTAL_ASSETS, L.EQUITY, L.NON_EQUITY_FUNDING, L.TOTAL_BORROWINGS,
+LENDER_ONLY = {L.TOTAL_ASSETS, L.COMMON_EQUITY, L.NON_EQUITY_FUNDING, L.TOTAL_BORROWINGS,
                L.TOTAL_INCOME}
 INDUSTRIAL_LINES = [line for line in L if line not in LENDER_ONLY]
 D = Driver

@@ -79,14 +79,14 @@ class ValuationMethod(StrEnum):
     PE = "PE"  # equity value = attributable PAT x P/E
     EV_EBITDA = "EV_EBITDA"  # enterprise value = operating EBITDA x EV/EBITDA
     EV_EBIT = "EV_EBIT"  # enterprise value = operating EBIT x EV/EBIT
-    PB = "PB"  # equity value = owners' book equity x P/B (NON_BANK_FINANCIAL lender model)
+    PB = "PB"  # equity value = ordinary book equity x P/B (NON_BANK_FINANCIAL lender model)
 
 
 DCF_METHODS = (ValuationMethod.DCF_FCFF_GORDON, ValuationMethod.DCF_FCFF_EXIT_MULTIPLE)
 MULTIPLE_METHODS = (ValuationMethod.PE, ValuationMethod.EV_EBITDA, ValuationMethod.EV_EBIT)
 #: the industrial default (unchanged); P/B is the lender model's, never a default here
 DEFAULT_METHODS = (*DCF_METHODS, *MULTIPLE_METHODS)
-#: NON_BANK_FINANCIAL: equity methods only (owners' book equity, owners' PAT)
+#: NON_BANK_FINANCIAL: equity methods only (ordinary book equity, owners' PAT)
 LENDER_METHODS = (ValuationMethod.PB, ValuationMethod.PE)
 
 

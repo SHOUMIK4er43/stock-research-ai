@@ -102,8 +102,9 @@ class Driver(StrEnum):
     # NON_BANK_FINANCIAL (lender) model: balance-sheet driven, Box 4 canonical facts only
     ASSET_GROWTH = "ASSET_GROWTH"  # total assets % year on year
     ROA = "ROA"  # PAT / average total assets %
-    EQUITY_CHANGE_TO_PAT = "EQUITY_CHANGE_TO_PAT"  # (equity - prior equity) / PAT %
-    BORROWINGS_SHARE_OF_FUNDING = "BORROWINGS_SHARE_OF_FUNDING"  # borrowings / (assets - equity) %
+    EQUITY_CHANGE_TO_PAT = "EQUITY_CHANGE_TO_PAT"  # (ordinary equity - prior) / PAT %
+    #: borrowings / (assets - ordinary equity) %
+    BORROWINGS_SHARE_OF_FUNDING = "BORROWINGS_SHARE_OF_FUNDING"
     COST_OF_BORROWINGS = "COST_OF_BORROWINGS"  # finance cost / average borrowings % (a proxy)
     TOTAL_INCOME_TO_AVERAGE_ASSETS = "TOTAL_INCOME_TO_AVERAGE_ASSETS"  # total income / avg assets %
 
@@ -216,8 +217,10 @@ class ForecastLine(StrEnum):
     FCF_ESTIMATE = "FCF_ESTIMATE"
     # NON_BANK_FINANCIAL (lender) model lines
     TOTAL_ASSETS = "TOTAL_ASSETS"
-    EQUITY = "EQUITY"  # book equity (Box 5 SHAREHOLDERS_EQUITY precedence)
-    NON_EQUITY_FUNDING = "NON_EQUITY_FUNDING"  # total assets - equity (borrowings + others)
+    #: ORDINARY shareholders' book equity (Box 5 COMMON_EQUITY): never hybrid instruments
+    COMMON_EQUITY = "COMMON_EQUITY"
+    #: total assets - ordinary equity (borrowings + other liabilities + hybrid equity)
+    NON_EQUITY_FUNDING = "NON_EQUITY_FUNDING"
     TOTAL_BORROWINGS = "TOTAL_BORROWINGS"
     TOTAL_INCOME = "TOTAL_INCOME"
 

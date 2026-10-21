@@ -316,24 +316,26 @@ _formula(
     lambda v: v["ROA"] / HUNDRED * (v["PRIOR_TOTAL_ASSETS"] + v["TOTAL_ASSETS"]) / 2,
 )
 _formula(
-    "EQUITY/1/EQUITY_CHANGE_TO_PAT",
-    L.EQUITY,
-    "prior equity + PAT x historical (equity change / PAT) / 100 (retention, dividends, "
-    "capital raised and OCI as one observed relationship)",
-    ("PRIOR_EQUITY", "PAT", "EQUITY_CHANGE_TO_PAT"),
-    lambda v: v["PRIOR_EQUITY"] + v["PAT"] * v["EQUITY_CHANGE_TO_PAT"] / HUNDRED,
+    "COMMON_EQUITY/1/EQUITY_CHANGE_TO_PAT",
+    L.COMMON_EQUITY,
+    "prior ordinary equity + PAT x historical (ordinary equity change / PAT) / 100 "
+    "(retention, dividends, ordinary capital raised and OCI as one observed relationship; "
+    "hybrid instruments are never grown with earnings)",
+    ("PRIOR_COMMON_EQUITY", "PAT", "EQUITY_CHANGE_TO_PAT"),
+    lambda v: v["PRIOR_COMMON_EQUITY"] + v["PAT"] * v["EQUITY_CHANGE_TO_PAT"] / HUNDRED,
 )
 _formula(
     "NON_EQUITY_FUNDING/1",
     L.NON_EQUITY_FUNDING,
-    "total assets - shareholders' equity (the funding identity; borrowings + other liabilities)",
-    ("TOTAL_ASSETS", "EQUITY"),
-    lambda v: v["TOTAL_ASSETS"] - v["EQUITY"],
+    "total assets - ordinary equity (the funding identity: borrowings + other liabilities + "
+    "any equity-classified hybrid instruments, which rank senior to ordinary equity)",
+    ("TOTAL_ASSETS", "COMMON_EQUITY"),
+    lambda v: v["TOTAL_ASSETS"] - v["COMMON_EQUITY"],
 )
 _formula(
     "TOTAL_BORROWINGS/1/SHARE_OF_FUNDING",
     L.TOTAL_BORROWINGS,
-    "non-equity funding x historical borrowings share of non-equity funding / 100",
+    "non-ordinary-equity funding x historical borrowings share of it / 100",
     ("NON_EQUITY_FUNDING", "BORROWINGS_SHARE_OF_FUNDING"),
     lambda v: v["NON_EQUITY_FUNDING"] * v["BORROWINGS_SHARE_OF_FUNDING"] / HUNDRED,
 )
@@ -364,19 +366,25 @@ ACTUAL_COMPOSITES = {
         L.GROSS_DEBT,
         "long-term + short-term borrowings (as Box 5 GROSS_DEBT/COMPONENTS)",
     ),
-    "ACTUAL_EQUITY/1/CAPITAL_PLUS_RESERVES": (
-        L.EQUITY,
-        "equity share capital + reserves (as Box 5 SHAREHOLDERS_EQUITY/CAPITAL_PLUS_RESERVES)",
+    "ACTUAL_COMMON_EQUITY/1/CAPITAL_PLUS_RESERVES_LESS_HYBRID": (
+        L.COMMON_EQUITY,
+        "equity share capital + reserves - equity-classified hybrid instruments (as Box 5 "
+        "COMMON_EQUITY: the ordinary shareholders' claim)",
     ),
-    "ACTUAL_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY": (
-        L.EQUITY,
-        "equity share capital + other equity (as Box 5, no reserves line reported)",
+    "ACTUAL_COMMON_EQUITY/1/CAPITAL_PLUS_RESERVES": (
+        L.COMMON_EQUITY,
+        "equity share capital + reserves, the filing showing no hybrid instrument at that date "
+        "(as Box 5 COMMON_EQUITY)",
+    ),
+    "ACTUAL_COMMON_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY": (
+        L.COMMON_EQUITY,
+        "equity share capital + other equity, any hybrid line excluded (as Box 5 COMMON_EQUITY)",
     ),
 }
 #: Box 10 lines per forecast model (the key line decides a scenario's completeness)
-LENDER_LINES = (L.TOTAL_ASSETS, L.PAT, L.EQUITY, L.NON_EQUITY_FUNDING,
+LENDER_LINES = (L.TOTAL_ASSETS, L.PAT, L.COMMON_EQUITY, L.NON_EQUITY_FUNDING,
                 L.TOTAL_BORROWINGS, L.FINANCE_COST, L.TOTAL_INCOME)
-LENDER_ANCHORS = frozenset({L.TOTAL_ASSETS, L.EQUITY, L.TOTAL_BORROWINGS, L.PAT,
+LENDER_ANCHORS = frozenset({L.TOTAL_ASSETS, L.COMMON_EQUITY, L.TOTAL_BORROWINGS, L.PAT,
                             L.FINANCE_COST, L.TOTAL_INCOME})
 LENDER_DRIVERS = frozenset({D.ASSET_GROWTH, D.ROA, D.EQUITY_CHANGE_TO_PAT,
                             D.BORROWINGS_SHARE_OF_FUNDING, D.COST_OF_BORROWINGS,
@@ -400,10 +408,16 @@ POLICIES: tuple[tuple[str, str], ...] = (
     ("FORECAST_MODEL", "chosen from Box 4's business classification: GENERAL -> NON_FINANCIAL; "
      "BANK -> BANK; FINANCIAL class (not a bank) -> NON_BANK_FINANCIAL; else UNKNOWN"),
     ("RESTRICTED_MODELS", "BANK and UNKNOWN: revenue only; no industrial or lender line"),
-    ("LENDER_MODEL", "NON_BANK_FINANCIAL: total assets -> PAT (ROA on average assets) -> equity "
-     "-> non-equity funding (assets - equity) -> borrowings (share of funding) -> finance cost "
+    ("LENDER_MODEL", "NON_BANK_FINANCIAL: total assets -> PAT (ROA on average assets) -> "
+     "ordinary equity -> non-equity funding (assets - ordinary equity) -> borrowings (share of "
+     "funding) -> finance cost "
      "(cost-of-borrowings proxy on average borrowings); total income on average assets. No "
      "EBITDA, working capital, capex, revenue or gross-debt driver"),
+    ("LENDER_COMMON_EQUITY", "the equity line is ORDINARY shareholders' equity (Box 5 "
+     "COMMON_EQUITY): equity-classified hybrid instruments rank senior to it, are never grown "
+     "with earnings and sit in non-equity funding; ordinary equity at a date needs primary "
+     "evidence of the hybrid amount (a provider's reserves cannot show it), else the equity "
+     "chain is unavailable"),
     ("LENDER_GROWTH", "asset growth: CAGR (BASE), highest / lowest YoY in the window (BULL / "
      "BEAR), as revenue growth"),
     ("LENDER_PROFITABILITY", "ROA: median (BASE), highest / lowest (BULL / BEAR) in the window"),
@@ -495,24 +509,43 @@ class History:
             )
         return reported
 
-    def equity(self, end: date) -> Fact | Missing:
-        """Shareholders' equity with Box 5's own precedence: share capital + reserves (else
-        + other equity), else total equity as reported."""
+    def common_equity(self, end: date) -> Fact | Missing:
+        """ORDINARY (common) shareholders' equity - Box 5 COMMON_EQUITY's own rule: share
+        capital + reserves (a provider aggregate that contains any hybrid equity) less the
+        equity-classified hybrid instruments at that date, or share capital + other equity
+        (its separately presented hybrid sibling excluded). Unavailable without primary evidence
+        of the hybrid amount at that date; never total equity as reported (it may carry
+        non-controlling interests and hybrids)."""
         capital = self.balance([M.EQUITY_SHARE_CAPITAL], end)
+        if isinstance(capital, Missing):
+            return capital
+        hybrid = self._role(self.frame.hybrid(self.periods.pit(end)), "balance")
+        if isinstance(hybrid, Missing):
+            return hybrid
         reserves = self.balance([M.RESERVES], end)
-        formula = "ACTUAL_EQUITY/1/CAPITAL_PLUS_RESERVES"
-        if isinstance(reserves, Missing):
-            reserves = self.balance([M.OTHER_EQUITY], end)
-            formula = "ACTUAL_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY"
-        if isinstance(capital, Fact) and isinstance(reserves, Fact):
-            return Fact(
-                value=capital.value + reserves.value,
-                inputs=capital.inputs + reserves.inputs,
-                confidence=weakest([capital.confidence, reserves.confidence]),
-                warnings=capital.warnings + reserves.warnings,
-                formula_id=formula,
-            )
-        return self.balance([M.TOTAL_EQUITY], end)
+        if isinstance(reserves, Fact):
+            facts: tuple[Fact, ...]
+            if hybrid.inputs:  # the provider's reserves contain the reported hybrid amount
+                facts = (capital, reserves, hybrid)
+                value = capital.value + reserves.value - hybrid.value
+                formula = "ACTUAL_COMMON_EQUITY/1/CAPITAL_PLUS_RESERVES_LESS_HYBRID"
+            else:  # a filing nil or a filing balance sheet without the line: a warning
+                facts = (capital, reserves)
+                value = capital.value + reserves.value
+                formula = "ACTUAL_COMMON_EQUITY/1/CAPITAL_PLUS_RESERVES"
+        else:
+            other = self.balance([M.OTHER_EQUITY], end)
+            if isinstance(other, Missing):
+                return other
+            facts, value = (capital, other), capital.value + other.value
+            formula = "ACTUAL_COMMON_EQUITY/1/CAPITAL_PLUS_OTHER_EQUITY"
+        return Fact(
+            value=value,
+            inputs=tuple(i for f in facts for i in f.inputs),
+            confidence=weakest([f.confidence for f in (*facts, hybrid)]),
+            warnings=tuple(w for f in (*facts, hybrid) for w in f.warnings),
+            formula_id=formula,
+        )
 
     def trade_working_capital(self, end: date) -> Fact | Missing:
         parts = [
@@ -1265,11 +1298,11 @@ def project(
             pat = emit(L.PAT, "PAT/1/ROA_ON_AVERAGE_ASSETS", [
                 ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)), ("TOTAL_ASSETS", assets),
                 ("ROA", a(D.ROA))])
-            equity = emit(L.EQUITY, "EQUITY/1/EQUITY_CHANGE_TO_PAT", [
-                ("PRIOR_EQUITY", prior.get(L.EQUITY)), ("PAT", pat),
+            equity = emit(L.COMMON_EQUITY, "COMMON_EQUITY/1/EQUITY_CHANGE_TO_PAT", [
+                ("PRIOR_COMMON_EQUITY", prior.get(L.COMMON_EQUITY)), ("PAT", pat),
                 ("EQUITY_CHANGE_TO_PAT", a(D.EQUITY_CHANGE_TO_PAT))])
             funding = emit(L.NON_EQUITY_FUNDING, "NON_EQUITY_FUNDING/1", [
-                ("TOTAL_ASSETS", assets), ("EQUITY", equity)])
+                ("TOTAL_ASSETS", assets), ("COMMON_EQUITY", equity)])
             borrowings = emit(L.TOTAL_BORROWINGS, "TOTAL_BORROWINGS/1/SHARE_OF_FUNDING", [
                 ("NON_EQUITY_FUNDING", funding),
                 ("BORROWINGS_SHARE_OF_FUNDING", a(D.BORROWINGS_SHARE_OF_FUNDING))])
@@ -2249,8 +2282,8 @@ def lender_anchors(box4_hash: str, basis: ReportingBasis, currency: Currency, hi
     return {
         L.TOTAL_ASSETS: _anchor(box4_hash, basis, currency, L.TOTAL_ASSETS, pit,
                                 history.balance([M.TOTAL_ASSETS], end)),
-        L.EQUITY: _anchor(box4_hash, basis, currency, L.EQUITY, pit,
-                                       history.equity(end)),
+        L.COMMON_EQUITY: _anchor(box4_hash, basis, currency, L.COMMON_EQUITY, pit,
+                                 history.common_equity(end)),
         L.TOTAL_BORROWINGS: _anchor(box4_hash, basis, currency, L.TOTAL_BORROWINGS, pit,
                                     history.balance([M.TOTAL_BORROWINGS], end)),
         L.PAT: _anchor(box4_hash, basis, currency, L.PAT, latest, history.flow([M.PAT], end)),
@@ -2284,11 +2317,11 @@ def _derive_lender(history: History, derive: Deriver,
                         Callable[[date], Fact | Missing], str, bool], ...] = (
         (D.ROA, pat, average(assets), "average total assets", True),
         (D.EQUITY_CHANGE_TO_PAT,
-         lambda e: _combined(history.equity(e), history.equity(shift(e, -12)),
+         lambda e: _combined(history.common_equity(e), history.common_equity(shift(e, -12)),
                              lambda a, b: a - b), pat, "PAT", False),
         (D.BORROWINGS_SHARE_OF_FUNDING, borrowings,
-         lambda e: _combined(assets(e), history.equity(e), lambda a, b: a - b),
-         "total assets - equity", False),
+         lambda e: _combined(assets(e), history.common_equity(e), lambda a, b: a - b),
+         "total assets - ordinary equity", False),
         (D.COST_OF_BORROWINGS, finance, average(borrowings), "average borrowings", False),
         (D.TOTAL_INCOME_TO_AVERAGE_ASSETS, income, average(assets), "average total assets",
          False),

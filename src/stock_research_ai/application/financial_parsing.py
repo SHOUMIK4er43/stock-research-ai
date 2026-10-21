@@ -645,6 +645,7 @@ _BS: dict[str, CanonicalMetric] = {
     "total assets": M.TOTAL_ASSETS,
     "equity share capital": M.EQUITY_SHARE_CAPITAL,
     "other equity": M.OTHER_EQUITY,
+    "instruments entirely equity in nature": M.HYBRID_EQUITY_INSTRUMENTS,
     "total equity": M.TOTAL_EQUITY,
     "total current liabilities": M.TOTAL_CURRENT_LIABILITIES,
     "total non-current liabilities": M.TOTAL_NON_CURRENT_LIABILITIES,

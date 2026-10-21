@@ -60,10 +60,12 @@ from stock_research_ai.domain.financial_canonical import (
     Currency,
     FinancialPeriod,
     Industry,
+    NumberStatus,
     Outcome,
     PeriodType,
     ReconciliationRecord,
     ReportingBasis,
+    SourceType,
     ValueKind,
     default_business_class,
 )
@@ -97,6 +99,9 @@ REVENUE = (M.REVENUE_FROM_OPERATIONS, M.REVENUE)
 #: one member for every period, never revenue from operations for some years and a
 #: reported / provider 'Revenue' for others
 SINGLE_CONCEPT_GROUPS = frozenset({REVENUE})
+#: a primary balance sheet's equity lines: their presence without a hybrid line at that date is
+#: the filing's own evidence that no equity-classified hybrid instrument was outstanding
+FILING_EQUITY_LINES = frozenset({M.EQUITY_SHARE_CAPITAL, M.OTHER_EQUITY, M.TOTAL_EQUITY})
 EPS = (M.EPS, M.DILUTED_EPS, M.BASIC_EPS)
 FIXED = (M.PROPERTY_PLANT_EQUIPMENT, M.FIXED_ASSETS)
 AGGREGATOR_RANK = AUTHORITY_RANK[SourceAuthority.SECONDARY_AGGREGATOR]
@@ -257,6 +262,22 @@ class Frame:
             and r.selected_observation_id is None
             and r.currency in (currency, Currency.UNKNOWN)
         }
+        # equity-classified hybrid instruments at a date on this basis: a filing's explicit nil
+        # ('-' / 'Nil') on their own line, or a primary balance sheet presenting equity with no
+        # such line, is evidence of none; a provider's 'Reserves' can never show them
+        hybrid = [o for o in data.observations if o.metric == M.HYBRID_EQUITY_INSTRUMENTS
+                  and o.reporting_basis == basis]
+        listed = {o.period.key() for o in hybrid}
+        numeric = {o.period.key() for o in hybrid if o.parsed.value is not None}
+        self.hybrid_nil = {
+            o.period.key() for o in hybrid if o.source.source_type == SourceType.FILING
+            and o.parsed.status in (NumberStatus.NIL, NumberStatus.DASH)
+        } - numeric  # a nil never overrides an amount reported for the same date
+        self.filing_equity_without_hybrid = {
+            o.period.key() for o in data.observations
+            if o.reporting_basis == basis and o.source.source_type == SourceType.FILING
+            and o.metric in FILING_EQUITY_LINES and o.parsed.value is not None
+        } - listed
 
     def periods(self, period_type: PeriodType) -> list[date]:
         ends = {
@@ -309,6 +330,28 @@ class Frame:
         if key not in self.period_keys:
             return Missing(S.INSUFFICIENT_HISTORY, f"{what} (period not in the data)")
         return Missing(S.INPUT_MISSING, f"{what} (not reported)")
+
+    def hybrid(self, period: FinancialPeriod) -> Got:
+        """Equity-classified hybrid instruments at a balance date: the reported amount; 0 only
+        on primary evidence of none - a filing nil on their own line (HYBRID_NIL_REPORTED) or a
+        filing balance sheet presenting equity without such a line (NO_HYBRID_LINE_REPORTED);
+        otherwise MISSING - ordinary equity is then unknown, never assumed."""
+        got = self.get([M.HYBRID_EQUITY_INSTRUMENTS], period)
+        if isinstance(got, Fact):
+            return got
+        key = period.key()
+        if key in self.hybrid_nil:
+            return Fact(Decimal(0), (), Confidence.HIGH, ("HYBRID_NIL_REPORTED",))
+        if got.status not in (S.INPUT_MISSING, S.INSUFFICIENT_HISTORY):
+            return got  # rejected, conflicting or low-confidence: never assumed nil
+        if key in self.filing_equity_without_hybrid:
+            return Fact(Decimal(0), (), Confidence.HIGH, ("NO_HYBRID_LINE_REPORTED",))
+        return Missing(
+            S.INPUT_MISSING,
+            f"{got.what}: no primary balance sheet shows the equity-classified hybrid "
+            "instruments at this date (a provider's reserves may contain them), so ordinary "
+            "equity is unknown",
+        )
 
     def _fact(self, value: CanonicalFinancialValue) -> Got:
         if value.confidence == Confidence.LOW:
@@ -796,13 +839,35 @@ def base_flow_metrics(e: Engine, p: FinancialPeriod) -> None:
 def base_balance_metrics(e: Engine, b: FinancialPeriod) -> None:
     g = e.canonical
     share_capital, reserves = g([M.EQUITY_SHARE_CAPITAL], b), g([M.RESERVES, M.OTHER_EQUITY], b)
+    hybrid = e.frame.hybrid(b)
     if isinstance(share_capital, Fact) and isinstance(reserves, Fact):
+        separate = (
+            reserves.inputs[0].metric == M.OTHER_EQUITY and isinstance(hybrid, Fact)
+            and bool(hybrid.inputs)
+        )
+        if separate:  # Ind AS other equity + its separately presented hybrid line
+            e.emit(
+                "SHAREHOLDERS_EQUITY",
+                b,
+                [("share_capital", share_capital), ("hybrid", hybrid), ("reserves", reserves)],
+                lambda v: v["share_capital"] + v["hybrid"] + v["reserves"],
+                variant="CAPITAL_PLUS_HYBRID_PLUS_OTHER_EQUITY",
+            )
+        else:
+            e.emit(
+                "SHAREHOLDERS_EQUITY",
+                b,
+                [("share_capital", share_capital), ("reserves", reserves)],
+                lambda v: v["share_capital"] + v["reserves"],
+                variant="CAPITAL_PLUS_RESERVES",
+            )
+        # ordinary shareholders' claim: accounting equity less the senior hybrid claim
         e.emit(
-            "SHAREHOLDERS_EQUITY",
+            "COMMON_EQUITY",
             b,
-            [("share_capital", share_capital), ("reserves", reserves)],
-            lambda v: v["share_capital"] + v["reserves"],
-            variant="CAPITAL_PLUS_RESERVES",
+            [("equity", e.got("SHAREHOLDERS_EQUITY", b)), ("hybrid", hybrid)],
+            lambda v: v["equity"] - v["hybrid"],
+            variant="LESS_HYBRID",
         )
     else:
         e.emit(
@@ -811,6 +876,17 @@ def base_balance_metrics(e: Engine, b: FinancialPeriod) -> None:
             [("total_equity", g([M.TOTAL_EQUITY], b))],
             lambda v: v["total_equity"],
             variant="TOTAL_EQUITY",
+        )
+        e.emit(
+            "COMMON_EQUITY",
+            b,
+            [("owners_ordinary_equity", Missing(
+                S.INPUT_MISSING,
+                f"EQUITY_SHARE_CAPITAL + RESERVES/OTHER_EQUITY @ {b.label} (total equity as "
+                "reported may include non-controlling interests and hybrid instruments)",
+            ))],
+            lambda v: v["owners_ordinary_equity"],
+            variant="LESS_HYBRID",
         )
     debt = first_available(g([M.TOTAL_DEBT], b), g([M.TOTAL_BORROWINGS], b))
     if isinstance(debt, Fact):
@@ -932,6 +1008,28 @@ def pair(
     return now, e.canonical(source, prior)
 
 
+def owners_pat(e: Engine, p: FinancialPeriod, equity: Got) -> Got:
+    """The PAT that pairs with the owners' equity claim: PAT attributable to owners when
+    reported; total PAT when no non-controlling interest is reported (or the equity is total
+    equity as reported, which carries NCI); otherwise unavailable - total PAT never pairs with
+    the narrower owners' equity."""
+    pat = e.canonical([M.PAT], p)
+    if isinstance(equity, Fact) and (equity.formula_id or "").endswith("/TOTAL_EQUITY"):
+        return pat
+    owners = e.canonical([M.PAT_ATTRIBUTABLE_TO_OWNERS], p)
+    if isinstance(owners, Fact):
+        return owners
+    minority = e.canonical([M.MINORITY_INTEREST], p)
+    if isinstance(minority, Fact) and minority.value != 0:
+        return Missing(
+            S.INPUT_MISSING,
+            f"PAT_ATTRIBUTABLE_TO_OWNERS @ {p.label} (PAT includes non-controlling interests; "
+            "owners' equity pairs only with owners' PAT)",
+            minority.inputs,
+        )
+    return pat
+
+
 def annual_metrics(e: Engine, end: date) -> None:
     P = e.periods
     p, pp = P.fy(end), P.fy(shift(end, -12))
@@ -1005,7 +1103,7 @@ def annual_metrics(e: Engine, end: date) -> None:
     pat = g([M.PAT], p)
     assets, assets_open = g([M.TOTAL_ASSETS], b), g([M.TOTAL_ASSETS], bp)
     equity, equity_open = e.got("SHAREHOLDERS_EQUITY", b), e.got("SHAREHOLDERS_EQUITY", bp)
-    e.averaged_ratio("ROE", p, ("pat", pat), "equity", equity, equity_open)
+    e.averaged_ratio("ROE", p, ("pat", owners_pat(e, p, equity)), "equity", equity, equity_open)
     e.averaged_ratio("ROA", p, ("pat", pat), "assets", assets, assets_open)
     e.averaged_ratio(
         "ROCE",

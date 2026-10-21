@@ -25,7 +25,7 @@ from datetime import date, datetime
 from decimal import Decimal, localcontext
 from uuid import UUID, uuid5
 
-from stock_research_ai.application.financial_metrics import Fact
+from stock_research_ai.application.financial_metrics import Fact, Frame, Periods
 from stock_research_ai.application.financial_reconciliation import canonical_dataset_json
 from stock_research_ai.application.forecast_integrity import (
     ForecastIntegrityError,
@@ -37,7 +37,7 @@ from stock_research_ai.application.forecasting import (
     canonical_forecast_json,
     forecast_model,
 )
-from stock_research_ai.domain.financial_analytics import MetricInput
+from stock_research_ai.domain.financial_analytics import AnalyticsLimits, MetricInput
 from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     CanonicalFinancialDataset,
@@ -323,7 +323,8 @@ _formula(
 )
 _formula(
     "EQUITY_VALUE/1/PB",
-    "owners' book equity (Box 10 EQUITY) x P/B (an equity multiple: no bridge)",
+    "ordinary shareholders' book equity (Box 10 COMMON_EQUITY, hybrid equity excluded) x P/B "
+    "(an equity multiple: no bridge)",
     ("METRIC", "MULTIPLE"),
     U.MONEY,
     lambda v, _: v["METRIC"] * v["MULTIPLE"],
@@ -383,11 +384,14 @@ _formula(
 POLICIES: tuple[tuple[str, str], ...] = (
     ("VALUATION_MODEL", "from the Box 10 forecast model: NON_BANK_FINANCIAL -> P/B and P/E on "
      "owners' equity / PAT only (no DCF, EV or bridge); other models -> the existing methods"),
-    ("LENDER_MULTIPLES", "P/B prices Box 10 EQUITY, P/E prices Box 10 PAT - each only its own "
+    ("LENDER_MULTIPLES", "P/B prices Box 10 COMMON_EQUITY, P/E prices Box 10 PAT - each only "
+     "its own "
      "metric; explicit or cited peer-reference multiples only, never a default"),
-    ("LENDER_ATTRIBUTION", "owners only: standalone basis, or consolidated with Box 4 evidence "
-     "(equity from share capital + reserves / other equity; PAT equal to PAT attributable to "
-     "owners); otherwise ATTRIBUTION_UNKNOWN"),
+    ("LENDER_ATTRIBUTION", "the ordinary shares' claim only: P/B needs Box 10 ordinary equity "
+     "(share capital + reserves / other equity less equity-classified hybrid instruments); P/E "
+     "needs PAT attributable to owners (standalone basis, or consolidated equal to Box 4 PAT "
+     "attributable to owners) and no hybrid outstanding (their distributions are not in Box 4); "
+     "otherwise ATTRIBUTION_UNKNOWN"),
     ("LENDER_YEAR", "the multiple's own forecast year (the request's choice), that scenario's "
      "Box 10 value only"),
     ("FORECAST_SOURCE", "every forecast number is a Box 10 value of the same scenario"),
@@ -962,11 +966,14 @@ def _model_problem(forecast: ForecastDataset, box4: CanonicalFinancialDataset | 
 def _attribution(forecast: ForecastDataset, box4: CanonicalFinancialDataset | None
                  ) -> dict[ValuationMethod, str | None]:
     """Whether the lender metrics are OWNERS' figures (else the reason they cannot be)."""
+    equity = next((v for v in forecast.actuals if v.line == L.COMMON_EQUITY), None)
+    ordinary = equity is not None and (equity.formula_id or "").startswith(
+        "ACTUAL_COMMON_EQUITY/1/")
+    pb_reason = None if ordinary else "no Box 10 ordinary equity (hybrid instruments excluded)"
+    hybrid_reason = _hybrid_claim(forecast, box4, equity)
     if forecast.base.reporting_basis == ReportingBasis.STANDALONE:
-        return {VM.PB: None, VM.PE: None}  # a standalone entity has no minority interest
-    equity = next((v for v in forecast.actuals if v.line == L.EQUITY), None)
-    owners_equity = equity is not None and (equity.formula_id or "").startswith(
-        "ACTUAL_EQUITY/1/CAPITAL_PLUS_")
+        # a standalone entity has no minority interest
+        return {VM.PB: pb_reason, VM.PE: hybrid_reason}
     pat_reason: str | None = "consolidated PAT: no Box 4 PAT attributable to owners"
     if box4 is not None and forecast.base.latest_actual is not None:
         period = forecast.base.latest_actual.key()
@@ -978,9 +985,33 @@ def _attribution(forecast: ForecastDataset, box4: CanonicalFinancialDataset | No
         if owners is not None and pat is not None:
             pat_reason = None if owners == pat else (
                 f"consolidated PAT {pat} differs from PAT attributable to owners {owners}")
-    return {VM.PB: None if owners_equity else
-            "consolidated equity not built from share capital + reserves / other equity",
-            VM.PE: pat_reason}
+    if hybrid_reason:
+        pat_reason = f"{pat_reason}; {hybrid_reason}" if pat_reason else hybrid_reason
+    return {VM.PB: pb_reason, VM.PE: pat_reason}
+
+
+def _hybrid_claim(forecast: ForecastDataset, box4: CanonicalFinancialDataset | None,
+                     equity: ForecastValue | None) -> str | None:
+    """None when no equity-classified hybrid instrument is outstanding at the latest balance
+    date (Box 5's own rule); else why PAT is not the ordinary shareholders' profit: Box 4 has no
+    distributions on hybrids, which rank ahead of the ordinary shares."""
+    latest = forecast.base.latest_actual
+    if box4 is not None and latest is not None and latest.period_end is not None:
+        frame = Frame(box4, forecast.base.reporting_basis, forecast.base.currency,
+                      AnalyticsLimits().max_canonical_values)
+        got = frame.hybrid(Periods(box4.fiscal_year_end_month).pit(latest.period_end))
+        outstanding, known = isinstance(got, Fact) and got.value != 0, isinstance(got, Fact)
+    else:  # Box 10's own anchor: ordinary equity is built only when the position is known
+        known = equity is not None and equity.value is not None
+        outstanding = equity is not None and any(
+            c.metric == CanonicalMetric.HYBRID_EQUITY_INSTRUMENTS and c.value != 0
+            for c in equity.actual_components)
+    if outstanding:
+        return ("equity-classified hybrid instruments outstanding: PAT is before their "
+                "distributions, so profit attributable to ordinary shareholders is unknown")
+    if not known:
+        return "equity-classified hybrid amount unknown at the latest balance date"
+    return None
 
 
 def _value_lender(
@@ -991,9 +1022,10 @@ def _value_lender(
     lines: dict[tuple[ForecastLine, int | None], ForecastValue],
     issues: Issues,
 ) -> tuple[list[ValuationValue], list[MethodResult]]:
-    """NON_BANK_FINANCIAL: equity multiples on owners' figures of THIS scenario only. P/B
-    prices Box 10 EQUITY and P/E prices Box 10 PAT (never another metric); industrial DCF / EV
-    methods are refused; a method without an explicit multiple is unavailable."""
+    """NON_BANK_FINANCIAL: equity multiples on the ordinary shares' figures of THIS scenario
+    only. P/B prices Box 10 COMMON_EQUITY and P/E prices Box 10 PAT (never another metric);
+    industrial DCF / EV methods are refused; a method without an explicit multiple is
+    unavailable."""
     results: list[MethodResult] = []
     attribution = plan.attribution or {}
     for method in plan.methods:
@@ -1016,7 +1048,8 @@ def _value_lender(
                 results.append(_refused(plan, scenario, method, "ATTRIBUTION_UNKNOWN",
                                         (reason,)))
                 continue
-            line, name = (L.EQUITY, "BOOK_EQUITY") if method == VM.PB else (L.PAT, "PAT_OWNERS")
+            line, name = ((L.COMMON_EQUITY, "COMMON_EQUITY") if method == VM.PB
+                          else (L.PAT, "PAT_OWNERS"))
             v = lines.get((line, m.fiscal_year))
             if v is None or v.status != "AVAILABLE" or v.value is None:
                 metric = Src(InputKind.BOX10_FORECAST, v.value_id if v else None, None,

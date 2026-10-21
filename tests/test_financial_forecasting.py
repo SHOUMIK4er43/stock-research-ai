@@ -60,7 +60,7 @@ from stock_research_ai.domain.forecasting import (
 
 NOW = datetime(2026, 10, 18, 6, tzinfo=UTC)
 L, S = ForecastLine, Scenario
-LENDER_LINES = {L.TOTAL_ASSETS, L.PAT, L.EQUITY, L.NON_EQUITY_FUNDING, L.TOTAL_BORROWINGS,
+LENDER_LINES = {L.TOTAL_ASSETS, L.PAT, L.COMMON_EQUITY, L.NON_EQUITY_FUNDING, L.TOTAL_BORROWINGS,
                 L.FINANCE_COST, L.TOTAL_INCOME}
 INDUSTRIAL = {L.EBITDA, L.OPERATING_PROFIT, L.CAPEX, L.TRADE_WORKING_CAPITAL,
               L.WORKING_CAPITAL_CHANGE, L.GROSS_DEBT, L.FCF_ESTIMATE, L.REVENUE}
@@ -167,10 +167,10 @@ def test_i_j_k_balance_sheet_and_profit_relationships_are_coherent(box10_precisi
     roa = assumption(f, Driver.ROA)
     for scenario in (S.BASE, S.BULL, S.BEAR):
         prior_assets = next(v.value for v in f.actuals if v.line == L.TOTAL_ASSETS)
-        prior_equity = next(v.value for v in f.actuals if v.line == L.EQUITY)
+        prior_equity = next(v.value for v in f.actuals if v.line == L.COMMON_EQUITY)
         for year in (2027, 2028, 2029):
             assets, pat = value(f, L.TOTAL_ASSETS, scenario, year), value(f, L.PAT, scenario, year)
-            equity = value(f, L.EQUITY, scenario, year)
+            equity = value(f, L.COMMON_EQUITY, scenario, year)
             funding = value(f, L.NON_EQUITY_FUNDING, scenario, year)
             borrowings = value(f, L.TOTAL_BORROWINGS, scenario, year)
             a = {d: assumption(f, d, scenario, year) for d in (
@@ -281,12 +281,21 @@ def test_r_hudco_exact_lender_forecast(hudco):
     assert (f.base.forecast_model, f.base.reporting_basis) == (
         ForecastModel.NON_BANK_FINANCIAL, B.CONSOLIDATED)
     anchors = {v.line: v.value for v in f.actuals}
+    # ORDINARY equity: capital 2,001.90 + Screener reserves 19,974 (which contain the filing's
+    # 'Instruments entirely equity in nature' 1,442.00, p363 r21) - 1,442.00. Was 21,975.90,
+    # the accounting total incl. the senior perpetual claim (filing Sub Total (B) 21,975.46).
     assert anchors == {L.TOTAL_ASSETS: D(166838), L.TOTAL_BORROWINGS: D(141677),
-                       L.EQUITY: D("21975.90"), L.PAT: D(4034),
+                       L.COMMON_EQUITY: D("20533.90"), L.PAT: D(4034),
                        L.FINANCE_COST: D("8930.69"), L.TOTAL_INCOME: D("13327.13")}
+    # the filing's own ordinary components, 2,001.90 + other equity 18,531.56 = 20,533.46,
+    # agree within Screener's rounding of reserves
+    assert abs(anchors[L.COMMON_EQUITY] - (D("2001.90") + D("18531.56"))) <= D("0.5")
+    # ordinary-equity history exists only where the hybrid amount is evidenced: FY2025 (filing
+    # nil '-') and FY2026, so one change (20,533.90 - 17,967.90) / 4,034 - not the median 57.44
+    # that included the FY2026 perpetual issuance as if it were retained earnings
     expected = {Driver.ASSET_GROWTH: "20.590404", Driver.ROA: "2.427878",
-                Driver.EQUITY_CHANGE_TO_PAT: "57.436802",
-                Driver.BORROWINGS_SHARE_OF_FUNDING: "96.337669",
+                Driver.EQUITY_CHANGE_TO_PAT: "63.609321",
+                Driver.BORROWINGS_SHARE_OF_FUNDING: "96.957006",
                 Driver.COST_OF_BORROWINGS: "7.308845",
                 Driver.TOTAL_INCOME_TO_AVERAGE_ASSETS: "9.175717"}
     for driver, v in expected.items():
@@ -296,12 +305,14 @@ def test_r_hudco_exact_lender_forecast(hudco):
     assert assumption(f, Driver.ROA, S.BULL).value == D("2.731822")  # FY2026 ROA (max)
     assert assumption(f, Driver.ROA, S.BEAR).value == D("2.128072")
     # only two filing years of finance cost / total income: SPARSE, never a guess
-    for driver in (Driver.COST_OF_BORROWINGS, Driver.TOTAL_INCOME_TO_AVERAGE_ASSETS):
+    for driver in (Driver.COST_OF_BORROWINGS, Driver.TOTAL_INCOME_TO_AVERAGE_ASSETS,
+                   Driver.BORROWINGS_SHARE_OF_FUNDING):
         assert assumption(f, driver).completeness.value == "SPARSE"
+    assert assumption(f, Driver.EQUITY_CHANGE_TO_PAT).completeness.value == "SINGLE_POINT"
     base = {line: quantize(value(f, line).value) for line in LENDER_LINES}
     assert base == {L.TOTAL_ASSETS: D("201190.618226"), L.PAT: D("4467.642928"),
-                    L.EQUITY: D("24541.971223"), L.NON_EQUITY_FUNDING: D("176648.647003"),
-                    L.TOTAL_BORROWINGS: D("170179.188843"), L.FINANCE_COST: D("11396.542733"),
+                    L.COMMON_EQUITY: D("23375.737331"), L.NON_EQUITY_FUNDING: D("177814.880894"),
+                    L.TOTAL_BORROWINGS: D("172403.984738"), L.FINANCE_COST: D("11477.846174"),
                     L.TOTAL_INCOME: D("16884.632244")}
     verify_forecast_integrity(f, data)  # Box 10's own arithmetic, rebuilt from Box 4
     valuation = build_valuation(f, box4=data, generated_at=NOW)  # U

@@ -904,6 +904,8 @@ ANNUAL: tuple[Spec, ...] = (
     ("FCF", "Free cash flow", "B5", ("FCF",), "FY"),
     ("TOTAL_ASSETS", "Total assets", "B4", ("TOTAL_ASSETS",), "POINT_IN_TIME"),
     ("EQUITY", "Shareholders' equity", "B5", ("SHAREHOLDERS_EQUITY",), "POINT_IN_TIME"),
+    ("COMMON_EQUITY", "Ordinary shareholders' equity (excl. hybrid equity)", "B5",
+     ("COMMON_EQUITY",), "POINT_IN_TIME"),
     ("GROSS_DEBT", "Gross debt", "B5", ("GROSS_DEBT",), "POINT_IN_TIME"),
     ("CASH", "Cash and equivalents", "B4", ("CASH_AND_CASH_EQUIVALENTS",), "POINT_IN_TIME"),
     ("NET_DEBT", "Net debt", "B5", ("NET_DEBT",), "POINT_IN_TIME"),
@@ -1978,7 +1980,7 @@ def credit(ctx: Ctx) -> None:
 FORECAST_LINES = ("REVENUE", "EBITDA", "OPERATING_PROFIT", "EBIT", "PBT", "PAT",
                   "PAT_ATTRIBUTABLE", "EPS", "CAPEX", "FCF_ESTIMATE", "GROSS_DEBT")
 #: the NON_BANK_FINANCIAL (lender) model's lines, in calculation order
-LENDER_FORECAST_LINES = ("TOTAL_ASSETS", "PAT", "EQUITY", "NON_EQUITY_FUNDING",
+LENDER_FORECAST_LINES = ("TOTAL_ASSETS", "PAT", "COMMON_EQUITY", "NON_EQUITY_FUNDING",
                          "TOTAL_BORROWINGS", "FINANCE_COST", "TOTAL_INCOME")
 
 
@@ -2200,7 +2202,7 @@ def valuation(ctx: Ctx) -> ValuationView:
                                         "FAIR_VALUE_PER_SHARE"))]))
     if lender:
         ctx_table(ctx, sec, "VALUATION_METHODS", "Valuation by method and scenario (Box 11 "
-                  "NON_BANK_FINANCIAL model: P/B and P/E on owners' equity / PAT; never "
+                  "NON_BANK_FINANCIAL model: P/B on ordinary equity, P/E on owners' PAT; never "
                   "blended)", basis_of(v.reporting_basis), [
                       col("STATUS", "Status", ColumnKind.TEXT),
                       col("METRIC", "Priced metric (forecast year)", ColumnKind.TEXT),
@@ -2211,6 +2213,9 @@ def valuation(ctx: Ctx) -> ValuationView:
                       "Valuation model: NON_BANK_FINANCIAL. Multiples are request assumptions "
                       "(explicit or cited peer reference), never source facts or defaults; "
                       "no DCF, EV multiple or enterprise bridge is used for a lender.",
+                      "P/B prices ordinary shareholders' book equity: equity-classified hybrid "
+                      "(perpetual) instruments rank senior to the ordinary shares and are "
+                      "excluded.",
                       "Each method and scenario is shown separately: no blended value, "
                       "midpoint or target is derived."))
     else:

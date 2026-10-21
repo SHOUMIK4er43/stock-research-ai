@@ -1,7 +1,7 @@
 """Box 11 lender valuation: the method follows the company's economic model.
 
 NON_BANK_FINANCIAL forecasts are valued by EQUITY multiples on owners' figures only:
-  P/B  equity value = Box 10 EQUITY (owners' book equity) x P/B
+  P/B  equity value = Box 10 COMMON_EQUITY (ordinary book equity) x P/B
   P/E  equity value = Box 10 PAT (owners' PAT)            x P/E
 Multiples are request assumptions (explicit, or a cited peer reference) - never defaults and
 never source facts. Each multiple prices its own metric, in its own scenario and forecast year.
@@ -111,10 +111,10 @@ def test_a_b_lender_defaults_to_equity_methods_and_refuses_industrial_ones():
 def test_c_f_pb_prices_owners_book_equity_only():
     data, f = lender()
     r = result(value(data, f, multiple(VM.PB, value="1.5")), VM.PB)
-    equity = box10(f, L.EQUITY)
+    equity = box10(f, L.COMMON_EQUITY)
     assert r.status.value == "COMPLETE"
     assert r.equity_value == equity.value * D("1.5")
-    assert (r.multiple.metric, r.multiple.metric_value_id) == ("BOOK_EQUITY", equity.value_id)
+    assert (r.multiple.metric, r.multiple.metric_value_id) == ("COMMON_EQUITY", equity.value_id)
     assert r.multiple.metric_value_id != box10(f, L.PAT).value_id  # F: never PAT
 
 
@@ -124,7 +124,7 @@ def test_d_g_pe_prices_owners_pat_only():
     pat = box10(f, L.PAT)
     assert r.status.value == "COMPLETE" and r.equity_value == pat.value * 10
     assert (r.multiple.metric, r.multiple.metric_value_id) == ("PAT_OWNERS", pat.value_id)
-    assert r.multiple.metric_value_id != box10(f, L.EQUITY).value_id  # G: never equity
+    assert r.multiple.metric_value_id != box10(f, L.COMMON_EQUITY).value_id  # G: never equity
 
 
 def test_consolidated_pe_needs_evidence_that_pat_is_the_owners():
@@ -149,7 +149,7 @@ def test_h_i_j_each_scenario_prices_its_own_forecast():
     v = value(data, f, *(multiple(VM.PB, s, value="2") for s in (S.BASE, S.BULL, S.BEAR)))
     for scenario in (S.BASE, S.BULL, S.BEAR):
         r = result(v, VM.PB, scenario)
-        equity = box10(f, L.EQUITY, scenario)
+        equity = box10(f, L.COMMON_EQUITY, scenario)
         assert r.multiple.metric_value_id == equity.value_id
         assert r.equity_value == equity.value * 2
     assert len({result(v, VM.PB, s).equity_value for s in (S.BASE, S.BULL, S.BEAR)}) == 3
@@ -268,8 +268,10 @@ def test_s_hudco_exact_lender_valuation(hudco):
     assert (f.base.forecast_model, v.reporting_basis) == (ForecastModel.NON_BANK_FINANCIAL,
                                                           B.CONSOLIDATED)
     assert {r.method for r in v.results} == {VM.PB, VM.PE}  # no DCF, no EV multiple
-    expected = {S.BASE: ("24541.971223", "122.593392"), S.BULL: ("25085.116740", "125.306542"),
-                S.BEAR: ("24041.972372", "120.095771")}
+    # P/B prices ORDINARY equity (Box 10 COMMON_EQUITY from 20,533.90, perpetual 1,442 excluded);
+    # before: 24,541.971223 / 25,085.116740 / 24,041.972372 (₹122.59 / 125.31 / 120.10)
+    expected = {S.BASE: ("23375.737331", "116.767757"), S.BULL: ("23977.252672", "119.772480"),
+                S.BEAR: ("22822.005468", "114.001726")}
     for scenario, (equity, per_share) in expected.items():
         r = result(v, VM.PB, scenario)
         assert r.status.value == "COMPLETE"
@@ -278,6 +280,7 @@ def test_s_hudco_exact_lender_valuation(hudco):
         assert r.multiple.source.value == "EXPLICIT"
     pe = result(v, VM.PE)  # no Box 4 PAT attributable to owners for the consolidated basis
     assert (pe.status.value, pe.reason) == ("UNAVAILABLE", "ATTRIBUTION_UNKNOWN")
+    assert "hybrid instruments outstanding" in pe.missing_inputs[0]  # 7.87% perpetual coupons
     for scenario in (S.BULL, S.BEAR):
         assert result(v, VM.PE, scenario).reason == "MULTIPLE_MISSING"
 
@@ -313,7 +316,7 @@ def test_w_report_exposes_model_method_scenario_assumption_and_provenance(lender
                                              "FAIR_VALUE_PER_SHARE"]
     pb = next(r for r in table.rows if r.key == "PB|BASE")
     texts = {c.column: c.text for c in pb.cells if c.text}
-    assert texts["METRIC"] == "BOOK_EQUITY FY2027"
+    assert texts["METRIC"] == "COMMON_EQUITY FY2027"
     assert texts["MULTIPLE"] == "1.5x (explicit: test request assumption)"
     pe = next(r for r in table.rows if r.key == "PE|BASE")
     equity_cell = next(c for c in pe.cells if c.column == "EQUITY_VALUE")

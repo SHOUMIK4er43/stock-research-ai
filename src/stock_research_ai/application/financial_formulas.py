@@ -249,12 +249,37 @@ _f(
     U.MONEY,
     "equity share capital + reserves (or other equity), or total equity",
     ("EQUITY_SHARE_CAPITAL, RESERVES | OTHER_EQUITY | TOTAL_EQUITY",),
+    optional=("HYBRID_EQUITY_INSTRUMENTS",),
     periods=BALANCE,
     sectors=ALL_SECTORS,
     variants=(
         ("CAPITAL_PLUS_RESERVES", "equity share capital + reserves / other equity"),
+        ("CAPITAL_PLUS_HYBRID_PLUS_OTHER_EQUITY",
+         "equity share capital + separately reported hybrid equity instruments + other equity"),
         ("TOTAL_EQUITY", "total equity as reported (may include NCI)"),
     ),
+    notes="ACCOUNTING equity attributable to owners: includes equity-classified hybrid "
+    "(perpetual) instruments, which a provider's 'Reserves' already contains; the claim used by "
+    "net worth, leverage, capital and ROE",
+)
+_f(
+    "COMMON_EQUITY",
+    "Ordinary shareholders' equity",
+    C.BUILDING_BLOCK,
+    U.MONEY,
+    "shareholders' equity - equity-classified hybrid instruments",
+    ("SHAREHOLDERS_EQUITY", "HYBRID_EQUITY_INSTRUMENTS"),
+    periods=BALANCE,
+    sectors=ALL_SECTORS,
+    variants=(
+        ("LESS_HYBRID", "shareholders' equity (capital + reserves / other equity) - hybrid "
+         "equity instruments at the same date and basis"),
+    ),
+    notes="ORDINARY (common) book equity, the claim of the ordinary shares: hybrids rank "
+    "senior to it. Hybrid = 0 only on primary evidence at that date and basis: a filing nil on "
+    "the line, or a filing balance sheet presenting equity without it. A provider's reserves "
+    "alone cannot show hybrids, so no ordinary equity then; never built from total equity "
+    "(may include NCI)",
 )
 _f(
     "GROSS_DEBT",
@@ -558,8 +583,11 @@ _f(
     U.PERCENT,
     "PAT / average equity x 100",
     ("PAT", "SHAREHOLDERS_EQUITY opening", "SHAREHOLDERS_EQUITY closing"),
+    optional=("PAT_ATTRIBUTABLE_TO_OWNERS", "MINORITY_INTEREST"),
     sectors=ALL_SECTORS,
-    notes=_AVG,
+    notes=_AVG + "; the owners' accounting-equity claim (incl. hybrid equity) pairs with "
+    "PAT attributable to owners when reported; total PAT only when no non-controlling "
+    "interest is reported (else unavailable); with total equity as reported, total PAT",
 )
 _f(
     "ROA",

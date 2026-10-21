@@ -5,6 +5,7 @@ the claim type honest (FACT / CALCULATION / MANAGEMENT_STATEMENT / SCENARIO / DA
 and selects a material core layer deterministically; everything else goes to an appendix.
 """
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
@@ -144,6 +145,7 @@ LIMITATION_TEXT = {
     "INSUFFICIENT_GUIDANCE_SAMPLE": "Insufficient completed guidance sample",
     "PROVIDER_UNAVAILABLE": "Provider unavailable",
     "LAYER_NOT_SUPPLIED": "Data unavailable (upstream layer not supplied)",
+    "NO_ELIGIBLE_PEERS": "Peer benchmark unavailable (no eligible comparable peer)",
     "APPENDIX_LIMIT_REACHED": "Appendix limit reached; the upstream ledger holds more entries",
     "CORE_EVENT_LIMIT_REACHED": "Core event limit reached; the excluded events stay in the "
                                 "event ledger appendix",
@@ -854,10 +856,44 @@ def industry(ctx: Ctx) -> None:
                         RowKind.CALCULATION, [cell("COMPANY", ctx.book, target),
                                               cell("PEER_MEDIAN", ctx.book, median)],
                         unit=b.unit))
+    shown = [b for b in sorted(b9.financial_benchmarks, key=lambda x: (x.metric_code, x.period_end))
+             if basis_of(b.reporting_basis) == ctx.analytical]
     ctx_table(ctx, sec, "PEER_BENCHMARKS", "Peer financial benchmarks (Box 9)", ctx.analytical,
-              [col("COMPANY", "Company"), col("PEER_MEDIAN", "Peer median")], rows)
+              [col("COMPANY", "Company"), col("PEER_MEDIAN", "Peer median")], rows,
+              footnotes=peer_eligibility_notes(b9, shown))
+    unavailable = [human(b.metric_code) for b in shown if b.availability == "UNAVAILABLE"]
+    if unavailable:  # a comparability / data limitation, never a company risk
+        ctx.limit(sec, "PEER_BENCHMARKS", "NO_ELIGIBLE_PEERS",
+                  f"{len(unavailable)} of {len(shown)} benchmarks ({', '.join(unavailable)})",
+                  upstream=dataset, basis=ctx.analytical)
     for n in b9.not_applicable_metrics:
         ctx.drafts[sec].notes.append(f"NOT_APPLICABLE_{n.metric_code}"[:80])
+
+
+def peer_eligibility_notes(b9: Any, shown: list[Any]) -> tuple[str, ...]:
+    """A bounded, auditable eligibility summary: the candidate ledger by eligibility and
+    reason, then one line per benchmark (eligible / excluded peers and why)."""
+    states = Counter(c.eligibility.value for c in b9.candidates)
+    reasons = Counter(r for c in b9.candidates for r in c.exclusion_reasons)
+    notes = [
+        f"Peer eligibility (target business model {b9.business_model}): "
+        f"{len(b9.candidates)} candidates - "
+        + (", ".join(f"{k} {n}" for k, n in sorted(states.items())) or "none")
+        + (f"; reasons: {', '.join(f'{k} {n}' for k, n in sorted(reasons.items()))}"
+           if reasons else "")
+        + ". Only COMPARABLE peers (same business model, definition, basis, period end and, "
+        "for money, currency) enter a median or rank; INCLUDED_LIMITED peers enter "
+        "business-model-neutral metrics only."
+    ]
+    for b in shown:
+        why = ", ".join(f"{k} {n}" for k, n in sorted(b.exclusion_counts.items()))
+        if b.availability == "UNAVAILABLE":
+            notes.append(f"{human(b.metric_code).capitalize()}: benchmark unavailable - no "
+                         f"eligible peer ({why or 'no peer observed'}).")
+        else:
+            notes.append(f"{human(b.metric_code).capitalize()}: {b.statistics.peer_count} "
+                         f"eligible, {b.excluded_peers} excluded" + (f" ({why})." if why else "."))
+    return tuple(n[:1000] for n in notes)
 
 
 def industry_text(ctx: Ctx, nature: str, ref: Any, topic: str, statement: str, quote: str,

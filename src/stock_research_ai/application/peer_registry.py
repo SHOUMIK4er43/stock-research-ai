@@ -49,6 +49,16 @@ class BenchmarkMetric:
     directionality: Directionality
     dimension: str  # GROWTH / PROFITABILITY / CAPITAL_EFFICIENCY / ...
     money: bool  # absolute money: comparable only within one currency
+    #: Box 4 business models (peer_selection.business_model) the metric is defined for;
+    #: () = every model of its families
+    models: tuple[str, ...] = ()
+
+    @property
+    def neutral(self) -> bool:
+        """Business-model neutral: registered for ALL families and every business model. A
+        peer whose compatibility is proven only at the business-class level (a financial
+        subtype unresolved, a different Industry) compares on these metrics only."""
+        return self.families == "ALL" and not self.models
 
 
 def _m(
@@ -59,8 +69,18 @@ def _m(
     *,
     layer: str = "BOX5",
     money: bool = False,
+    models: tuple[str, ...] = (),
 ) -> BenchmarkMetric:
-    return BenchmarkMetric(code, layer, families, d, dimension, money)
+    return BenchmarkMetric(code, layer, families, d, dimension, money, models)
+
+
+#: Box 4 business models (one classification: Industry + BusinessClass, as Box 10 reads it)
+BANK_MODEL = "BANK"
+NON_BANK_FINANCIAL_MODEL = "NON_BANK_FINANCIAL"
+NON_FINANCIAL_MODEL = "NON_FINANCIAL"
+UNKNOWN_MODEL = "UNKNOWN"
+#: lender metrics: identical only between non-bank financial (lender) definitions
+LENDER = (NON_BANK_FINANCIAL_MODEL,)
 
 
 BENCHMARK_METRICS: tuple[BenchmarkMetric, ...] = (
@@ -90,11 +110,12 @@ BENCHMARK_METRICS: tuple[BenchmarkMetric, ...] = (
     _m("GROSS_NPA_RATIO", "FINANCIAL", L, "ASSET_QUALITY"),
     _m("NET_NPA_RATIO", "FINANCIAL", L, "ASSET_QUALITY"),
     # non-bank financial (lender) analytics: Box 5 computes them for non-bank FINANCIAL
-    # companies only, so a bank peer is NOT_CALCULATED, never another metric substituted
-    _m("BORROWINGS_TO_EQUITY", "FINANCIAL", N, "LEVERAGE"),
-    _m("COST_OF_BORROWINGS", "FINANCIAL", L, "LEVERAGE"),
-    _m("PAT_TO_TOTAL_INCOME", "FINANCIAL", H, "PROFITABILITY"),
-    _m("BORROWINGS_GROWTH_YOY", "FINANCIAL", N, "GROWTH"),
+    # companies only, so a bank peer is NOT_CALCULATED, never another metric substituted;
+    # a bank target gets no lender benchmark at all
+    _m("BORROWINGS_TO_EQUITY", "FINANCIAL", N, "LEVERAGE", models=LENDER),
+    _m("COST_OF_BORROWINGS", "FINANCIAL", L, "LEVERAGE", models=LENDER),
+    _m("PAT_TO_TOTAL_INCOME", "FINANCIAL", H, "PROFITABILITY", models=LENDER),
+    _m("BORROWINGS_GROWTH_YOY", "FINANCIAL", N, "GROWTH", models=LENDER),
     # absolute size: shown, never ranked
     _m("REVENUE_FROM_OPERATIONS", "NON_FINANCIAL", N, "SCALE", layer="BOX4", money=True),
     _m("PAT", "ALL", N, "SCALE", layer="BOX4", money=True),
@@ -104,7 +125,10 @@ BENCHMARK_METRICS: tuple[BenchmarkMetric, ...] = (
 METRIC_INDEX = {m.code: m for m in BENCHMARK_METRICS}
 
 
-def applies(metric: BenchmarkMetric, family: str) -> bool:
+def applies(metric: BenchmarkMetric, family: str, model: str | None = None) -> bool:
+    """The target's sector family and Box 4 business model admit the metric at all."""
+    if metric.models and model not in metric.models:
+        return False
     if metric.families == "ALL":
         return True
     if family == "UNKNOWN":

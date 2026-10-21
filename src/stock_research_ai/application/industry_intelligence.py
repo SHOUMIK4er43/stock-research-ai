@@ -38,8 +38,14 @@ from stock_research_ai.application.management_intelligence import canonical_mana
 from stock_research_ai.application.peer_comparability import assess
 from stock_research_ai.application.peer_financials import financial_benchmarks, positions
 from stock_research_ai.application.peer_kpis import kpi_benchmarks, segment_comparisons
-from stock_research_ai.application.peer_registry import NS
-from stock_research_ai.application.peer_selection import CompanyLayers, select_peers, symbol_of
+from stock_research_ai.application.peer_registry import METRIC_INDEX, NS
+from stock_research_ai.application.peer_selection import (
+    NEUTRAL_ONLY,
+    CompanyLayers,
+    model_label,
+    select_peers,
+    symbol_of,
+)
 from stock_research_ai.application.screener_dataset import (
     canonical_dataset_json as canonical_screener_json,
 )
@@ -194,11 +200,18 @@ def build_industry_intelligence(
     if not canonical:
         warnings.append(("NO_CANONICAL_PEERS", "no INCLUDED / INCLUDED_LIMITED peer"))
 
+    # INCLUDED_LIMITED peers proven compatible at the business-class level only enter
+    # business-model-neutral metrics only; EXCLUDED / UNKNOWN peers are never observed
+    neutral_only = frozenset(
+        candidates[i].peer_company_key
+        for i in peer_set.limited_ids
+        if NEUTRAL_ONLY & set(candidates[i].exclusion_reasons)
+    )
     financial, blocked, basis_warnings = financial_benchmarks(
-        target, canonical, family, bounds.min_peers_for_rank
+        target, canonical, family, bounds.min_peers_for_rank, neutral_only
     )
     warnings.extend(basis_warnings)
-    kpis = kpi_benchmarks(target, canonical, bounds.min_peers_for_rank)
+    kpis = kpi_benchmarks(target, canonical, bounds.min_peers_for_rank, neutral_only)
     segments = segment_comparisons(target, canonical)
     comparability = [
         assess(
@@ -369,6 +382,7 @@ def build_industry_intelligence(
         sector_family=family,
         classification=target.classification(),
         generated_at=generated_at,
+        business_model=model_label(target.box4),
         sources=tuple(sources),
         limits=bounds,
         status="PARTIAL" if partial else "COMPLETE",
@@ -567,6 +581,21 @@ def verify_industry_provenance(
         }
         if not set(theme.evidence_ids) <= ids:
             problems.append(f"theme {theme.topic}: Box 8 theme missing")
+    # eligibility: only canonical peers' observations, with the target's exact definition
+    # (neutral-only peers on business-model-neutral metrics only), enter a statistic
+    by_key = {c.peer_company_key: c for c in dataset.candidates}
+    for b in dataset.financial_benchmarks:
+        neutral = METRIC_INDEX[b.metric_code].neutral if b.metric_code in METRIC_INDEX else False
+        for o in b.peers:
+            if o.status != ObservationStatus.COMPARABLE:
+                continue
+            seen = by_key.get(o.company_key)
+            if seen is None or seen.eligibility.value not in ("INCLUDED", "INCLUDED_LIMITED"):
+                problems.append(f"benchmark {b.metric_code}: non-canonical peer {o.company_key}")
+            elif not neutral and NEUTRAL_ONLY & set(seen.exclusion_reasons):
+                problems.append(f"benchmark {b.metric_code}: neutral-only peer {o.company_key}")
+            if o.definition != b.definition:
+                problems.append(f"benchmark {b.metric_code}: definition differs {o.company_key}")
     for b in dataset.financial_benchmarks:
         if b.ranking is not None:
             n = sum(1 for o in b.peers if o.status == ObservationStatus.COMPARABLE)

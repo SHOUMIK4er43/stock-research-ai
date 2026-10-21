@@ -17,6 +17,7 @@ from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
+    Field,
     NonNegativeInt,
     PositiveInt,
     StringConstraints,
@@ -92,6 +93,9 @@ class ObservationStatus(StrEnum):
     DEFINITION_MISMATCH = "DEFINITION_MISMATCH"
     MISSING = "MISSING"
     NOT_CALCULATED = "NOT_CALCULATED"  # upstream status other than CALCULATED
+    #: the peer's Box 4 business model is not proven compatible for THIS metric (e.g. a
+    #: financial subtype unresolved on either side: business-model-neutral metrics only)
+    CLASSIFICATION_MISMATCH = "CLASSIFICATION_MISMATCH"
 
 
 class Directionality(StrEnum):
@@ -231,6 +235,8 @@ class PeerCandidate(BaseModel):
     source_classification: tuple[ClassificationRef, ...]  # the peer's own Box 1B levels
     industry: Label | None  # the peer's Box 4 industry
     sector_family: Code | None
+    #: the peer's Box 4 business model (peer_selection.business_model), never a Box 9 guess
+    business_model: Label | None = None
     eligibility: Eligibility
     selection_reasons: tuple[Code, ...]
     exclusion_reasons: tuple[Code, ...]
@@ -302,6 +308,10 @@ class MetricObservation(BaseModel):
     source: EvidenceRef | None
     upstream_ids: tuple[UUID, ...] = ()
     detail: Label | None = None
+    #: the exact metric definition (formula, building-block variants, canonical inputs)
+    definition: Label | None = None
+    #: |peer period end - target period end| in days (0 when ALIGNED)
+    alignment_days: NonNegativeInt | None = None
 
 
 class BenchmarkStatistics(BaseModel):
@@ -342,6 +352,27 @@ class PeerFinancialBenchmark(BaseModel):
     ranking: Ranking | None
     rank_withheld_reason: Label | None
     missing_peers: tuple[Label, ...]
+    #: the target's exact metric definition; only identical peer definitions are COMPARABLE
+    definition: Label | None = None
+    #: every peer observation not COMPARABLE, by status: none of them alters a statistic
+    excluded_peers: NonNegativeInt = 0
+    exclusion_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    #: UNAVAILABLE when no peer is eligible (statistics.peer_count == 0)
+    availability: Literal["AVAILABLE", "UNAVAILABLE"] = "AVAILABLE"
+    unavailable_reason: Label | None = None
+
+    @model_validator(mode="after")
+    def counted(self) -> Self:
+        eligible = sum(1 for o in self.peers if o.status == ObservationStatus.COMPARABLE)
+        if self.statistics.peer_count != eligible:
+            raise ValueError("benchmark statistics are over the COMPARABLE peers only")
+        if self.excluded_peers != len(self.peers) - eligible or sum(
+            self.exclusion_counts.values()
+        ) != self.excluded_peers:
+            raise ValueError("excluded peer counts must match the peer observations")
+        if (self.availability == "AVAILABLE") != (eligible > 0):
+            raise ValueError("a benchmark is AVAILABLE exactly when a peer is eligible")
+        return self
 
 
 class NotApplicableMetric(BaseModel):
@@ -590,6 +621,7 @@ class IndustryIntelligenceDataset(BaseModel):
     sector_family: Code
     classification: tuple[ClassificationRef, ...]
     generated_at: AwareDatetime
+    business_model: Label = "UNKNOWN"  # the target's Box 4 business model
     sources: tuple[UpstreamReference, ...]
     limits: IndustryLimits
     status: Literal["COMPLETE", "PARTIAL"]

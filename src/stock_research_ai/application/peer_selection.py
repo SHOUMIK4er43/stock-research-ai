@@ -2,18 +2,46 @@
 
 Candidates come only from the target's Box 1B Screener peer table (same Screener industry)
 and are enriched by explicit, resolved competitor mentions. Eligibility uses the peer's own
-Box 1B classification, Box 4 industry (regulated model) and Box 7 sector family - never
-market cap, name similarity or a model's opinion. Excluded peers keep their reasons.
+Box 1B classification, Box 4 business model and Box 7 sector family - never market cap, name
+similarity or a model's opinion. Excluded peers keep their reasons.
+
+Box 4 business models (business_model; Box 10's reading of the same classification):
+  BANK                 Industry BANK
+  NON_BANK_FINANCIAL   BusinessClass FINANCIAL, not a bank; subtype NBFC / INSURANCE /
+                       unresolved (Industry UNKNOWN)
+  NON_FINANCIAL        Industry GENERAL (refined by the Box 7 sector family)
+  UNKNOWN              anything else - never silently comparable
+
+  same resolved model (and subtype)          INCLUDED: every metric of the family
+  a non-bank subtype unresolved on a side    INCLUDED_LIMITED (FINANCIAL_SUBTYPE_UNRESOLVED):
+                                             business-model-neutral metrics only
+  BANK vs an unresolved financial subtype    UNKNOWN (FINANCIAL_SUBTYPE_UNRESOLVED): a bank
+                                             compares only with a proven bank
+  BANK vs a resolved non-bank, NBFC vs       EXCLUDED (REGULATED_MODEL_DIFFERS)
+  INSURANCE
+An unresolved subtype never matches another unresolved subtype as 'the same model'.
 """
 
 from dataclasses import dataclass, field
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.business_registry import sector_family
-from stock_research_ai.application.peer_registry import FINANCIAL, NS, RANKING_CRITERIA
+from stock_research_ai.application.peer_registry import (
+    BANK_MODEL,
+    FINANCIAL,
+    NON_BANK_FINANCIAL_MODEL,
+    NON_FINANCIAL_MODEL,
+    NS,
+    RANKING_CRITERIA,
+    UNKNOWN_MODEL,
+)
 from stock_research_ai.domain.business_intelligence import BusinessIntelligenceDataset
 from stock_research_ai.domain.financial_analytics import FinancialAnalyticsDataset
-from stock_research_ai.domain.financial_canonical import CanonicalFinancialDataset, Industry
+from stock_research_ai.domain.financial_canonical import (
+    BusinessClass,
+    CanonicalFinancialDataset,
+    Industry,
+)
 from stock_research_ai.domain.industry_intelligence import (
     SELECTION_VERSION,
     ClassificationRef,
@@ -27,6 +55,32 @@ from stock_research_ai.domain.management_intelligence import ManagementIntellige
 from stock_research_ai.domain.screener_dataset import DetailedScreenerDataset
 
 UNRESOLVED = "UNKNOWN"  # SectorFamily.UNKNOWN: Box 4 business class unresolved
+#: a non-bank financial peer compared at the business-class level only
+SUBTYPE_UNRESOLVED = "FINANCIAL_SUBTYPE_UNRESOLVED"
+#: INCLUDED_LIMITED reasons whose peer enters business-model-neutral metrics only
+NEUTRAL_ONLY = frozenset({SUBTYPE_UNRESOLVED, "DIFFERENT_INDUSTRY"})
+
+
+def business_model(box4: CanonicalFinancialDataset | None) -> tuple[str, str | None]:
+    """(model, non-bank subtype) from Box 4's ONE classification; subtype None = unresolved."""
+    if box4 is None:
+        return UNKNOWN_MODEL, None
+    if box4.industry == Industry.BANK:
+        return BANK_MODEL, None
+    if box4.industry == Industry.GENERAL:
+        return NON_FINANCIAL_MODEL, None
+    if box4.industry in (Industry.NBFC, Industry.INSURANCE):
+        return NON_BANK_FINANCIAL_MODEL, box4.industry.value
+    if box4.classification == BusinessClass.FINANCIAL:  # Industry UNKNOWN: subtype unresolved
+        return NON_BANK_FINANCIAL_MODEL, None
+    return UNKNOWN_MODEL, None
+
+
+def model_label(box4: CanonicalFinancialDataset | None) -> str:
+    model, subtype = business_model(box4)
+    if model == NON_BANK_FINANCIAL_MODEL:
+        return f"{model}/{subtype or 'SUBTYPE_UNRESOLVED'}"
+    return model
 
 
 @dataclass(frozen=True)
@@ -120,23 +174,33 @@ def _eligibility(
         return Eligibility.UNKNOWN, reasons, ["SECTOR_FAMILY_UNRESOLVED"], industry, family, "LOW"
     if target_family is not None and family is not None and target_family != family:
         return Eligibility.EXCLUDED, reasons, ["SECTOR_FAMILY_DIFFERS"], industry, family, "HIGH"
-    if (
-        target.box4 is not None
-        and peer.box4 is not None
-        and FINANCIAL in (target_family, family)
-        and target.box4.industry != peer.box4.industry
-    ):
-        # bank vs NBFC vs insurer: different regulated business models
-        return (
-            Eligibility.EXCLUDED,
-            reasons,
-            ["REGULATED_MODEL_DIFFERS"],
-            industry,
-            family,
-            ("HIGH"),
-        )
-    reasons.append("SAME_SECTOR_FAMILY")
     limits: list[str] = []
+    if FINANCIAL in (target_family, family):
+        # Box 4 business models: a regulated model matches only a proven identical one
+        (mine_model, mine_sub), (their_model, their_sub) = (
+            business_model(target.box4),
+            business_model(peer.box4),
+        )
+        if UNKNOWN_MODEL in (mine_model, their_model):
+            return Eligibility.UNKNOWN, reasons, ["BUSINESS_MODEL_UNRESOLVED"], industry, \
+                family, "LOW"
+        unresolved = (mine_model == NON_BANK_FINANCIAL_MODEL and mine_sub is None) or (
+            their_model == NON_BANK_FINANCIAL_MODEL and their_sub is None
+        )
+        if BANK_MODEL in (mine_model, their_model) and mine_model != their_model:
+            if unresolved:  # the unresolved side may be a bank: no evidence either way
+                return Eligibility.UNKNOWN, reasons, [SUBTYPE_UNRESOLVED], industry, family, \
+                    "LOW"
+            return Eligibility.EXCLUDED, reasons, ["REGULATED_MODEL_DIFFERS"], industry, \
+                family, "HIGH"
+        if mine_model != their_model or (
+            not unresolved and mine_sub != their_sub
+        ):  # NBFC vs insurer: different regulated business models
+            return Eligibility.EXCLUDED, reasons, ["REGULATED_MODEL_DIFFERS"], industry, \
+                family, "HIGH"
+        if unresolved:
+            limits.append(SUBTYPE_UNRESOLVED)
+    reasons.append("SAME_SECTOR_FAMILY")
     if mine.get("Industry") and mine.get("Industry") == theirs.get("Industry"):
         reasons.append("SAME_INDUSTRY")
     elif mine.get("Broad Industry") and mine.get("Broad Industry") == theirs.get("Broad Industry"):
@@ -207,6 +271,7 @@ def select_peers(
                 source_classification=layers.classification() if layers else (),
                 industry=industry,
                 sector_family=family,
+                business_model=model_label(layers.box4) if layers else None,
                 eligibility=eligibility,
                 selection_reasons=tuple(reasons),
                 exclusion_reasons=tuple(exclusions),

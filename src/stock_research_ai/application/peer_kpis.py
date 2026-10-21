@@ -6,6 +6,8 @@ identity:
   PROXY           same canonical KPI, qualifier and unit, but a different period kind
                   (e.g. a year-end stock vs a flow): displayed, never ranked
   NOT_COMPARABLE  same canonical KPI with a different qualifier or unit
+A peer compatible at the business-class level only (peer_selection NEUTRAL_ONLY) never enters
+a KPI statistic: operating KPIs are business-model specific (CLASSIFICATION_MISMATCH).
 Segments are compared by identical normalized Box 7 keys only, and every identical name is
 reported as 'definitions unverified'; nothing like 'Financial Services' -> 'BFSI' is mapped.
 """
@@ -151,7 +153,10 @@ def _pick(anchor: CanonicalKPIValue, values: list[CanonicalKPIValue]) -> _Pick |
 
 
 def kpi_benchmarks(
-    target: CompanyLayers, peers: list[CompanyLayers], min_peers: int
+    target: CompanyLayers,
+    peers: list[CompanyLayers],
+    min_peers: int,
+    neutral_only: frozenset[str] = frozenset(),
 ) -> list[PeerKPIBenchmark]:
     mine = company_kpis(target)
     latest: dict[tuple[str, str, str, str], CanonicalKPIValue] = {}
@@ -162,6 +167,10 @@ def kpi_benchmarks(
         observations = []
         for peer in peers:
             pick = _pick(anchor, company_kpis(peer))
+            if pick is not None and peer.company_key in neutral_only:
+                pick = _Pick(pick.value, pick.equivalence, OS.CLASSIFICATION_MISMATCH,
+                             "peer compatible at the business-class level only: operating "
+                             "KPIs are business-model specific")
             if pick is not None:
                 observations.append(
                     _observation(

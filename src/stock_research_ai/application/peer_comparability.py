@@ -10,7 +10,7 @@ Overall:
 from uuid import uuid5
 
 from stock_research_ai.application.peer_registry import NS
-from stock_research_ai.application.peer_selection import CompanyLayers
+from stock_research_ai.application.peer_selection import CompanyLayers, model_label
 from stock_research_ai.domain.industry_intelligence import (
     Comparability,
     Dimension,
@@ -57,6 +57,7 @@ def assess(
         dims.append(DimensionAssessment(dimension=dimension, status=status, detail=detail))
 
     target_family, _ = target.family()
+    target_model = model_label(target.box4)
     add(
         Dimension.SECTOR_FAMILY,
         C.UNKNOWN
@@ -68,7 +69,14 @@ def assess(
         else C.UNKNOWN,
         f"target {target_family}, peer {candidate.sector_family}",
     )
-    if "SAME_INDUSTRY" in candidate.selection_reasons:
+    if "FINANCIAL_SUBTYPE_UNRESOLVED" in candidate.exclusion_reasons:
+        add(
+            Dimension.BUSINESS_MODEL,
+            C.PARTIALLY_COMPARABLE,
+            f"Box 4 financial subtype unresolved (target {target_model}, peer "
+            f"{candidate.business_model}): business-model-neutral metrics only",
+        )
+    elif "SAME_INDUSTRY" in candidate.selection_reasons:
         add(Dimension.BUSINESS_MODEL, C.COMPARABLE, "same Screener Industry classification")
     elif "SAME_BROAD_INDUSTRY" in candidate.selection_reasons:
         add(

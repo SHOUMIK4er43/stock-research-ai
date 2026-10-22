@@ -297,13 +297,27 @@ class Ctx:
                                 reference=source.reference, title=source.reference)
 
     # --- claim factories ------------------------------------------------------------------
+    @staticmethod
+    def when(period: Any) -> str:
+        """The period WITH its type: a quarter and the fiscal year ending the same month share
+        a label ('Mar 2026'), so a claim's text never relies on its table for that context."""
+        label, kind = period.label, period.period_type.value
+        if kind == "POINT_IN_TIME":
+            return f"as at {label}"
+        if kind == "FY":
+            return f"for {label}" if label.upper().startswith("FY") else (
+                f"for the fiscal year ended {label}")
+        phrase = {"QUARTER": "the quarter ended", "TTM": "the twelve months to",
+                  "HALF_YEAR": "the half year ended", "NINE_MONTH": "the nine months ended"}
+        return f"for {phrase[kind]} {label}" if kind in phrase else f"for {label}"
+
     def fact(self, v: CanonicalFinancialValue, section: SectionId | None = None) -> UUID:
         sources, ups, evidence = self.res.canonical(v.canonical_value_id)
         unit = unit_of(v)
         cid = self.book.claim(
             None, CT.FACT, v.metric.value,
-            f"{v.metric.value} reported {number(v.value)} {unit} for "
-            f"{v.period.label} ({v.reporting_basis.value.lower()}).",
+            f"{v.metric.value} reported {number(v.value)} {unit} {self.when(v.period)} "
+            f"({v.reporting_basis.value.lower()}).",
             basis=basis_of(v.reporting_basis), upstream=ups, sources=sources, value=v.value,
             metric=v.metric.value, unit=unit, currency=v.currency, period=v.period.label,
             period_end=v.period.period_end, evidence_ids=evidence, confidence=v.confidence)
@@ -323,7 +337,7 @@ class Ctx:
             f"{m.currency.value} MONEY"
         cid = self.book.claim(
             None, CT.CALCULATION, m.code,
-            f"{m.label}: {number(m.value)} {unit.lower()} for {m.period.label} "
+            f"{m.label}: {number(m.value)} {unit.lower()} {self.when(m.period)} "
             f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).",
             basis=basis_of(m.reporting_basis), upstream=ups, sources=sources, value=m.value,
             metric=m.code, unit=unit, currency=m.currency, period=m.period.label,

@@ -24,6 +24,7 @@ import {
   parsePanel,
   renderDetailedResearch,
   renderRisks,
+  researchStatusLabel,
 } from "./final_report.js";
 import { findSection } from "./report/view_model.js";
 import {
@@ -536,7 +537,7 @@ function renderFinalReportView() {
   else if (panel) {
     const partial = panel.failed.length
       ? ` Partial: ${panel.failed.map(f => FINAL_REPORT_LABELS[f] || f).join(", ")} could not be produced.` : "";
-    status = `Ready — ${panel.companyName} — as of ${panel.asOf}.${partial}`;
+    status = `Ready — ${panel.companyName} — as of ${panel.asOf}. ${researchStatusLabel(panel)}.${partial}`;
   }
   els.finalReportStatus.textContent = status;
   els.finalReportStatus.hidden = !status;

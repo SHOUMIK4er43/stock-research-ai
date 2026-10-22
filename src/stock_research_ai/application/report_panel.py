@@ -17,6 +17,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from stock_research_ai.application.research_completeness import summary_lines
 from stock_research_ai.domain.final_research_report import FinalResearchReportDataset
 from stock_research_ai.domain.report_rendering import (
     DISCLAIMER,
@@ -79,6 +80,10 @@ class FinalReportPanel(BaseModel):
     #: the report's ONE business classification (Box 4): coarse class + Industry subtype
     business_class: str | None = None
     industry: str | None = None
+    #: THE research completeness conclusion (Box 14's material-requirement ledger): the
+    #: rendering status above is execution, this is analysis; None on older reports
+    research_status: str | None = None
+    research_completeness: tuple[tuple[str, str], ...] = ()
 
 
 def _list(items: Iterable[PanelItem]) -> PanelList:
@@ -147,7 +152,9 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         input_conflicts=_list(conflicts), data_limitations=_list(limitations),
         open_diligence=_list(diligence), analytical_basis=m.analytical_basis.value,
         control_basis=m.control_basis.value if m.control_basis else None,
-        business_class=m.business_class, industry=m.industry.value)
+        business_class=m.business_class, industry=m.industry.value,
+        research_status=rc.overall.value if (rc := report.research_completeness) else None,
+        research_completeness=tuple(summary_lines(rc)) if rc else ())
 
 
 __all__ = ["FinalReportPanel", "PanelItem", "PanelList", "PanelSection", "build_panel"]

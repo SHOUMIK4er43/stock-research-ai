@@ -160,6 +160,17 @@ export function basisLine(panel) {
     : analytical;
 }
 
+const RESEARCH_STATUSES = Object.freeze(["COMPLETE", "PARTIAL", "UNAVAILABLE"]);
+
+/** Box 14's research-completeness lines: [label, text] string pairs only (bounded). */
+function completenessLines(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(row => Array.isArray(row) && row.length === 2 && row.every(x => typeof x === "string"))
+    .slice(0, 12)
+    .map(([label, text]) => ({ label, text }));
+}
+
 /** A validated panel view (GET /v1/final-reports/{id}/view), or null. */
 export function parsePanel(payload) {
   if (!payload || typeof payload !== "object") return null;
@@ -180,6 +191,9 @@ export function parsePanel(payload) {
       ? payload.failed_formats.filter(f => FINAL_REPORT_FORMATS.includes(f)) : [],
     status: str(payload.status),
     analyticalBasis: basis(payload.analytical_basis),
+    // analysis, apart from `status` (rendering / execution); null = not assessed, never COMPLETE
+    researchStatus: RESEARCH_STATUSES.includes(payload.research_status) ? payload.research_status : null,
+    researchCompleteness: completenessLines(payload.research_completeness),
     controlBasis: basis(payload.control_basis),
     disclaimer: str(payload.disclaimer),
     summary: items(payload.summary),
@@ -219,6 +233,26 @@ function block(doc, title, list, className, emptyText) {
   ] });
 }
 
+/** The ONE research-completeness conclusion (Box 14's material-requirement ledger). */
+export function researchStatusLabel(panel) {
+  return `Research completeness: ${panel.researchStatus || "not assessed"}`;
+}
+
+function completenessBlock(doc, panel) {
+  const ul = el(doc, "ul", { className: "final-report-completeness" });
+  for (const row of panel.researchCompleteness) {
+    if (row.label === "Overall") continue;
+    ul.appendChild(el(doc, "li", { children: [
+      el(doc, "strong", { text: `${row.label}: ` }), el(doc, "span", { text: row.text }),
+    ] }));
+  }
+  return el(doc, "section", { className: "final-report-block completeness", children: [
+    el(doc, "h3", { text: researchStatusLabel(panel) }),
+    panel.researchCompleteness.length ? ul
+      : el(doc, "p", { className: "muted", text: "This report predates the completeness ledger." }),
+  ] });
+}
+
 /** The Detailed Research view: Box 14 executive summary + section statuses. */
 export function renderDetailedResearch(doc, panel) {
   const sections = el(doc, "ol", { className: "final-report-sections" });
@@ -232,6 +266,7 @@ export function renderDetailedResearch(doc, panel) {
   return el(doc, "article", { className: "final-report-detailed", children: [
     el(doc, "h2", { text: `${panel.companyName} — Detailed Research` }),
     el(doc, "p", { className: "final-report-basis", text: basisLine(panel) }),
+    completenessBlock(doc, panel),
     el(doc, "p", { className: "muted", text: `As of ${panel.asOf}. ${panel.disclaimer}` }),
     block(doc, "Executive summary", panel.summary, "summary", "No summary points were supplied."),
     el(doc, "h3", { text: "Sections" }),

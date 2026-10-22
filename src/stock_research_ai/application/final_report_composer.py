@@ -71,6 +71,11 @@ from stock_research_ai.application.report_sections import (
     valuation,
     what_changes,
 )
+from stock_research_ai.application.research_completeness import (
+    build_completeness,
+    peer_block,
+    risk_block,
+)
 from stock_research_ai.domain.business_intelligence import BusinessIntelligenceDataset
 from stock_research_ai.domain.document_intelligence import EvidenceBundle
 from stock_research_ai.domain.due_diligence import DueDiligenceDataset
@@ -434,6 +439,18 @@ def build_final_report(
                       f"{layer.value} dataset" + (" (Box 13 assessed one)"
                                                   if layer.value in not_supplied else ""))
     families = _families(ctx, supplied, orders, value_view)
+    # analytical completeness: a section whose material requirement is not met by what the
+    # upstream layer produced (no eligible peer benchmark, unevaluated risk rules) is never
+    # COMPLETE merely because the layer was supplied
+    basis_value = b13.analytical_basis.value
+    peer_req = peer_block(b4, ctx.box9, basis_value)
+    risk_req = risk_block(b13)
+    for sec, req in ((S.INDUSTRY_COMPETITION, peer_req), (S.RISKS, risk_req)):
+        draft = ctx.drafts[sec]
+        if req.status != SectionStatus.COMPLETE and draft.status in (None, SectionStatus.COMPLETE):
+            draft.status = SectionStatus.PARTIAL
+            draft.reason = "; ".join(x for x in (
+                draft.reason, f"{req.block} {req.status.value}: {', '.join(req.reasons)}") if x)
     statuses = {s: _status(ctx, s, families) for s in SectionId}
     status_zero = _section_zero(ctx, families, statuses, risk_view)
     statuses[S.DUE_DILIGENCE_STATUS] = _status(ctx, S.DUE_DILIGENCE_STATUS, families)
@@ -442,6 +459,17 @@ def build_final_report(
     status_zero = status_zero.model_copy(update={"sections_by_status": tuple(
         (st, sum(1 for x in statuses.values() if x[0] == st)) for st in SectionStatus)})
     appendices = _appendices(ctx)
+    completeness = build_completeness(
+        box4=b4, box5=b5, box7=ctx.box7, box9=ctx.box9, box10=ctx.box10, box11=ctx.box11,
+        box13=b13, basis=basis_value, statuses=statuses, peers=peer_req, risks=risk_req)
+    if completeness.overall != SectionStatus.COMPLETE and (
+            statuses[S.EXECUTIVE_SUMMARY][0] == SectionStatus.COMPLETE):
+        # the executive summary summarises the research: never more complete than it
+        statuses[S.EXECUTIVE_SUMMARY] = (
+            SectionStatus.PARTIAL, f"research completeness {completeness.overall.value}",
+            statuses[S.EXECUTIVE_SUMMARY][2])
+        status_zero = status_zero.model_copy(update={"sections_by_status": tuple(
+            (st, sum(1 for x in statuses.values() if x[0] == st)) for st in SectionStatus)})
     # --- assembly
     core = {i for s in SectionId if s != S.APPENDICES for i in (*ctx.drafts[s].claims,
                                                                  *ctx.drafts[s].limits)}
@@ -488,7 +516,7 @@ def build_final_report(
         risks=risk_view, what_changes_the_view=tuple(view), monitoring=tuple(monitor),
         reconciliation=tuple(recon), source_disagreements=tuple(disagreement),
         appendices=tuple(appendices), claims=claims, tables=tables, charts=tuple(charts),
-        sources=sources, issues=tuple(ctx.issues))
+        sources=sources, issues=tuple(ctx.issues), research_completeness=completeness)
 
 
 # --- helpers ---------------------------------------------------------------------------------

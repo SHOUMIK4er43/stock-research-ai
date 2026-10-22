@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from stock_research_ai.application.final_report_composer import canonical_report_json
+from stock_research_ai.application.research_completeness import summary_lines
 from stock_research_ai.domain.final_research_report import (
     Appendix,
     CellStatus,
@@ -313,6 +314,10 @@ class _Builder:
             ("Score", "None (Box 14 assigns no score)"),
         )
         out: list[Block] = [KeyValues("What the reader must know first", "NOTICE", rows)]
+        rc = self.r.research_completeness
+        out.append(KeyValues("Research completeness", "NOTICE", tuple(summary_lines(rc)) if rc
+                             else (("Overall", "Not assessed (report composed before the "
+                                               "completeness ledger)"),)))
         if dd.conflict_claim_ids:
             out.append(self.claim_list("Open source conflicts", "LIMITATION",
                                        dd.conflict_claim_ids, shown=shown))

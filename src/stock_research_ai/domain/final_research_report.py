@@ -20,6 +20,7 @@ The report carries no rating, ranking, target price, position size or recommenda
 """
 
 import re
+from collections.abc import Iterable
 from datetime import date
 from enum import StrEnum
 from typing import Annotated, Literal, Self
@@ -927,6 +928,70 @@ class ReportIssue(BaseModel):
 _FACTUAL = (ClaimType.FACT, ClaimType.CALCULATION)
 
 
+# --- research completeness (analytical truth, apart from execution / rendering) ---------------
+
+
+class CompletenessBlock(BaseModel):
+    """One research requirement of the company's business model, with its evidence status.
+
+    MATERIAL blocks decide the overall status; OPTIONAL blocks are shown, never counted;
+    NOT_APPLICABLE never counts against the research."""
+
+    model_config = _model()
+    block: Code
+    title: Label
+    material: bool
+    status: SectionStatus
+    reasons: tuple[Code, ...] = ()  # structured codes, one per incomplete requirement kind
+    detail: Label | None = None
+    section_ids: tuple[SectionId, ...] = ()
+
+    @model_validator(mode="after")
+    def reasoned(self) -> Self:
+        if self.status in (SectionStatus.PARTIAL, SectionStatus.UNAVAILABLE) and not self.reasons:
+            raise ValueError("an incomplete requirement states its reason codes")
+        if self.status == SectionStatus.COMPLETE and self.reasons:
+            raise ValueError("a COMPLETE requirement carries no incompleteness reason")
+        return self
+
+
+Overall = Literal[SectionStatus.COMPLETE, SectionStatus.PARTIAL, SectionStatus.UNAVAILABLE]
+
+
+def overall_completeness(blocks: Iterable[CompletenessBlock]) -> Overall:
+    """COMPLETE only when every MATERIAL applicable block is COMPLETE; UNAVAILABLE when none
+    holds a meaningful result; PARTIAL otherwise. OPTIONAL and NOT_APPLICABLE never count."""
+    material = [b.status for b in blocks if b.material and b.status != SectionStatus.NOT_APPLICABLE]
+    if not material or all(st == SectionStatus.UNAVAILABLE for st in material):
+        return SectionStatus.UNAVAILABLE
+    if all(st == SectionStatus.COMPLETE for st in material):
+        return SectionStatus.COMPLETE
+    return SectionStatus.PARTIAL
+
+
+class ResearchCompleteness(BaseModel):
+    """THE research completeness conclusion: derived from the material-requirement ledger of
+    the company's Box 4 business model - never from the pipeline having run."""
+
+    model_config = _model()
+    business_model: Code  # NON_FINANCIAL / BANK / NON_BANK_FINANCIAL / UNKNOWN
+    subtype: Code | None = None  # non-bank financial subtype when Box 4 resolved it
+    overall: Overall
+    blocks: tuple[CompletenessBlock, ...] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def derived(self) -> Self:
+        if len({b.block for b in self.blocks}) != len(self.blocks):
+            raise ValueError("one ledger entry per requirement")
+        if self.overall != overall_completeness(self.blocks):
+            raise ValueError("overall completeness must follow the material-requirement ledger")
+        return self
+
+    def by_status(self, status: SectionStatus, *, material: bool | None = None) -> list[str]:
+        return [b.block for b in self.blocks if b.status == status
+                and (material is None or b.material == material)]
+
+
 class FinalResearchReportDataset(BaseModel):
     model_config = _model()
     schema_version: Literal["FINAL_RESEARCH_REPORT_DATASET_V1"] = FINAL_REPORT_SCHEMA
@@ -950,6 +1015,8 @@ class FinalResearchReportDataset(BaseModel):
     charts: tuple[ChartReference, ...] = Field(max_length=MAX_CHARTS)
     sources: tuple[ReportSource, ...] = Field(max_length=MAX_SOURCES)
     issues: tuple[ReportIssue, ...] = ()
+    #: the analytical completeness conclusion (None only on reports composed before it existed)
+    research_completeness: ResearchCompleteness | None = None
     #: Box 14 composes research; it carries no rating, target or recommendation.
     recommendation: Literal["NONE"] = "NONE"
 
@@ -972,6 +1039,17 @@ class FinalResearchReportDataset(BaseModel):
             fail("Every canonical section appears once, in canonical order")
         if [s.order for s in self.sections] != list(range(len(SECTION_ORDER))):
             fail("Section order numbers follow the canonical order")
+        # --- completeness: a requirement is never COMPLETE over an incomplete section
+        if self.research_completeness is not None:
+            by_section = {s.section_id: s.status for s in self.sections}
+            for block in self.research_completeness.blocks:
+                if block.status == SectionStatus.COMPLETE and any(
+                        by_section[i] in (SectionStatus.PARTIAL, SectionStatus.UNAVAILABLE)
+                        for i in block.section_ids):
+                    fail(f"Requirement {block.block} is COMPLETE over an incomplete section")
+            if (self.research_completeness.overall != SectionStatus.COMPLETE
+                    and by_section[SectionId.EXECUTIVE_SUMMARY] == SectionStatus.COMPLETE):
+                fail("The executive summary is never more complete than the research")
         claims = {c.claim_id: c for c in self.claims}
         if len(claims) != len(self.claims):
             fail("Claim IDs are unique")

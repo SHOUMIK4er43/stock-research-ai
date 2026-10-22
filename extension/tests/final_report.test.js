@@ -11,6 +11,7 @@ import {
   parsePanel,
   renderDetailedResearch,
   renderRisks,
+  researchStatusLabel,
 } from "../src/final_report.js";
 import { createMemoryBackend } from "../src/storage.js";
 import { createFakeDocument } from "./fixtures/fake_dom.js";
@@ -380,4 +381,50 @@ test("an unknown or missing reporting basis is stated as such, never guessed", (
   assert.match(detailed, /Analytical basis: not stated/);
   assert.ok(!detailed.includes("Control basis"));
   assert.match(renderRisks(createFakeDocument(), missing).serialize(), /Basis: not stated/);
+});
+
+const COMPLETENESS = [
+  ["Overall", "PARTIAL (business model NON_BANK_FINANCIAL; COMPLETE only when every material applicable requirement is complete)"],
+  ["Complete", "Historical financials; Financial analytics (Box 5 core metrics)"],
+  ["Partial", "Forecast (Box 10 core lines) (COMMON_EQUITY_NOT_FORECAST)"],
+  ["Unavailable", "Peer analysis (Box 9 core benchmarks) (NO_ELIGIBLE_PEERS)"],
+  ["Not applicable", "None"],
+  ["Optional (not counted)", "Order book: NOT_APPLICABLE"],
+];
+
+test("research completeness is parsed apart from the rendering status and shown in Detailed Research", () => {
+  const panel = parsePanel(panelPayload({
+    status: "COMPLETE", research_status: "PARTIAL", research_completeness: COMPLETENESS,
+    analytical_basis: "CONSOLIDATED", control_basis: "STANDALONE",
+  }));
+  assert.equal(panel.status, "COMPLETE", "rendering / execution status is unchanged");
+  assert.equal(panel.researchStatus, "PARTIAL", "research completeness is its own field");
+  assert.equal(researchStatusLabel(panel), "Research completeness: PARTIAL");
+  const html = renderDetailedResearch(createFakeDocument(), panel).serialize();
+  assert.match(html, /Research completeness: PARTIAL/);
+  assert.match(html, /Unavailable: <\/strong><span>Peer analysis \(Box 9 core benchmarks\) \(NO_ELIGIBLE_PEERS\)/);
+  assert.match(html, /Analytical basis: CONSOLIDATED · Control basis: STANDALONE/, "basis labels intact");
+});
+
+test("a malformed or missing research status is never shown as COMPLETE", () => {
+  for (const research_status of ["complete", "DONE", 1, null, undefined]) {
+    const panel = parsePanel(panelPayload({ status: "COMPLETE", research_status,
+      research_completeness: [["Overall", 5], "junk", ["Complete", "x", "y"]] }));
+    assert.equal(panel.researchStatus, null);
+    assert.deepEqual(panel.researchCompleteness, []);
+    assert.equal(researchStatusLabel(panel), "Research completeness: not assessed");
+    const html = renderDetailedResearch(createFakeDocument(), panel).serialize();
+    assert.ok(!html.includes("Research completeness: COMPLETE"));
+    assert.match(html, /predates the completeness ledger/);
+  }
+});
+
+test("the ready line states execution and research completeness separately", async t => {
+  const api = backend({ view: panelPayload({ status: "COMPLETE", research_status: "PARTIAL",
+    research_completeness: COMPLETENESS }) });
+  const h = await harness(t, { api });
+  await h.click("tab-detailed");
+  assert.match(h.get("final-report-status").textContent,
+    /Ready — Infosys Ltd — as of 2026-10-12\. Research completeness: PARTIAL\./);
+  assert.match(h.get("final-report-content").textContent, /Research completeness: PARTIAL/);
 });

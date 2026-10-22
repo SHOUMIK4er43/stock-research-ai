@@ -67,6 +67,11 @@ from stock_research_ai.application.financial_reconciliation import (
 )
 from stock_research_ai.application.forecasting import canonical_forecast_json
 from stock_research_ai.application.fundamental_valuation import canonical_valuation_json
+from stock_research_ai.application.governance_evidence import (
+    auditor_reports_from_bundle,
+    governance_topics,
+    merge_auditor_reports,
+)
 from stock_research_ai.application.governance_risk import (
     MATERIAL_EVENT_PCT,
     build_auditor,
@@ -320,6 +325,19 @@ def _evidence(request: DueDiligenceRequest, bundle: EvidenceBundle | None) -> tu
                                      f"{len(broken)} cited evidence IDs are not in the Box 3 "
                                      f"bundle (first: {broken[0]})")
     return index, 0
+
+
+def _capital_facts(box4: CanonicalFinancialDataset, basis: ReportingBasis,
+                   latest: date | None) -> list[tuple[str, UUID]]:
+    """Factual capital events for the governance ledger (never a flag by themselves)."""
+    out: list[tuple[str, UUID]] = []
+    for v in box4.canonical_values:
+        if (v.metric == CanonicalMetric.HYBRID_EQUITY_INSTRUMENTS and v.reporting_basis == basis
+                and latest is not None and v.period.period_end == latest and v.value > 0):
+            out.append((f"equity-classified hybrid (perpetual) instruments of {v.value} "
+                        f"{v.currency.value} crore outstanding at {latest} (Box 4): a factual "
+                        "capital event, not a governance flag", v.canonical_value_id))
+    return out
 
 
 def _latest(box5: FinancialAnalyticsDataset, basis: ReportingBasis) -> date | None:
@@ -655,6 +673,12 @@ def build_due_diligence(
         raise DueDiligenceInputError(
             "CURRENCY_MISMATCH", f"explicit inputs in {sorted(c.value for c in foreign)}; the "
             f"analytical currency is {currency.value}")
+    # the statutory auditor's report printed in a verified annual report is a cited input
+    # (its Box 3 evidence IDs are checked below like any other); explicit inputs win
+    derived = auditor_reports_from_bundle(bundle)
+    if derived:
+        request = request.model_copy(update={"auditor_reports": merge_auditor_reports(
+            request.auditor_reports, derived)})
     evidence_index, unverified = _evidence(request, bundle)
     if box12 is not None:
         box12 = box12.model_copy(update={
@@ -723,6 +747,9 @@ def build_due_diligence(
     # --- assembly ------------------------------------------------------------------------------
     signals = attach_mitigants(ctx.signals)
     ctx.signals = signals
+    governance = governance.model_copy(update={"topics": governance_topics(
+        signals, bundle, inputs.request.auditor_reports, _capital_facts(box4, analytical,
+                                                                       latest))})
     flags = sorted(
         (s for s in signals if s.signal_class == SignalClass.COMPANY_RISK
          and s.severity in (Severity.YELLOW, Severity.RED)),

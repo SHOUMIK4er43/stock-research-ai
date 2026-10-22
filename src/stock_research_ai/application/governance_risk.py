@@ -765,7 +765,8 @@ def executive_pay(ctx: Ctx) -> Ev:
     if not by_scope:
         if conflicted(ctx, "executive_pay"):
             return conflict_ev(ctx, NA, conflicted(ctx, "executive_pay"))
-        return unavailable(NA, "PAY_HISTORY_NOT_SUPPLIED", status=S.NOT_APPLICABLE)
+        # absent pay data is missing evidence, never a rule that does not apply
+        return unavailable(NA, "PAY_HISTORY_NOT_SUPPLIED")
     scope, pays = max(by_scope.items(), key=lambda i: (len(i[1]), i[0]))
     pays = sorted(pays, key=lambda p: p.fiscal_year)[-4:]  # one per year and scope (the policy)
     disputes = conflicted(ctx, "executive_pay", lambda p: norm(p.scope) == norm(scope)

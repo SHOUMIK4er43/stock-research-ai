@@ -59,6 +59,10 @@ from stock_research_ai.domain.report_rendering import ReportManifest
 from stock_research_ai.domain.summary import SummaryResult
 
 ST = SectionStatus
+#: Screener-only runs: every material governance topic names why it is not evaluated
+GOVERNANCE_GAPS = ("AUDITOR_REPORT_NOT_SUPPLIED", "BOARD_DATA_NOT_SUPPLIED",
+                   "MANAGEMENT_CHANGES_NOT_SUPPLIED", "NO_EVENT_LEDGER",
+                   "PLEDGE_DATA_NOT_SUPPLIED", "RELATED_PARTY_DATA_NOT_SUPPLIED")
 SF = Path(__file__).parent / "fixtures" / "screener"
 
 
@@ -194,14 +198,17 @@ def test_m_n_evaluated_no_risk_is_not_unevaluable():
 
 def test_o_governance_without_evidence_is_honestly_unavailable(hudco):
     g = governance_block(hudco["b13"])
-    assert (g.status, g.reasons) == (ST.UNAVAILABLE, ("MISSING_SOURCE_EVIDENCE",))
-    assert g.detail == "0 of 7 governance / management / auditor rules evaluated"
+    # each material topic of the Box 13 governance ledger says why it is not evaluated
+    assert (g.status, g.reasons) == (ST.UNAVAILABLE, GOVERNANCE_GAPS)
+    assert g.detail.startswith("0 of 6 material governance topics evaluated; not evaluated: ")
     report = hudco["report"]
     sec = report.section(SectionId.MANAGEMENT_GOVERNANCE)
     assert sec.status != ST.COMPLETE
-    # nothing invented: the section holds only upstream claims (one fact, no new content)
+    # nothing invented: no governance claim without evidence; absent pay data is a
+    # limitation (it was once rendered from a NOT_APPLICABLE signal)
     claims = {c.claim_id: c for c in report.claims}
-    assert [claims[i].topic for i in sec.claim_ids] == ["EXECUTIVE_PAY_VS_PROFIT"]
+    assert [claims[i].topic for i in sec.claim_ids] == []
+    assert "EXECUTIVE_PAY_VS_PROFIT" in {claims[i].topic for i in sec.limitation_claim_ids}
 
 
 # --- S, T, U: real fixtures ----------------------------------------------------------------------
@@ -226,7 +233,7 @@ def test_s_hudco_exact_regression(hudco):
         "FORECAST": (ST.PARTIAL, ("COMMON_EQUITY_NOT_FORECAST", "TOTAL_BORROWINGS_NOT_FORECAST")),
         "VALUATION": (ST.UNAVAILABLE, ("MULTIPLE_MISSING",)),
         "RISK_ANALYSIS": (ST.PARTIAL, ("RULE_UNAVAILABLE",)),
-        "GOVERNANCE": (ST.UNAVAILABLE, ("MISSING_SOURCE_EVIDENCE",)),
+        "GOVERNANCE": (ST.UNAVAILABLE, GOVERNANCE_GAPS),
         "SOURCE_INTEGRITY": (ST.COMPLETE, ()),
     }
     sections = {s.section_id: s for s in report.sections}

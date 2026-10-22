@@ -933,11 +933,70 @@ class GovernanceEntry(BaseModel):
     source_id: Label | None
 
 
+class GovernanceEvidenceStatus(StrEnum):
+    """What the REVIEWED sources show for one governance topic. NO_ADVERSE_EVIDENCE_IN_
+    REVIEWED_SOURCE is never 'good governance': it covers only what was reviewed."""
+
+    EVIDENCE_FOUND = "EVIDENCE_FOUND"  # a flag, or a located factual disclosure
+    NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE = "NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE"
+    SOURCE_NOT_AVAILABLE = "SOURCE_NOT_AVAILABLE"  # no source for any rule of the topic
+    NOT_EVALUABLE = "NOT_EVALUABLE"  # some evidence, but the topic's rules cannot all run
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class GovernanceRiskStatus(StrEnum):
+    FLAGGED = "FLAGGED"  # a registered rule graded YELLOW / RED on cited evidence
+    EVALUATED_NO_FLAG = "EVALUATED_NO_FLAG"  # every applicable rule ran; none flagged
+    NOT_EVALUABLE = "NOT_EVALUABLE"  # missing evidence: never a green finding
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class GovernanceTopic(BaseModel):
+    """One row of the governance evidence ledger (no score, no opinion): the topic, what the
+    reviewed sources show, the registered rules' outcome and the evidence it rests on."""
+
+    model_config = _model()
+    topic: Code
+    title: Label
+    material: bool  # counted by the research-completeness ledger
+    evidence_status: GovernanceEvidenceStatus
+    risk_status: GovernanceRiskStatus
+    finding: Label
+    reason: Code | None = None  # why the topic is not evaluated
+    signal_ids: tuple[UUID, ...] = ()
+    evidence_ids: tuple[UUID, ...] = Field(default=(), max_length=50)  # Box 3 / Box 12 / ...
+    record_ids: tuple[UUID, ...] = Field(default=(), max_length=50)  # Box 4 / request inputs
+    source_ids: tuple[Label, ...] = Field(default=(), max_length=20)
+
+    @model_validator(mode="after")
+    def sourced(self) -> Self:
+        E, R = GovernanceEvidenceStatus, GovernanceRiskStatus
+        found = self.evidence_status in (E.EVIDENCE_FOUND, E.NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE)
+        if found and not (self.evidence_ids or self.record_ids):
+            raise ValueError("a governance finding cites its evidence (no provenance, no "
+                             "conclusion)")
+        if self.risk_status == R.FLAGGED and self.evidence_status != E.EVIDENCE_FOUND:
+            raise ValueError("a governance flag rests on found evidence")
+        if (self.evidence_status == E.NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE) != (
+                self.risk_status == R.EVALUATED_NO_FLAG):
+            raise ValueError("'no adverse evidence' means every applicable rule ran unflagged")
+        if (self.evidence_status == E.NOT_APPLICABLE) != (self.risk_status == R.NOT_APPLICABLE):
+            raise ValueError("a topic is not applicable as a whole")
+        if self.risk_status == R.NOT_EVALUABLE and self.reason is None:
+            raise ValueError("an unevaluated governance topic says why")
+        if self.evidence_status in (E.SOURCE_NOT_AVAILABLE, E.NOT_EVALUABLE) and (
+                self.risk_status != R.NOT_EVALUABLE):
+            raise ValueError("missing evidence is never an evaluated governance reading")
+        return self
+
+
 class Governance(BaseModel):
     model_config = _model()
     catalogue: tuple[GovernanceEntry, ...] = Field(max_length=MAX_ENTRIES)
     scoring: Literal["NONE"] = "NONE"  # deliberately no composite governance score
     signal_ids: tuple[UUID, ...]
+    #: the governance evidence ledger: one row per topic, source-backed or honestly missing
+    topics: tuple[GovernanceTopic, ...] = Field(default=(), max_length=32)
 
 
 class ManagementReliability(BaseModel):

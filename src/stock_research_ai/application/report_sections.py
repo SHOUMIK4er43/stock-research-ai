@@ -1302,6 +1302,27 @@ def management(ctx: Ctx) -> None:
                               origin="REPORT"), text("TITLE", g.title)], claim_id=claim))
         if g in core:
             ctx.add(sec, claim)
+    ledger: list[TableRow] = []
+    for t in d13.governance_risks.topics:  # bounded: one row per topic, never every disclosure
+        source = (t.source_ids[0] if t.source_ids else
+                  f"{len(t.evidence_ids)} Box 3 evidence items" if t.evidence_ids else
+                  f"{len(t.record_ids)} upstream records" if t.record_ids else None)
+        found = t.evidence_status.value in ("EVIDENCE_FOUND",
+                                            "NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE")
+        risk = t.risk_status.value + (f" ({t.reason})" if t.reason else "")
+        ledger.append(row(f"GOV|{t.topic}", t.title,
+                          RowKind.FACT if found else RowKind.DATA_LIMITATION,
+                          [text("EVIDENCE", t.evidence_status.value), text("RISK", risk),
+                           text("FINDING", t.finding), text("SOURCE", source)]))
+    ctx_table(ctx, sec, "GOVERNANCE_EVIDENCE", "Governance evidence ledger (Box 13)", NA,
+              [col("EVIDENCE", "Evidence status", ColumnKind.TEXT),
+               col("RISK", "Risk status", ColumnKind.TEXT),
+               col("FINDING", "Finding", ColumnKind.TEXT),
+               col("SOURCE", "Source", ColumnKind.TEXT)], ledger,
+              footnotes=("No governance score is assigned. 'No adverse evidence in reviewed "
+                         "source' covers only the sources reviewed; it is not a finding of good "
+                         "governance. A located disclosure without a registered rule is a fact, "
+                         "not a risk.",))
     ctx_table(ctx, sec, "GOVERNANCE_CATALOGUE", "Governance catalogue (full)", NA,
               [col("DATE", "Date", ColumnKind.TEXT), col("TITLE", "Entry", ColumnKind.TEXT)],
               rows[: ctx.limits.max_appendix_rows], appendix=True, upstream=len(rows))

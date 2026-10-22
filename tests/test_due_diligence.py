@@ -520,7 +520,9 @@ def test_executive_pay_vs_profit():
     one = (pay[0],)
     assert sig(run(executive_pay=one), "EXECUTIVE_PAY_VS_PROFIT").status == \
         ST.INSUFFICIENT_SAMPLE
-    assert sig(run(), "EXECUTIVE_PAY_VS_PROFIT").status == ST.NOT_APPLICABLE
+    # no pay data is missing evidence for an applicable rule, never NOT_APPLICABLE
+    missing = sig(run(), "EXECUTIVE_PAY_VS_PROFIT")
+    assert (missing.status, missing.reason) == (ST.UNAVAILABLE, "PAY_HISTORY_NOT_SUPPLIED")
 
 
 def change(role: str, kind: str, day: date, planned: bool | None = None) -> dd.ManagementChange:

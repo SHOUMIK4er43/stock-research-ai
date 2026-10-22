@@ -241,6 +241,21 @@ def risk_block(box13: Any) -> CompletenessBlock:
 
 
 def governance_block(box13: Any) -> CompletenessBlock:
+    """From Box 13's governance evidence ledger: a MATERIAL topic counts as evaluated only
+    when its registered rules ran on cited evidence (FLAGGED / EVALUATED_NO_FLAG) - a located
+    disclosure without a rule, or missing evidence, never completes it."""
+    topics = [t for t in getattr(box13.governance_risks, "topics", ())
+              if t.material and t.risk_status.value != "NOT_APPLICABLE"]
+    if topics:
+        done = [t for t in topics if t.risk_status.value in ("FLAGGED", "EVALUATED_NO_FLAG")]
+        status = _coverage(len(done), len(topics))
+        missing = [t for t in topics if t not in done]
+        return _block("GOVERNANCE", "Governance & management evidence (Box 13 ledger)", True,
+                      status, (t.reason or "MISSING_SOURCE_EVIDENCE" for t in missing),
+                      f"{len(done)} of {len(topics)} material governance topics evaluated"
+                      + (f" ({', '.join(t.topic for t in done)})" if done else "")
+                      + (f"; not evaluated: {', '.join(t.topic for t in missing)}"
+                         if missing else ""))
     applicable, evaluated = _rules(box13, governance=True)
     status = _coverage(len(evaluated), len(applicable))
     return _block("GOVERNANCE", "Governance & management evidence (Box 13 rules)", True, status,

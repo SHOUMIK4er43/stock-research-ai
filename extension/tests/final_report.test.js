@@ -9,6 +9,7 @@ import {
   pageKey,
   parseFinalReportJob,
   parsePanel,
+  renderDetailedResearch,
   renderRisks,
 } from "../src/final_report.js";
 import { createMemoryBackend } from "../src/storage.js";
@@ -357,4 +358,26 @@ test("a backend failure is shown as a fixed message, never raw server text", asy
   await h.click("tab-detailed");
   assert.equal(h.get("final-report-error").hidden, false);
   assert.equal(h.get("final-report-error").textContent, "Could not look up Detailed Research.");
+});
+
+test("Detailed Research and Negatives state the ONE analytical basis and label the control basis", () => {
+  const panel = parsePanel(panelPayload({ analytical_basis: "CONSOLIDATED", control_basis: "STANDALONE" }));
+  assert.equal(panel.analyticalBasis, "CONSOLIDATED");
+  assert.equal(panel.controlBasis, "STANDALONE");
+  const detailed = renderDetailedResearch(createFakeDocument(), panel).serialize();
+  assert.match(detailed, /Analytical basis: CONSOLIDATED · Control basis: STANDALONE \(reconciliation only, never a primary figure\)/);
+  const risks = renderRisks(createFakeDocument(), panel).serialize();
+  assert.match(risks, /Basis: CONSOLIDATED/);
+  assert.ok(!risks.includes("STANDALONE"), "the control basis is never presented as the risks' basis");
+});
+
+test("an unknown or missing reporting basis is stated as such, never guessed", () => {
+  const forged = parsePanel(panelPayload({ analytical_basis: "consolidated-ish", control_basis: "X" }));
+  assert.equal(forged.analyticalBasis, null);
+  assert.equal(forged.controlBasis, null);
+  const missing = parsePanel(panelPayload());
+  const detailed = renderDetailedResearch(createFakeDocument(), missing).serialize();
+  assert.match(detailed, /Analytical basis: not stated/);
+  assert.ok(!detailed.includes("Control basis"));
+  assert.match(renderRisks(createFakeDocument(), missing).serialize(), /Basis: not stated/);
 });

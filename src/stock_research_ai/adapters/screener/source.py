@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import httpx
 
-from stock_research_ai.domain.extraction import ExtractionRequest
+from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.provenance import AcquiredPayload, RetrievalStatus, SourceRetrieval
 
 MAX_BYTES = 5_000_000
@@ -49,6 +49,22 @@ def analytical_page_urls(source_url: str) -> tuple[str, str]:
     slug = urlsplit(url).path.split("/")[2]
     base = f"https://www.screener.in/company/{slug}/"
     return base + "consolidated/", base
+
+
+def carries_statements(extraction: CompanyExtractionResult) -> bool:
+    """A page can be the analytical-basis page only when it carries statement values on its
+    own basis - the page-level form of select_analytical_basis (CONSOLIDATED only when Box 4
+    holds consolidated statement values). A consolidated view that names the company but
+    holds no consolidated statements (only security-level snapshot metrics) never makes a
+    Summary 'consolidated' while Detailed Research is standalone."""
+    company = extraction.company
+    if company is None:
+        return False
+    return any(
+        o.value is not None and o.reporting_scope == company.reporting_scope
+        for o in (*extraction.profit_loss, *extraction.balance_sheet, *extraction.cashflow,
+                  *extraction.quarterly)
+    )
 
 
 class ScreenerSource:

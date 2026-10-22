@@ -145,6 +145,21 @@ function items(list) {
   };
 }
 
+const REPORTING_BASES = Object.freeze(["CONSOLIDATED", "STANDALONE"]);
+
+/** A reporting basis exactly as Box 14 states it, else null (never guessed). */
+function basis(value) {
+  return REPORTING_BASES.includes(value) ? value : null;
+}
+
+/** The report's analytical basis line; a control basis is labelled as reconciliation only. */
+export function basisLine(panel) {
+  const analytical = `Analytical basis: ${panel.analyticalBasis || "not stated"}`;
+  return panel.controlBasis
+    ? `${analytical} · Control basis: ${panel.controlBasis} (reconciliation only, never a primary figure)`
+    : analytical;
+}
+
 /** A validated panel view (GET /v1/final-reports/{id}/view), or null. */
 export function parsePanel(payload) {
   if (!payload || typeof payload !== "object") return null;
@@ -164,6 +179,8 @@ export function parsePanel(payload) {
     failed: Array.isArray(payload.failed_formats)
       ? payload.failed_formats.filter(f => FINAL_REPORT_FORMATS.includes(f)) : [],
     status: str(payload.status),
+    analyticalBasis: basis(payload.analytical_basis),
+    controlBasis: basis(payload.control_basis),
     disclaimer: str(payload.disclaimer),
     summary: items(payload.summary),
     sections: sections.filter(s => s && typeof s === "object").map(s => ({
@@ -214,6 +231,7 @@ export function renderDetailedResearch(doc, panel) {
   }
   return el(doc, "article", { className: "final-report-detailed", children: [
     el(doc, "h2", { text: `${panel.companyName} — Detailed Research` }),
+    el(doc, "p", { className: "final-report-basis", text: basisLine(panel) }),
     el(doc, "p", { className: "muted", text: `As of ${panel.asOf}. ${panel.disclaimer}` }),
     block(doc, "Executive summary", panel.summary, "summary", "No summary points were supplied."),
     el(doc, "h3", { text: "Sections" }),
@@ -225,6 +243,8 @@ export function renderDetailedResearch(doc, panel) {
 export function renderRisks(doc, panel) {
   return el(doc, "article", { className: "final-report-risks", children: [
     el(doc, "h2", { text: `${panel.companyName} — Negatives / Risks` }),
+    el(doc, "p", { className: "final-report-basis",
+      text: `Basis: ${panel.analyticalBasis || "not stated"}` }),
     el(doc, "p", { className: "muted", text: `As of ${panel.asOf}. Company risks as graded upstream; data limitations are listed separately and are not company risks.` }),
     block(doc, "RED company risks", panel.red, "risk-red", "No RED company risk."),
     block(doc, "YELLOW company risks", panel.yellow, "risk-yellow", "No YELLOW company risk."),

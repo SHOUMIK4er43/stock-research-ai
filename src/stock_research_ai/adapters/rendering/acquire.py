@@ -24,7 +24,11 @@ from uuid import uuid5
 from stock_research_ai.adapters.rendering.cli import build_research_stage
 from stock_research_ai.adapters.screener.peers_api import PeerFetch
 from stock_research_ai.adapters.screener.research_dataset import build_screener_dataset
-from stock_research_ai.adapters.screener.source import analytical_page_urls, validate_url
+from stock_research_ai.adapters.screener.source import (
+    analytical_page_urls,
+    carries_statements,
+    validate_url,
+)
 from stock_research_ai.application.final_report_jobs import FinalReportGenerationError
 from stock_research_ai.application.report_claims import NS
 from stock_research_ai.application.report_orchestrator import (
@@ -91,7 +95,9 @@ async def _pages(urls: tuple[str, ...], fetch_page: FetchPage) -> list[Page]:
         if not page[1] or page[0].company is None:
             continue  # nothing preserved / no company identified on the page
         pages.append(page)
-    return pages
+    # the primary (analytical-basis) page carries statements on its own basis - the SAME
+    # rule the Summary applies (carries_statements); acquisition order otherwise
+    return sorted(pages, key=lambda p: not carries_statements(p[0]))
 
 
 async def _peer_screeners(primary: DetailedScreenerDataset,

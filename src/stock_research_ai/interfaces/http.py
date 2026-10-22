@@ -41,7 +41,11 @@ from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
 from stock_research_ai.adapters.rendering.generate import LiveFinalReportGenerator
 from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
-from stock_research_ai.adapters.screener.source import analytical_page_urls, validate_url
+from stock_research_ai.adapters.screener.source import (
+    analytical_page_urls,
+    carries_statements,
+    validate_url,
+)
 from stock_research_ai.application.browser_jobs import (
     BrowserJobManager,
     BrowserResearchJob,
@@ -628,9 +632,11 @@ def create_app(
 
     async def _analytical_extraction(source_url: str) -> CompanyExtractionResult:
         """The company's analytical-basis page, acquired in the SAME order Detailed Research
-        binds its primary page (consolidated, else standalone; a page that fails or names no
-        company falls through), so Summary and Detailed never silently differ in basis.
-        The last page's outcome, failure included, is returned / raised as before."""
+        binds its primary page (consolidated, else standalone; a page that fails, names no
+        company or carries no statements on its own basis falls through - the page-level
+        form of Detailed's select_analytical_basis), so Summary and Detailed never silently
+        differ in basis. The last page's outcome, failure included, is returned / raised as
+        before."""
         urls = analytical_page_urls(source_url)
         engine = current_job_manager().engine
         for url in urls[:-1]:
@@ -640,7 +646,7 @@ def create_app(
                 )
             except Exception:  # noqa: BLE001 - as Detailed: fall back to the next view
                 continue
-            if extraction.company is not None and extraction.raw_artifacts:
+            if extraction.raw_artifacts and carries_statements(extraction):
                 return extraction
         return await engine.extract_company(ExtractionRequest(provider="screener", url=urls[-1]))
 

@@ -513,3 +513,125 @@ def test_p_hudco_exact_filing_dataset_keeps_one_basis_downstream():
     calcs = [c for c in comparable_claims(report) if c.metric == "ROE"]
     assert calcs and all(c.value == D("20.198379") for c in calcs if c.period == "FY2026")
     assert all(c.calculation_ids for c in calcs)  # provenance still names the calculation
+
+
+# --- Q / R / S: ONE basis rule at the page level too (carries_statements) ---------------------
+#
+# Summary chooses a page; Detailed Research chooses select_analytical_basis over Box 4. Both now
+# use one criterion: a page is the analytical-basis page only when it carries statement values
+# on its own basis. A consolidated view naming the company but holding no consolidated
+# statements (only security-level snapshot metrics) previously made the Summary 'consolidated'
+# with no statement rows while Detailed Research was STANDALONE.
+
+SCREENER_FIXTURES = Path(__file__).parent / "fixtures" / "screener"
+INFY_PAGE = (str(SCREENER_FIXTURES / "infy_standalone.html"), "https://www.screener.in/company/INFY/")
+YESBANK_PAGE = (str(SCREENER_FIXTURES / "yesbank_consolidated.html"),
+                "https://www.screener.in/company/YESBANK/consolidated/")
+
+
+def _no_statements(tmp_path: Path) -> str:
+    """HUDCO's consolidated view with every statement section removed (company still named)."""
+    import re
+    html = (FIXTURES / HUDCO_CONSOLIDATED[0]).read_text()
+    for section in ("quarters", "profit-loss", "balance-sheet", "cash-flow", "ratios"):
+        html = re.sub(rf'<section id="{section}".*?</section>', "", html, flags=re.S)
+    path = tmp_path / "hudco_consolidated_no_statements.html"
+    path.write_text(html)
+    return str(path)
+
+
+async def _detailed(tmp_path: Path, url: str, pages: dict[str, str]):
+    """Detailed Research through capture_stage; `pages`: URL -> fixture file (absent = blocked)."""
+    acquired = {}
+    for i, (u, name) in enumerate(pages.items()):
+        (tmp_path / str(i)).mkdir(parents=True)
+        acquired[u] = await page(tmp_path / str(i), FIXTURES, (name, u))
+
+    async def fetch_page(u: str):
+        if u not in acquired:
+            raise RuntimeError("blocked")
+        return acquired[u]
+
+    async def no_evidence(_):
+        return None, None
+
+    stage = await capture_stage(StageRequest(source_url=url, as_of=NOW.date()), now=NOW,
+                                fetch_page=fetch_page, fetch_evidence=no_evidence,
+                                fetch_exchange=None)
+    report, _charts = compose_from_stage(stage, [])
+    panel = build_panel(report, ReportManifest.model_construct(
+        artifact_id=report.report_id, screener_page="X", status="COMPLETE", files=(),
+        failures=()))
+    return report, panel
+
+
+async def _summary_scope(tmp_path: Path, url: str, pages: dict[str, str]):
+    (tmp_path / "api").mkdir(parents=True)
+    paths = {"/" + u.split("://www.screener.in/", 1)[1]: name for u, name in pages.items()}
+    app, token, requests, database = await _summary_app(tmp_path / "api", paths)
+    try:
+        response = await _post_summary(app, token, url)
+    finally:
+        await database.close()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return body["company"]["reporting_scope"], body["source_url"], requests
+
+
+async def test_q_carries_statements_is_the_page_level_basis_rule(tmp_path):
+    from stock_research_ai.adapters.screener.source import carries_statements
+    (tmp_path / "c").mkdir()
+    (tmp_path / "s").mkdir()
+    (tmp_path / "e").mkdir()
+    assert carries_statements((await page(tmp_path / "c", FIXTURES, HUDCO_CONSOLIDATED))[0])
+    assert carries_statements((await page(tmp_path / "s", FIXTURES, HUDCO_STANDALONE))[0])
+    empty = (await page(tmp_path / "e", FIXTURES, (_no_statements(tmp_path),
+                                                    HUDCO_CONSOLIDATED[1])))[0]
+    assert empty.company is not None and empty.top_metrics  # snapshot metrics only
+    assert not carries_statements(empty)
+    assert not carries_statements(empty.model_copy(update={"company": None}))
+
+
+@pytest.mark.parametrize("entry", [HUDCO_STANDALONE[1], HUDCO_CONSOLIDATED[1]])
+async def test_r_consolidated_view_without_statements_never_splits_summary_and_detailed(
+        tmp_path, entry):
+    pages = {HUDCO_CONSOLIDATED[1]: _no_statements(tmp_path),
+             HUDCO_STANDALONE[1]: HUDCO_STANDALONE[0]}
+    scope, source, requests = await _summary_scope(tmp_path / "summary", entry, pages)
+    report, panel = await _detailed(tmp_path / "detailed", entry, pages)
+    # BEFORE: Summary 'consolidated' (no statement rows) vs Detailed STANDALONE
+    assert (scope, source) == ("standalone", HUDCO_STANDALONE[1])
+    assert requests == ["/company/HUDCO/consolidated/", "/company/HUDCO/"]
+    assert report.metadata.analytical_basis.value == "STANDALONE"
+    assert report.metadata.control_basis is None  # no consolidated statements to control
+    assert (panel.analytical_basis, panel.control_basis) == ("STANDALONE", None)
+    assert {c.basis.value for c in comparable_claims(report)} <= {"STANDALONE",
+                                                                 "NOT_APPLICABLE"}
+    claims = {c.claim_id: c for c in report.claims}
+    assert all(claims[e.claim_id].basis.value in ("STANDALONE", "NOT_APPLICABLE")
+               for e in report.risks.risk_register)  # Negatives
+
+
+@pytest.mark.parametrize("company,entry,pages,expected,control", [
+    # both bases: CONSOLIDATED from either view, standalone as the labelled control layer
+    ("HUDCO", HUDCO_STANDALONE[1], {HUDCO_CONSOLIDATED[1]: HUDCO_CONSOLIDATED[0],
+                                    HUDCO_STANDALONE[1]: HUDCO_STANDALONE[0]},
+     "CONSOLIDATED", "STANDALONE"),
+    # G: only a standalone page acquirable -> STANDALONE everywhere, no control layer
+    ("INFY", INFY_PAGE[1], {INFY_PAGE[1]: INFY_PAGE[0]}, "STANDALONE", None),
+    # H: only the consolidated page acquirable -> CONSOLIDATED everywhere
+    ("YESBANK", YESBANK_PAGE[1], {YESBANK_PAGE[1]: YESBANK_PAGE[0]}, "CONSOLIDATED", None),
+])
+async def test_s_company_matrix_one_basis_in_every_output(tmp_path, company, entry, pages,
+                                                           expected, control):
+    scope, _source, _requests = await _summary_scope(tmp_path / "summary", entry, pages)
+    report, panel = await _detailed(tmp_path / "detailed", entry, pages)
+    m = report.metadata
+    assert scope.upper() == expected, company  # Summary
+    assert m.analytical_basis.value == expected  # Box 13 -> Box 14 / 15
+    assert (m.control_basis.value if m.control_basis else None) == control
+    assert (panel.analytical_basis, panel.control_basis) == (expected, control)
+    claims = {c.claim_id: c for c in report.claims}
+    assert {c.basis.value for c in comparable_claims(report)} <= {expected, "NOT_APPLICABLE"}
+    assert all(claims[e.claim_id].basis.value in (expected, "NOT_APPLICABLE")
+               for e in report.risks.risk_register)  # Negatives

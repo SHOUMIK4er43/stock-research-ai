@@ -166,11 +166,11 @@ async def test_summary_for_detected_page_comes_from_extraction(summary_api, url,
         claim["text"] in body["summary_text"].splitlines() for claim in body["grounding_claims"]
     )
     assert body["provider"] == "aicredits"
-    # Detailed Research's acquisition order: consolidated first, then standalone (the INFY
-    # fixture has no consolidated page, so it falls back to the standalone page).
+    # Detailed Research's acquisition order: consolidated first, then standalone - always
+    # both, so a consolidated view that is not current is never the Summary's basis (the INFY
+    # fixture has no consolidated page and falls back; YESBANK keeps its consolidated page).
     expected = [p.removeprefix("https://www.screener.in") for p in analytical_page_urls(url)]
-    assert harness.screener_requests == expected[: expected.index(
-        url.removeprefix("https://www.screener.in")) + 1]
+    assert harness.screener_requests == expected
     assert len(harness.model.calls) == 1
     _system, user = harness.model.calls[0]
     assert user.startswith("SUMMARY_CLAIM_CATALOG_V2 JSON:\n")

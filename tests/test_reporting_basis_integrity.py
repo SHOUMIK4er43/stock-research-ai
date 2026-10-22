@@ -438,7 +438,9 @@ async def test_p_hudco_summary_detailed_and_negatives_share_the_consolidated_bas
         await database.close()
     assert response.status_code == 200
     body = response.json()
-    assert requests == ["/company/HUDCO/consolidated/"]  # the Detailed primary page
+    # the Detailed primary page first; the standalone view is fetched only to compare
+    # freshness (a consolidated view that is not current is never the basis)
+    assert requests == ["/company/HUDCO/consolidated/", "/company/HUDCO/"]
     assert body["company"]["reporting_scope"] == "consolidated"
     assert body["source_url"] == HUDCO_CONSOLIDATED[1]
 
@@ -634,4 +636,52 @@ async def test_s_company_matrix_one_basis_in_every_output(tmp_path, company, ent
     claims = {c.claim_id: c for c in report.claims}
     assert {c.basis.value for c in comparable_claims(report)} <= {expected, "NOT_APPLICABLE"}
     assert all(claims[e.claim_id].basis.value in (expected, "NOT_APPLICABLE")
+               for e in report.risks.risk_register)  # Negatives
+
+
+# --- T: a consolidated basis that is not current never becomes the research's latest year --------
+#
+# TFCI (live, 2026-10-21): Screener's consolidated statements stop at Mar 2022 while standalone
+# runs to Mar 2026. BEFORE: CONSOLIDATED was chosen because consolidated values existed, so
+# Summary and Detailed both presented FY2022 as the latest year. AFTER: STANDALONE everywhere.
+
+TFCI_CONSOLIDATED = ("tfci_consolidated.html", "https://www.screener.in/company/TFCILTD/consolidated/")
+TFCI_STANDALONE = ("tfci_standalone.html", "https://www.screener.in/company/TFCILTD/")
+TFCI_PAGES = {TFCI_CONSOLIDATED[1]: TFCI_CONSOLIDATED[0], TFCI_STANDALONE[1]: TFCI_STANDALONE[0]}
+
+
+async def test_t_stale_consolidated_statements_never_drive_the_box4_basis(tmp_path):
+    from stock_research_ai.adapters.screener.research_dataset import build_screener_dataset
+    from stock_research_ai.application.financial_analytics import latest_fiscal_year_end
+    from stock_research_ai.application.financial_reconciliation import build_canonical_dataset
+    (tmp_path / "c").mkdir()
+    (tmp_path / "s").mkdir()
+    screeners = []
+    for n, case in (("c", TFCI_CONSOLIDATED), ("s", TFCI_STANDALONE)):
+        screeners.append(build_screener_dataset(*await page(tmp_path / n, FIXTURES, case), None))
+    data = build_canonical_dataset(company_key=screeners[0].company_key,
+                                   company_name=screeners[0].profile.name,
+                                   screeners=tuple(screeners), bundle=None, catalogue=None,
+                                   generated_at=NOW)
+    assert latest_fiscal_year_end(data, B.CONSOLIDATED) == date(2022, 3, 31)
+    assert latest_fiscal_year_end(data, B.STANDALONE) == date(2026, 3, 31)
+    basis, reason = select_analytical_basis(data)
+    assert basis == B.STANDALONE and "not current" in reason and "2022-03-31" in reason
+
+
+@pytest.mark.parametrize("entry", [TFCI_STANDALONE[1], TFCI_CONSOLIDATED[1]])
+async def test_t_tfci_summary_detailed_and_negatives_use_the_current_standalone_basis(
+        tmp_path, entry):
+    scope, source, requests = await _summary_scope(tmp_path / "summary", entry, TFCI_PAGES)
+    assert (scope, source) == ("standalone", TFCI_STANDALONE[1])
+    assert requests == ["/company/TFCILTD/consolidated/", "/company/TFCILTD/"]  # compared
+    report, panel = await _detailed(tmp_path / "detailed", entry, TFCI_PAGES)
+    m = report.metadata
+    assert (m.analytical_basis.value, m.control_basis, str(m.latest_fiscal_year_end)) == (
+        "STANDALONE", None, "2026-03-31")
+    assert (panel.analytical_basis, panel.control_basis) == ("STANDALONE", None)
+    assert {c.basis.value for c in comparable_claims(report)} <= {"STANDALONE", "NOT_APPLICABLE"}
+    assert not [c for c in report.claims if c.basis.value == "CONSOLIDATED"]  # no stale FY2022
+    claims = {c.claim_id: c for c in report.claims}
+    assert all(claims[e.claim_id].basis.value in ("STANDALONE", "NOT_APPLICABLE")
                for e in report.risks.risk_register)  # Negatives

@@ -181,17 +181,36 @@ def frame_currencies(data: CanonicalFinancialDataset) -> dict[ReportingBasis, Cu
 
 ANALYTICAL_CONSOLIDATED = "CONSOLIDATED: the primary analytical basis"
 ANALYTICAL_STANDALONE = "STANDALONE: Box 4 holds no consolidated statements"
+ANALYTICAL_STALE_CONSOLIDATED = "STANDALONE: the consolidated statements are not current"
+
+
+def latest_fiscal_year_end(data: CanonicalFinancialDataset, basis: ReportingBasis) -> date | None:
+    """The latest FY end with a MONEY value on `basis` (None when the basis has no FY)."""
+    return max((v.period.period_end for v in data.canonical_values
+                if v.reporting_basis == basis and v.value_kind == ValueKind.MONEY
+                and v.period.period_type == PeriodType.FY and v.period.period_end is not None),
+               default=None)
 
 
 def select_analytical_basis(
     data: CanonicalFinancialDataset,
 ) -> tuple[ReportingBasis, str] | None:
     """THE reporting basis of one company's research (Boxes 9, 10, 13, 14 and the report):
-    CONSOLIDATED when Box 4 holds consolidated MONEY values, else STANDALONE; None when it
-    holds neither. Every consumer of comparable company-level figures uses this one decision
-    instead of choosing its own; the other basis is only ever a labelled control layer."""
+    CONSOLIDATED when Box 4 holds consolidated MONEY values - unless their latest fiscal year
+    is older than the standalone one (consolidation discontinued: STANDALONE is current) -
+    else STANDALONE; None when it holds neither. Every consumer of comparable company-level
+    figures uses this one decision instead of choosing its own; the other basis is only ever
+    a labelled control layer."""
     currencies = frame_currencies(data)
     if ReportingBasis.CONSOLIDATED in currencies:
+        # consolidated is the default only while it is current: statements a company stopped
+        # consolidating years ago never become 'the latest' research over current standalone
+        cons = latest_fiscal_year_end(data, ReportingBasis.CONSOLIDATED)
+        alone = latest_fiscal_year_end(data, ReportingBasis.STANDALONE)
+        if (ReportingBasis.STANDALONE in currencies and cons is not None and alone is not None
+                and cons < alone):
+            return ReportingBasis.STANDALONE, (f"{ANALYTICAL_STALE_CONSOLIDATED} (consolidated "
+                                               f"FY ends {cons}, standalone {alone})")
         return ReportingBasis.CONSOLIDATED, ANALYTICAL_CONSOLIDATED
     if ReportingBasis.STANDALONE in currencies:
         return ReportingBasis.STANDALONE, ANALYTICAL_STANDALONE

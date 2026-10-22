@@ -42,6 +42,7 @@ from stock_research_ai.adapters.rendering.generate import LiveFinalReportGenerat
 from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
 from stock_research_ai.adapters.screener.source import (
+    analytical_order,
     analytical_page_urls,
     carries_statements,
     validate_url,
@@ -633,12 +634,14 @@ def create_app(
     async def _analytical_extraction(source_url: str) -> CompanyExtractionResult:
         """The company's analytical-basis page, acquired in the SAME order Detailed Research
         binds its primary page (consolidated, else standalone; a page that fails, names no
-        company or carries no statements on its own basis falls through - the page-level
-        form of Detailed's select_analytical_basis), so Summary and Detailed never silently
-        differ in basis. The last page's outcome, failure included, is returned / raised as
-        before."""
+        company or carries no statements on its own basis falls through, and a consolidated
+        view whose statements are older than the standalone view's is never chosen - the
+        page-level form of Detailed's select_analytical_basis), so Summary and Detailed never
+        silently differ in basis. With no usable page, the last page's outcome, failure
+        included, is returned / raised as before."""
         urls = analytical_page_urls(source_url)
         engine = current_job_manager().engine
+        acquired: list[CompanyExtractionResult] = []
         for url in urls[:-1]:
             try:
                 extraction = await engine.extract_company(
@@ -647,8 +650,20 @@ def create_app(
             except Exception:  # noqa: BLE001 - as Detailed: fall back to the next view
                 continue
             if extraction.raw_artifacts and carries_statements(extraction):
-                return extraction
-        return await engine.extract_company(ExtractionRequest(provider="screener", url=urls[-1]))
+                acquired.append(extraction)
+        if not acquired:  # the last page's outcome, failure included, as before
+            return await engine.extract_company(
+                ExtractionRequest(provider="screener", url=urls[-1]))
+        try:  # compared, never required: a failed standalone view keeps the consolidated one
+            last = await engine.extract_company(
+                ExtractionRequest(provider="screener", url=urls[-1]))
+        except Exception:  # noqa: BLE001
+            return acquired[0]
+        if last.raw_artifacts and last.company is not None:
+            acquired.append(last)
+        # the same order Detailed binds (analytical_order): a stale consolidated view is
+        # never the Summary's basis over current standalone statements
+        return acquired[analytical_order(acquired)[0]]
 
     async def _generate_summary(
         payload: BrowserSummaryRequest, model: SummaryModel

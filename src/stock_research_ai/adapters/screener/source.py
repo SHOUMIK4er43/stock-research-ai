@@ -1,13 +1,14 @@
 """Bounded anonymous HTTP acquisition; replay never constructs an HTTP client."""
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
 
 import httpx
 
 from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.financial import PeriodFrequency
 from stock_research_ai.domain.provenance import AcquiredPayload, RetrievalStatus, SourceRetrieval
 
 MAX_BYTES = 5_000_000
@@ -65,6 +66,30 @@ def carries_statements(extraction: CompanyExtractionResult) -> bool:
         for o in (*extraction.profit_loss, *extraction.balance_sheet, *extraction.cashflow,
                   *extraction.quarterly)
     )
+
+
+def latest_annual_end(extraction: CompanyExtractionResult) -> date | None:
+    """The latest annual statement period end the page carries on its own basis."""
+    company = extraction.company
+    if company is None:
+        return None
+    return max((o.period.end_date for o in (*extraction.profit_loss, *extraction.balance_sheet)
+                if o.value is not None and o.period.end_date is not None
+                and o.period.frequency in (PeriodFrequency.ANNUAL, PeriodFrequency.POINT_IN_TIME)
+                and o.reporting_scope == company.reporting_scope), default=None)
+
+
+def analytical_order(extractions: list[CompanyExtractionResult]) -> list[int]:
+    """Indexes in analytical-basis order (acquisition order = consolidated first): a page
+    carrying statements beats one that does not, and a consolidated page whose latest annual
+    statements are older than the standalone page's is never primary - the page-level form
+    of financial_analytics.select_analytical_basis."""
+    order = sorted(range(len(extractions)), key=lambda i: not carries_statements(extractions[i]))
+    if len(order) > 1 and carries_statements(extractions[order[1]]):
+        first, second = (latest_annual_end(extractions[i]) for i in order[:2])
+        if first is not None and second is not None and first < second:
+            order[0], order[1] = order[1], order[0]
+    return order
 
 
 class ScreenerSource:

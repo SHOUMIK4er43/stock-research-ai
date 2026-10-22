@@ -25,8 +25,8 @@ from stock_research_ai.adapters.rendering.cli import build_research_stage
 from stock_research_ai.adapters.screener.peers_api import PeerFetch
 from stock_research_ai.adapters.screener.research_dataset import build_screener_dataset
 from stock_research_ai.adapters.screener.source import (
+    analytical_order,
     analytical_page_urls,
-    carries_statements,
     validate_url,
 )
 from stock_research_ai.application.final_report_jobs import FinalReportGenerationError
@@ -96,8 +96,9 @@ async def _pages(urls: tuple[str, ...], fetch_page: FetchPage) -> list[Page]:
             continue  # nothing preserved / no company identified on the page
         pages.append(page)
     # the primary (analytical-basis) page carries statements on its own basis - the SAME
-    # rule the Summary applies (carries_statements); acquisition order otherwise
-    return sorted(pages, key=lambda p: not carries_statements(p[0]))
+    # rule the Summary applies (analytical_order: statements on its own basis, a current
+    # consolidated view before standalone); acquisition order otherwise
+    return [pages[i] for i in analytical_order([p[0] for p in pages])]
 
 
 async def _peer_screeners(primary: DetailedScreenerDataset,

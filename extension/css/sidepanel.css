@@ -183,6 +183,11 @@ input[type="text"]:focus-visible {
   flex-wrap: wrap;
 }
 
+/* Same override for rows the controller hides (the report download row). */
+.button-row[hidden] {
+  display: none;
+}
+
 button {
   font: inherit;
   padding: 8px 14px;

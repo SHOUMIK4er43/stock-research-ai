@@ -29,6 +29,7 @@ stock-research-ai-release/
     SHA256SUMS
     getting-started.md
     privacy-disclosure.md
+    v1-user-guide.md
 ```
 
 If it arrived as a ZIP, double-click it in Finder to extract the folder, then open a
@@ -74,18 +75,15 @@ later upgrades you in place** — your existing research is never touched (see
 ## 4. Configure the Summary provider
 
 Detailed Research and Negatives need no AI credential: they are computed locally and
-deterministically. The **Summary** view uses the AI Credits provider. Set, for the service:
-
-- `STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits`
-- `STOCK_RESEARCH_AI_AICREDITS_MODEL=<model id>`
-
-and store the key in your Mac's Keychain (never in a plain text file):
+deterministically. The **Summary** view uses the AI Credits provider. Store the key in your
+Mac's Keychain (never in a plain text file):
 
 ```sh
-stock-research-ai configure-analyst
+stock-research-ai configure-analyst --provider aicredits
 ```
 
 You'll be prompted to paste your key — it will not be displayed on screen as you type.
+The provider and model are selected in step 7, together with the extension.
 
 ## 5. Confirm everything is set up
 
@@ -117,6 +115,20 @@ manually from the extracted folder:
 3. Turn on **Developer mode** (top-right toggle).
 4. Click **Load unpacked** and select the folder you just extracted.
 5. You should see "Stock Research AI" appear in your extensions list with its icon.
+6. Copy its **ID** (32 letters, shown on the extension's card), then, in Terminal from inside
+   the release folder, record the service settings and re-run the installer:
+
+   ```sh
+   export STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN=chrome-extension://<the ID you copied>
+   export STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits
+   export STOCK_RESEARCH_AI_AICREDITS_MODEL=<model id>
+   ./install-macos.sh
+   ```
+
+   The background service starts without your Terminal's settings, so the installer writes
+   these (never your key) into it and restarts it. Only this extension can pair; without
+   the origin, pairing always fails. Re-run it the same way if you ever move the extension
+   folder (Chrome derives the ID from the folder) or change the model.
 
 ## 8. Generate a pairing code
 
@@ -194,8 +206,10 @@ undone).
   `stock-research-ai diagnostics`.
 - **Extension shows "not paired"** — run `stock-research-ai pair-code` again and pair
   once more.
-- **Port already in use** — set `STOCK_RESEARCH_AI_HTTP_PORT` to a different port
-  before installing, or stop whatever else is using port 8000.
+- **Port already in use** — the extension connects to port 8000; stop whatever else is
+  using port 8000, then restart the service (below).
+- **"Pairing failed" with a fresh code** — the service has no (or another) extension
+  origin: repeat step 7.6 with the ID shown in `chrome://extensions`.
 - **"uv was not found"** — install `uv` from https://astral.sh/uv first.
 
 ## Restart the service manually (rarely needed)

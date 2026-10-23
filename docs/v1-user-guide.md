@@ -71,7 +71,12 @@ the service's environment:
 - `STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits`
 - `STOCK_RESEARCH_AI_AICREDITS_MODEL=<model id>`
 - a key, either `STOCK_RESEARCH_AI_AICREDITS_API_KEY` or stored in the macOS Keychain with
-  `stock-research-ai configure-analyst`
+  `stock-research-ai configure-analyst --provider aicredits`
+
+For the installed background service, export the two selectors (and
+`STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN`, needed for pairing) and re-run
+`./install-macos.sh`: launchd starts the service without your Terminal's environment, so the
+installer records these non-secret settings in the service. Keys are never recorded there.
 
 `stock-research-ai diagnostics` reports whether a credential is configured (never the key).
 Never commit a key or a `.env` file; only `.env.example` (variable names, no values) is part

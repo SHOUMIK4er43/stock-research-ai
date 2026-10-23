@@ -433,3 +433,20 @@ def test_forbidden_marker_scan_does_not_flag_legitimate_authorization_header_cod
     assert client_js.is_file()
     assert "Authorization" in client_js.read_text()
     assert scan_for_forbidden_markers([client_js]) == {}
+
+
+def test_launch_agent_plist_refuses_a_non_allowlisted_environment_key(tmp_path) -> None:
+    with pytest.raises(ReleaseValidationError):
+        render_launch_agent_plist(
+            label=LAUNCH_AGENT_LABEL,
+            program_arguments=["/x/stock-research-ai", "serve-http"],
+            stdout_path=tmp_path / "out.log",
+            stderr_path=tmp_path / "err.log",
+            environment={"STOCK_RESEARCH_AI_AICREDITS_API_KEY": "planted"},
+        )
+    smuggled = plistlib.dumps({"Label": LAUNCH_AGENT_LABEL, "ProgramArguments": ["x"],
+                               "RunAtLoad": True, "StandardOutPath": "o",
+                               "StandardErrorPath": "e",
+                               "EnvironmentVariables": {"STOCK_RESEARCH_AI_ANALYST_API_KEY": "v"}})
+    assert any("non-allowlisted" in p
+               for p in validate_launch_agent_plist(smuggled, LAUNCH_AGENT_LABEL))

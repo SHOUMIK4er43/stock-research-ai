@@ -181,10 +181,19 @@ if [[ "$HEALTHY" -eq 1 ]]; then
   cat <<EOF
 Stock Research AI is installed and running at http://127.0.0.1:${PORT}
 
-Next steps:
-  ${BINARY} configure-analyst   # store your Anthropic API key in the macOS Keychain
+Next steps (see getting-started.md):
+  ${BINARY} configure-analyst --provider aicredits   # Summary key, stored in the Keychain
   ${BINARY} diagnostics         # confirm everything is configured correctly
 EOF
+  if [[ -z "${STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN:-}" ]]; then
+    cat <<'EOF'
+
+The Chrome extension cannot pair yet: no extension origin is set. Load the extension,
+then re-run this installer with
+  STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN=chrome-extension://<extension ID>
+exported (getting-started.md, step 7).
+EOF
+  fi
 else
   cat >&2 <<EOF
 warning: the local service did not report healthy within ${HEALTH_TIMEOUT_SECONDS}s.

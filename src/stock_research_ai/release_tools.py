@@ -15,7 +15,7 @@ import json
 import plistlib
 import tarfile
 import zipfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,15 @@ from stock_research_ai.adapters.http.browser_schemas import API_VERSION
 #: The stable reverse-domain-style LaunchAgent label used consistently across the
 #: plist filename, launchctl commands, installer, uninstaller, and docs.
 LAUNCH_AGENT_LABEL = "ai.stockresearch.local"
+
+#: The ONLY settings the LaunchAgent may carry: non-secret selectors. API keys never go
+#: here - they are resolved from the Keychain by the running process.
+LAUNCH_AGENT_ENVIRONMENT_KEYS = (
+    "STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN",
+    "STOCK_RESEARCH_AI_ANALYST_PROVIDER",
+    "STOCK_RESEARCH_AI_AICREDITS_MODEL",
+    "STOCK_RESEARCH_AI_HTTP_PORT",
+)
 
 #: Files/directories a production extension release ZIP must never contain - these are
 #: development-only, test-only, or version-control artifacts.
@@ -281,6 +290,7 @@ def render_launch_agent_plist(
     working_directory: Path | None = None,
     keep_alive: bool = True,
     run_at_load: bool = True,
+    environment: Mapping[str, str] | None = None,
 ) -> bytes:
     """Returns a well-formed plist (bytes) via stdlib `plistlib` - never a hand-written
     XML string - so structural validity (and macOS's own `plutil -lint`) is guaranteed
@@ -299,7 +309,21 @@ def render_launch_agent_plist(
     }
     if working_directory is not None:
         plist["WorkingDirectory"] = str(working_directory)
+    if environment:
+        unexpected = sorted(set(environment) - set(LAUNCH_AGENT_ENVIRONMENT_KEYS))
+        if unexpected:
+            raise ReleaseValidationError(f"not a LaunchAgent setting: {unexpected}")
+        plist["EnvironmentVariables"] = dict(sorted(environment.items()))
     return plistlib.dumps(plist)
+
+
+def launch_agent_environment(environ: Mapping[str, str]) -> dict[str, str]:
+    """The non-secret service settings present in `environ` (the installer's own
+    environment), for the LaunchAgent: launchd starts the service with an empty
+    environment, so without these the installed service has no approved extension
+    origin (pairing always fails) and no Summary provider selection."""
+    return {key: environ[key] for key in LAUNCH_AGENT_ENVIRONMENT_KEYS
+            if environ.get(key, "").strip()}
 
 
 def validate_launch_agent_plist(plist_bytes: bytes, expected_label: str) -> list[str]:
@@ -316,6 +340,10 @@ def validate_launch_agent_plist(plist_bytes: bytes, expected_label: str) -> list
         problems.append("ProgramArguments missing or empty")
     if "RunAtLoad" not in data:
         problems.append("RunAtLoad missing")
+    unexpected_env = sorted(set(data.get("EnvironmentVariables", {}))
+                            - set(LAUNCH_AGENT_ENVIRONMENT_KEYS))
+    if unexpected_env:
+        problems.append(f"EnvironmentVariables carries a non-allowlisted key: {unexpected_env}")
     if "StandardOutPath" not in data or "StandardErrorPath" not in data:
         problems.append("StandardOutPath/StandardErrorPath missing")
 

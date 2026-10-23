@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -596,6 +597,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif args.command == "render-launchagent":
         from stock_research_ai.release_tools import (
             LAUNCH_AGENT_LABEL,
+            launch_agent_environment,
             render_launch_agent_plist,
             validate_launch_agent_plist,
         )
@@ -607,6 +609,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             program_arguments=[executable, "serve-http"],
             stdout_path=log_dir / "launchd-stdout.log",
             stderr_path=log_dir / "launchd-stderr.log",
+            environment=launch_agent_environment(os.environ),
         )
         problems = validate_launch_agent_plist(plist_bytes, LAUNCH_AGENT_LABEL)
         if problems:

@@ -42,7 +42,8 @@ const FAILURE_TEXT = Object.freeze({
   COMPANY_IDENTITY_MISMATCH:
     "The company identity could not be confirmed for this page; no report was produced.",
   SOURCE_ACQUISITION_FAILED: "The company's Screener page could not be acquired. Try again later.",
-  UPSTREAM_RESEARCH_FAILED: "A research step failed; no report was produced.",
+  UPSTREAM_RESEARCH_FAILED:
+    "A research step could not run on this company's data (for example, the page has no financial statements), so no report was produced. Retrying will not help unless the source data changes; Summary may still work.",
   REPORT_COMPOSITION_FAILED: "The final report could not be composed.",
   RENDER_FAILED: "The report could not be rendered in any format.",
   OUTPUT_IO_FAILED: "The report could not be saved locally.",
@@ -193,6 +194,7 @@ export function parsePanel(payload) {
     analyticalBasis: basis(payload.analytical_basis),
     // analysis, apart from `status` (rendering / execution); null = not assessed, never COMPLETE
     researchStatus: RESEARCH_STATUSES.includes(payload.research_status) ? payload.research_status : null,
+    basisNote: typeof payload.basis_note === "string" ? payload.basis_note.slice(0, 300) : null,
     researchCompleteness: completenessLines(payload.research_completeness),
     controlBasis: basis(payload.control_basis),
     disclaimer: str(payload.disclaimer),
@@ -266,6 +268,7 @@ export function renderDetailedResearch(doc, panel) {
   return el(doc, "article", { className: "final-report-detailed", children: [
     el(doc, "h2", { text: `${panel.companyName} — Detailed Research` }),
     el(doc, "p", { className: "final-report-basis", text: basisLine(panel) }),
+    panel.basisNote ? el(doc, "p", { className: "muted", text: panel.basisNote }) : null,
     completenessBlock(doc, panel),
     el(doc, "p", { className: "muted", text: `As of ${panel.asOf}. ${panel.disclaimer}` }),
     block(doc, "Executive summary", panel.summary, "summary", "No summary points were supplied."),

@@ -428,3 +428,12 @@ test("the ready line states execution and research completeness separately", asy
     /Ready — Infosys Ltd — as of 2026-10-12\. Research completeness: PARTIAL\./);
   assert.match(h.get("final-report-content").textContent, /Research completeness: PARTIAL/);
 });
+
+test("a non-default basis choice is explained in Detailed Research", () => {
+  const panel = parsePanel(panelPayload({ analytical_basis: "STANDALONE",
+    basis_note: "Standalone selected because the consolidated statements are older (consolidated FY ends 2022-03-31, standalone 2026-03-31)." }));
+  const html = renderDetailedResearch(createFakeDocument(), panel).serialize();
+  assert.match(html, /Analytical basis: STANDALONE/);
+  assert.match(html, /Standalone selected because the consolidated statements are older/);
+  assert.equal(parsePanel(panelPayload({ basis_note: 7 })).basisNote, null);
+});

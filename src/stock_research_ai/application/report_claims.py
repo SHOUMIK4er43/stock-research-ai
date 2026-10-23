@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID, uuid5
@@ -103,9 +103,19 @@ def basis_of(value: ReportingBasis | str | None) -> ClaimBasis:
     return ClaimBasis.NOT_APPLICABLE
 
 
+STATEMENT_PLACES = Decimal("0.000001")
+
+
 def number(value: Decimal | None) -> str:
-    """The upstream value as written (no rounding: Box 15 formats)."""
-    return "unavailable" if value is None else format(value, "f")
+    """The upstream value as written in a claim's statement: every digit up to six decimals;
+    longer arithmetic carries (Box 10 / Box 11) are rounded half-even to six places in the
+    TEXT only - the claim's value keeps every digit and Box 15 formats it."""
+    if value is None:
+        return "unavailable"
+    exponent = value.as_tuple().exponent
+    if isinstance(exponent, int) and exponent < -6:
+        value = value.quantize(STATEMENT_PLACES, rounding=ROUND_HALF_EVEN)
+    return format(value, "f")
 
 
 def _day(value: datetime | date | None) -> date | None:

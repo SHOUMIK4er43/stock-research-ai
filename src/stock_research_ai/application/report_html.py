@@ -37,6 +37,10 @@ CSS = """
 --red:#a4161a;--red-bg:#fdecec;--yellow:#8a6100;--yellow-bg:#fff6dc;--pos:#1f6f3f;
 --pos-bg:#e9f6ee;--lim:#3d4a5c;--lim-bg:#eef1f5;--dil:#5b3b8c;--dil-bg:#f2edf9;
 --scn:#14527a;--scn-bg:#e8f2fa;--notice:#7a4b00;--notice-bg:#fff8eb}
+.st-COMPLETE{color:var(--pos);background:var(--pos-bg)}
+.st-PARTIAL{color:var(--yellow);background:var(--yellow-bg)}
+.st-UNAVAILABLE{color:var(--lim);background:var(--lim-bg)}
+.st-NOT_APPLICABLE{color:var(--muted);background:var(--soft)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,
 "Segoe UI",Roboto,"DejaVu Sans",Arial,sans-serif;overflow-wrap:anywhere}
@@ -210,7 +214,7 @@ def _block(b: Block) -> str:
 def _section(s: Section) -> str:
     cls = ' class="prominent"' if s.prominent else ""
     out = [f'<section id="s{s.order}"{cls}><h2>{s.order}. {h(s.title)} '
-           f'<span class="tag">{h(s.status_label)}</span></h2>']
+           f'<span class="tag st-{h(s.status)}">{h(s.status_label)}</span></h2>']
     if s.missing:
         out.append(f'<p class="meta">Missing input families: {h(", ".join(s.missing))}</p>')
     out += [_block(b) for b in s.blocks]
@@ -225,7 +229,8 @@ def render_html(doc: RenderDocument) -> str:
     facts = "".join(f"<tr><th>{h(k)}</th><td>{h(v)}</td></tr>" for k, v in (
         *doc.identifiers, *doc.header_facts, ("Composed at", doc.generated_at)))
     toc = "".join(f'<li><a href="#s{s.order}">{s.order}. {h(s.title)}</a> '
-                  f'<span class="meta">{h(s.status_label)}</span></li>' for s in doc.sections)
+                  f'<span class="meta st-{h(s.status)}">{h(s.status_label)}</span></li>'
+                  for s in doc.sections)
     notes = ""
     if doc.warnings:
         notes = ("<section><h2>Rendering notes</h2><ul>" + "".join(

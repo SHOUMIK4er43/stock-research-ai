@@ -17,8 +17,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from stock_research_ai.application.report_presentation import basis_note
 from stock_research_ai.application.research_completeness import summary_lines
-from stock_research_ai.domain.final_research_report import FinalResearchReportDataset
+from stock_research_ai.domain.final_research_report import (
+    FinalResearchReportDataset,
+    ReportSection,
+    ResearchCompleteness,
+    SectionId,
+)
 from stock_research_ai.domain.report_rendering import (
     DISCLAIMER,
     STATUS_LABELS,
@@ -84,6 +90,8 @@ class FinalReportPanel(BaseModel):
     #: rendering status above is execution, this is analysis; None on older reports
     research_status: str | None = None
     research_completeness: tuple[tuple[str, str], ...] = ()
+    #: a readable note when the basis is not the default consolidated choice (e.g. stale)
+    basis_note: str | None = None
 
 
 def _list(items: Iterable[PanelItem]) -> PanelList:
@@ -93,6 +101,17 @@ def _list(items: Iterable[PanelItem]) -> PanelList:
 
 def _label(code: str) -> str:
     return code.replace("_", " ").strip().capitalize()
+
+
+def _panel_section(s: ReportSection, rc: ResearchCompleteness | None) -> PanelSection:
+    """Section 0 shows the research conclusion: its own status only says its inputs exist."""
+    if s.section_id == SectionId.DUE_DILIGENCE_STATUS and rc is not None:
+        return PanelSection(order=s.order, title=s.title, status=rc.overall.value,
+                            status_label=f"Research {STATUS_LABELS[rc.overall.value]}",
+                            reason="research completeness (status overview inputs: "
+                                   f"{STATUS_LABELS[s.status.value]})")
+    return PanelSection(order=s.order, title=s.title, status=s.status.value,
+                        status_label=STATUS_LABELS[s.status.value], reason=s.status_reason)
 
 
 def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) -> FinalReportPanel:
@@ -144,9 +163,8 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         formats=tuple(f.format.value for f in manifest.files),
         failed_formats=tuple(f.format.value for f in manifest.failures),
         disclaimer=DISCLAIMER, summary=_list(summary),
-        sections=tuple(PanelSection(order=s.order, title=s.title, status=s.status.value,
-                                    status_label=STATUS_LABELS[s.status.value],
-                                    reason=s.status_reason) for s in report.sections),
+        sections=tuple(_panel_section(s, report.research_completeness)
+                       for s in report.sections),
         red=_list(risk_items(report.risks.red)), yellow=_list(risk_items(report.risks.yellow)),
         positive_controls=_list(risk_items(report.risks.positive_controls)),
         input_conflicts=_list(conflicts), data_limitations=_list(limitations),
@@ -154,7 +172,8 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         control_basis=m.control_basis.value if m.control_basis else None,
         business_class=m.business_class, industry=m.industry.value,
         research_status=rc.overall.value if (rc := report.research_completeness) else None,
-        research_completeness=tuple(summary_lines(rc)) if rc else ())
+        research_completeness=tuple(summary_lines(rc)) if rc else (),
+        basis_note=basis_note(m.basis_selection))
 
 
 __all__ = ["FinalReportPanel", "PanelItem", "PanelList", "PanelSection", "build_panel"]

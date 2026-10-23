@@ -23,6 +23,7 @@ from stock_research_ai.domain.final_research_report import (
     Appendix,
     CellStatus,
     ColumnKind,
+    CompletenessBlock,
     FinalResearchReportDataset,
     OrderBucketKind,
     ReportMetadata,
@@ -161,6 +162,10 @@ class _Builder:
             severity=risk.severity if risk is not None else None,
             refs=refs, more_refs=more, limitations=c.limitations)
 
+    def requirement(self, block: str) -> CompletenessBlock | None:
+        rc = self.r.research_completeness
+        return next((b for b in rc.blocks if b.block == block), None) if rc else None
+
     def claim_list(self, title: str | None, tone: Tone, ids: Sequence[UUID], *,
                    empty: str | None = None, exact: bool = False,
                    shown: set[UUID] | None = None) -> ClaimList:
@@ -217,6 +222,12 @@ class _Builder:
                 ctags.append(col.basis.value)
             columns.append(Column(col.label, tuple(ctags), numeric=col.kind in (
                 ColumnKind.HISTORICAL, ColumnKind.FORECAST, ColumnKind.VALUE)))
+        shared = {c.tags for c in columns[1:]}
+        if len(columns) > 2 and len(shared) == 1 and next(iter(shared)):
+            # every column carries the same tags: say it once for the table (narrow period
+            # columns otherwise break their header words)
+            tags.append("Columns: " + ", ".join(next(iter(shared))))
+            columns = [columns[0], *(replace(c, tags=()) for c in columns[1:])]
         rows: list[Row] = []
         self.rendered.update(c.claim_id for row in t.rows for c in row.cells
                              if c.claim_id is not None)
@@ -243,6 +254,15 @@ class _Builder:
                     cells.append(Cell(UNAVAILABLE_TEXT, "UNAVAILABLE", cell.note,
                                       forecast=forecast))
             label = row.label + (f" ({row.unit})" if row.unit else "")
+            gaps = [c for c in cells if c.kind in ("UNAVAILABLE", "NOT_APPLICABLE")]
+            notes = {(c.kind, c.note) for c in gaps}
+            if len(gaps) > 1 and len(notes) == 1:
+                # one reason for every gap in the row: stated once on the row, not per cell
+                kind, note = next(iter(notes))
+                if note:
+                    word = UNAVAILABLE_TEXT if kind == "UNAVAILABLE" else NOT_APPLICABLE_TEXT
+                    label += f" — {word.lower()} where shown ({note})"
+                    cells = [replace(c, note=None) if c.kind == kind else c for c in cells]
             rtags = (_ROW_TAGS[row.kind],) if row.kind in _ROW_TAGS else ()
             rows.append(Row(label, rtags, tuple(cells)))
         self.cells += sum(len(r.cells) + 1 for r in rows)
@@ -267,8 +287,11 @@ class _Builder:
     def status_block(self, s: ReportSection) -> Paragraph:
         tone: Tone = "NOTICE" if s.status in (SectionStatus.UNAVAILABLE,
                                                SectionStatus.PARTIAL) else "NEUTRAL"
+        # section 0 reports research status; its own status is only whether its inputs exist
+        label = ("Status overview inputs" if s.section_id == S.DUE_DILIGENCE_STATUS
+                 else "Section status")
         return Paragraph(f"{STATUS_LABELS[s.status.value]} — {s.status_reason}", tone,
-                         label="Section status")
+                         label=label)
 
     def common_tail(self, s: ReportSection, shown: set[UUID],
                     tables: Sequence[UUID] | None = None) -> list[Block]:
@@ -346,7 +369,17 @@ class _Builder:
                 tone = "LIMITATION"
             elif p.kind.value in ("FORECAST_RANGE", "VALUATION_RANGE"):
                 tone = "SCENARIO"
-            title = f"{_label(p.kind.value)} — {STATUS_LABELS.get(p.status, p.status)}"
+            only_limits = bool(p.claim_ids) and all(
+                self.claims[i].claim_type.value == "DATA_LIMITATION"
+                for i in p.claim_ids if i in self.claims)
+            if p.status == "AVAILABLE" and p.kind.value != "DATA_LIMITATIONS":
+                # a point whose only content is a data limitation is not 'available'
+                title = _label(p.kind.value) + (
+                    f" — {STATUS_LABELS['UNAVAILABLE']}" if only_limits else "")
+            elif p.status == "AVAILABLE":
+                title = f"{_label(p.kind.value)} ({len(p.claim_ids)})"
+            else:
+                title = f"{_label(p.kind.value)} — {STATUS_LABELS.get(p.status, p.status)}"
             block = self.claim_list(title, tone, p.claim_ids, shown=shown)
             extra: list[tuple[str, str]] = []
             if p.reason:
@@ -501,9 +534,17 @@ class _Builder:
 
     def valuation(self, s: ReportSection, shown: set[UUID]) -> list[Block]:
         v = self.r.valuation
-        out: list[Block] = [Paragraph(
+        out: list[Block] = []
+        block = self.requirement("VALUATION")
+        if block is not None and block.status.value != "COMPLETE":
+            out.append(Paragraph(
+                f"Valuation: {STATUS_LABELS[block.status.value]}. "
+                + "; ".join(reason_text(r) for r in block.reasons) + ". No valuation multiple "
+                "or assumption is ever invented: methods need explicitly supplied inputs.",
+                "LIMITATION", label="Valuation availability"))
+        out.append(Paragraph(
             "Each Box 11 method and scenario is shown separately. Blended value: none. "
-            "Price objective: none. Recommendation: none.", "NOTICE", label="Valuation policy")]
+            "Price objective: none. Recommendation: none.", "NOTICE", label="Valuation policy"))
         rows = []
         for m in v.methods:
             results = [self.claims[i] for i in m.result_claim_ids if i in self.claims]
@@ -673,8 +714,13 @@ class _Builder:
             blocks.extend(self.common_tail(s, shown))
         if len(blocks) == 1 and s.status in (SectionStatus.COMPLETE, SectionStatus.PARTIAL):
             blocks.append(Paragraph("No section content was supplied by Box 14.", "NOTICE"))
-        return Section(s.order, s.section_id.value, s.title, s.status.value,
-                       STATUS_LABELS[s.status.value], s.status_reason,
+        status, label = s.status.value, STATUS_LABELS[s.status.value]
+        rc = self.r.research_completeness
+        if s.section_id == S.DUE_DILIGENCE_STATUS and rc is not None:
+            # the status overview's badge is the research conclusion, never 'Complete' for
+            # a report whose material research is partial
+            status, label = rc.overall.value, f"Research {STATUS_LABELS[rc.overall.value]}"
+        return Section(s.order, s.section_id.value, s.title, status, label, s.status_reason,
                        tuple(f.value for f in s.completeness.missing), tuple(blocks),
                        prominent=s.section_id == S.DUE_DILIGENCE_STATUS)
 
@@ -691,21 +737,40 @@ class _Builder:
         identifiers = tuple((k, v) for k, v in (
             ("NSE", m.nse_symbol), ("ISIN", m.isin), ("BSE", m.bse_code),
             ("Company key", m.company_key)) if v)
-        facts = (
+        rc = self.r.research_completeness
+        glance: list[tuple[str, str]] = [
             ("As of", str(m.as_of)),
             ("Latest fiscal year end", str(m.latest_fiscal_year_end or "Not stated")),
             ("Analytical basis", m.analytical_basis.value),
-            ("Control basis", m.control_basis.value if m.control_basis else "None"),
-            ("Business classification", classification_text(m)),
+            ("Control basis", m.control_basis.value if m.control_basis
+             else "None (one basis analysed)"),
+        ]
+        note = basis_note(m.basis_selection)
+        if note:
+            glance.append(("Basis selection", note))
+        glance.append(("Business classification", classification_text(m)))
+        if rc is not None:
+            glance.append(("Research completeness", f"{STATUS_LABELS[rc.overall.value]} (see "
+                           "section 0 for what is complete, partial and unavailable)"))
+            for key, label in (("FORECAST", "Forecast"), ("VALUATION", "Valuation")):
+                req = self.requirement(key)
+                if req is not None:
+                    glance.append((label, STATUS_LABELS[req.status.value] + (
+                        " — " + "; ".join(reason_text(r) for r in req.reasons)
+                        if req.reasons else "")))
+        else:
+            glance.append(("Research completeness", "Not assessed (report composed before the "
+                           "completeness ledger)"))
+        facts = (*glance,
+            ("Recommendation", "None (Box 14 recommendation: NONE)"),
+            ("Currency", m.currency.value),
+            ("Units", m.unit_note),
             ("Order-book model", "order-book driven" if m.business_model == "ORDER_BOOK_DRIVEN"
              else "not order-book driven"),
             ("Identity status", m.identity_status),
-            ("Currency", m.currency.value),
-            ("Units", m.unit_note),
             ("Report ID", str(self.r.report_id)),
             ("Box 14 SHA-256", sha),
             ("Engines", f"{m.engine_version}; {m.selection_rules_version}"),
-            ("Recommendation", "None (Box 14 recommendation: NONE)"),
         )
         return RenderDocument(
             report_id=str(self.r.report_id),
@@ -713,6 +778,36 @@ class _Builder:
             identifiers=identifiers, as_of=str(m.as_of), generated_at=m.generated_at.isoformat(),
             box14_sha256=sha, header_facts=facts, sections=tuple(sections),
             warnings=tuple(dict.fromkeys(self.warnings)), cells=self.cells)
+
+
+#: readable text for structured reason codes (the code itself is always kept)
+REASON_TEXT = {
+    "MULTIPLE_MISSING": "no valuation multiple was supplied (none is assumed)",
+    "ATTRIBUTION_UNKNOWN": "profit attributable to ordinary shareholders is not established",
+    "CASH_UNAVAILABLE": "cash and debt inputs for the equity bridge are unavailable",
+    "INPUT_MISSING": "a required input is not reported",
+    "NO_APPLICABLE_METHOD": "no valuation method applies to this business model",
+    "LAYER_NOT_SUPPLIED": "the upstream layer was not supplied",
+    "CLASSIFICATION_UNRESOLVED": "the business model is unresolved",
+    "NO_ELIGIBLE_PEERS": "no comparable peer is eligible",
+    "PAT_NOT_FORECAST": "PAT is not forecast by this model",
+}
+
+
+def reason_text(code: str) -> str:
+    text = REASON_TEXT.get(code)
+    if text is None and code.endswith("_NOT_FORECAST"):
+        text = f"{code[: -len('_NOT_FORECAST')].replace('_', ' ').lower()} is not forecast"
+    return f"{text} ({code})" if text else code
+
+
+def basis_note(selection: str | None) -> str | None:
+    """A readable note only when the basis is not the default consolidated choice."""
+    if not selection or "not current" not in selection:
+        return None
+    detail = selection.split("(", 1)[1].rstrip(")") if "(" in selection else ""
+    return ("Standalone selected because the consolidated statements are older"
+            + (f" ({detail})" if detail else "") + ".")
 
 
 def _with_label(view: ClaimView, label: str, severity: str | None = None) -> ClaimView:

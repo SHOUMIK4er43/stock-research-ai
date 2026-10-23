@@ -1096,8 +1096,18 @@ def series_table(ctx: Ctx, section: SectionId, code: str, title: str, basis: Cla
             if cid is not None and unit is None:
                 unit = ctx.book.get(cid).unit
             cells.append(cell(c.key, ctx.book, cid, note=note, not_applicable=not_app))
+        if layer == "B5" and any(x.note == CalculationStatus.UNSUPPORTED_SECTOR.value
+                                 for x in cells):
+            # Box 5 types the sector gate on its latest year only: the metric does not apply
+            # to this business in any year, so no year reads 'not reported'
+            cells = [cell(x.column, ctx.book, None, note=CalculationStatus.UNSUPPORTED_SECTOR
+                          .value, not_applicable=True)
+                     if x.status.value == "UNAVAILABLE" and x.note == "NOT_REPORTED" else x
+                     for x in cells]
         if all(x.status.value == "UNAVAILABLE" and x.note == "NOT_REPORTED" for x in cells):
             continue
+        if all(x.status.value == "NOT_APPLICABLE" for x in cells):
+            continue  # a line this business model does not have is not a row of its history
         rows.append(row(key, label, RowKind.HISTORICAL if layer == "B4" else RowKind.CALCULATION,
                         cells, unit=unit))
     footnotes = (f"Reporting basis: {basis.value}. Values as reported upstream (Box 4) or "
@@ -1320,13 +1330,15 @@ def management(ctx: Ctx) -> None:
     for t in d13.governance_risks.topics:  # bounded: one row per topic, never every disclosure
         source = (t.source_ids[0] if t.source_ids else
                   f"{len(t.evidence_ids)} Box 3 evidence items" if t.evidence_ids else
-                  f"{len(t.record_ids)} upstream records" if t.record_ids else None)
+                  f"{len(t.record_ids)} upstream records" if t.record_ids else "None reviewed")
         found = t.evidence_status.value in ("EVIDENCE_FOUND",
                                             "NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE")
-        risk = t.risk_status.value + (f" ({t.reason})" if t.reason else "")
+        risk = GOVERNANCE_RISK_LABEL[t.risk_status.value] + (
+            f": {t.reason.replace('_', ' ').lower()}" if t.reason else "")
         ledger.append(row(f"GOV|{t.topic}", t.title,
                           RowKind.FACT if found else RowKind.DATA_LIMITATION,
-                          [text("EVIDENCE", t.evidence_status.value), text("RISK", risk),
+                          [text("EVIDENCE", GOVERNANCE_EVIDENCE_LABEL[t.evidence_status.value]),
+                           text("RISK", risk),
                            text("FINDING", t.finding), text("SOURCE", source)]))
     ctx_table(ctx, sec, "GOVERNANCE_EVIDENCE", "Governance evidence ledger (Box 13)", NA,
               [col("EVIDENCE", "Evidence status", ColumnKind.TEXT),
@@ -1336,7 +1348,8 @@ def management(ctx: Ctx) -> None:
               footnotes=("No governance score is assigned. 'No adverse evidence in reviewed "
                          "source' covers only the sources reviewed; it is not a finding of good "
                          "governance. A located disclosure without a registered rule is a fact, "
-                         "not a risk.",))
+                         "not a risk.", "Evidence status codes: " + "; ".join(
+                             f"{v} = {k}" for k, v in GOVERNANCE_EVIDENCE_LABEL.items()) + "."))
     ctx_table(ctx, sec, "GOVERNANCE_CATALOGUE", "Governance catalogue (full)", NA,
               [col("DATE", "Date", ColumnKind.TEXT), col("TITLE", "Entry", ColumnKind.TEXT)],
               rows[: ctx.limits.max_appendix_rows], appendix=True, upstream=len(rows))
@@ -1347,6 +1360,21 @@ def management(ctx: Ctx) -> None:
                 t.value in ("CAPITAL_ALLOCATION", "DIVIDEND_BUYBACK", "M_AND_A", "CAPEX")
                 for t in x.statement_types)), key=lambda x: str(x.statement_id))[:8]:
             ctx.add(sec, statement_claim(ctx, s))
+
+
+GOVERNANCE_EVIDENCE_LABEL = {
+    "EVIDENCE_FOUND": "Evidence found",
+    "NO_ADVERSE_EVIDENCE_IN_REVIEWED_SOURCE": "No adverse evidence in reviewed source",
+    "SOURCE_NOT_AVAILABLE": "No source reviewed",
+    "NOT_EVALUABLE": "Partly reviewed",
+    "NOT_APPLICABLE": "Not applicable",
+}
+GOVERNANCE_RISK_LABEL = {
+    "FLAGGED": "Flagged",
+    "EVALUATED_NO_FLAG": "Evaluated, no flag",
+    "NOT_EVALUABLE": "Not evaluable",
+    "NOT_APPLICABLE": "Not applicable",
+}
 
 
 def governance_claim(ctx: Ctx, g: Any) -> UUID | None:

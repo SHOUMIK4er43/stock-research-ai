@@ -508,7 +508,8 @@ def build_final_report(
         as_of=request.as_of, latest_fiscal_year_end=b13.latest_fiscal_year_end,
         generated_at=generated_at, inputs=tuple(inputs), limits=bounds,
         business_class=_business_class(b4).value,
-        classification_reason=b4.classification_reason)
+        classification_reason=b4.classification_reason,
+        basis_selection=b13.basis_selection)
     return FinalResearchReportDataset(
         report_id=uuid5(NS, f"report|{report_key}"), metadata=metadata, sections=sections,
         due_diligence_status=status_zero, executive_summary=summary, investment_case=case,
@@ -768,14 +769,19 @@ def _summary(ctx: Ctx, risk_view: RiskPresentation, monitor: list[Any], orders: 
         b.count_claim_id for b in orders.buckets if b.count_claim_id is not None][:2]
     point(SummaryKind.ORDER_BOOK, order_ids, "order book unavailable",
           None if orders.applicable else orders.applicability)
+    # the headline forecast line: revenue, else PAT (a lender / bank model has no revenue
+    # line) - existing Box 10 claims only, never a derived figure
+    topics = {ctx.book.get(i).topic for i in ctx.drafts[S.FORECASTS].claims}
+    headline = next((t for t in ("FORECAST_REVENUE", "FORECAST_PAT") if t in topics), None)
     first = sorted({ctx.book.get(i).period_end for i in ctx.drafts[S.FORECASTS].claims
-                    if ctx.book.get(i).topic == "FORECAST_REVENUE"
+                    if ctx.book.get(i).topic == headline
                     and ctx.book.get(i).period_end is not None}, key=str)
     fc = [i for sc in (Scenario.BEAR, Scenario.BULL, Scenario.BASE)
           for i in ctx.drafts[S.FORECASTS].claims
-          if ctx.book.get(i).topic == "FORECAST_REVENUE" and ctx.book.get(i).scenario == sc
+          if ctx.book.get(i).topic == headline and ctx.book.get(i).scenario == sc
           and first and ctx.book.get(i).period_end == first[0]]
-    point(SummaryKind.FORECAST_RANGE, fc, "no Box 10 forecast")
+    point(SummaryKind.FORECAST_RANGE, fc, "no Box 10 forecast" if ctx.box10 is None
+          else "no revenue or PAT forecast line in the Box 10 forecast")
     vals: list[UUID] = []
     for method in dict.fromkeys(m.method for m in value_view.methods):
         found = [i for sc in (Scenario.BEAR, Scenario.BULL, Scenario.BASE)

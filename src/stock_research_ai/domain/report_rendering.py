@@ -146,11 +146,18 @@ def display_number(value: Decimal, *, whole: bool = False) -> str:
     return f"-{text}" if rounded < 0 else text
 
 
+EXACT_PLACES = 6  # readers see at most six decimals; the JSON export keeps every digit
+
+
 def display_exact(value: Decimal) -> str:
-    """The exact Box 14 value, grouped for reading, every carried digit kept."""
+    """The Box 14 value, grouped for reading: every digit up to six decimals, then '…' for
+    the further digits Box 10 / Box 11 arithmetic carries (kept in the JSON export)."""
     if value.is_nan() or value.is_infinite():
         return str(value)
-    text = _group(f"{abs(value):f}")
+    raw = f"{abs(value):f}"
+    whole, _, frac = raw.partition(".")
+    cut = len(frac) > EXACT_PLACES
+    text = _group(f"{whole}.{frac[:EXACT_PLACES]}" if frac else whole) + ("…" if cut else "")
     return f"-{text}" if value < 0 else text
 
 

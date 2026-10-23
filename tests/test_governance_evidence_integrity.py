@@ -398,8 +398,9 @@ def test_y_report_renders_a_bounded_governance_ledger(monkeypatch):
     assert [c.key for c in table.columns] == ["EVIDENCE", "RISK", "FINDING", "SOURCE"]
     auditor = next(r for r in table.rows if r.key == "GOV|AUDITOR_OPINION")
     cells = {c.column: c.text for c in auditor.cells}
-    assert (cells["EVIDENCE"], cells["RISK"]) == ("EVIDENCE_FOUND", "FLAGGED")
+    assert (cells["EVIDENCE"], cells["RISK"]) == ("Evidence found", "Flagged")
     assert "No governance score" in table.footnotes[0]
+    assert "Evidence found = EVIDENCE_FOUND" in table.footnotes[1]  # the code is kept
     rc = report.research_completeness
     gov = next(x for x in rc.blocks if x.block == "GOVERNANCE")
     assert gov.status == SectionStatus.PARTIAL and "AUDITOR_OPINION" in (gov.detail or "")

@@ -912,6 +912,8 @@ class ReportMetadata(BaseModel):
     #: None only in reports written before the class was recorded
     business_class: Code | None = None
     classification_reason: Label | None = None
+    #: why this analytical basis (Box 13), e.g. a consolidated basis that is not current
+    basis_selection: Label | None = None
     engine_version: Label = FINAL_REPORT_ENGINE_VERSION
     selection_rules_version: Label = SELECTION_RULES_VERSION
 

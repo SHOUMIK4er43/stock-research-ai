@@ -1,5 +1,6 @@
 """Wire the engine to persistence and own the runtime resource lifecycle."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -102,6 +103,8 @@ from stock_research_ai.domain.report import (
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation, SectorKPIRequest
 from stock_research_ai.domain.technicals import TechnicalRequest, TechnicalSnapshot
 from stock_research_ai.domain.valuation import ValuationRequest, ValuationSnapshot
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -597,6 +600,11 @@ async def generate_report(
         await database.close()
 
 
+class AnalystConfigurationError(RuntimeError):
+    """The analyst provider is selected but not usable (unsupported, no credential, no
+    model). Never carries a credential value."""
+
+
 async def live_analyst_model(
     settings: Settings,
     secret_store: SecretStore | None = None,
@@ -617,18 +625,20 @@ async def live_analyst_model(
     from stock_research_ai.adapters.secret_store import resolve_analyst_api_key
 
     if settings.analyst_provider not in (None, "anthropic", "aicredits"):
-        raise RuntimeError("Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER")
+        raise AnalystConfigurationError("Unsupported STOCK_RESEARCH_AI_ANALYST_PROVIDER")
     api_key, source = resolve_analyst_api_key(settings, secret_store)
     provider = settings.analyst_provider or ("anthropic" if source != "none" else None)
     if provider is None:
         return None, None
     if api_key is None:
-        raise RuntimeError(f"Selected analyst provider {provider} has no configured credential")
+        raise AnalystConfigurationError(
+            f"Selected analyst provider {provider} has no configured credential"
+        )
     if provider == "aicredits":
         from stock_research_ai.adapters.aicredits.analyst import AICreditsAnalystModel
 
         if not settings.aicredits_model or not settings.aicredits_model.strip():
-            raise RuntimeError("AI Credits requires STOCK_RESEARCH_AI_AICREDITS_MODEL")
+            raise AnalystConfigurationError("AI Credits requires STOCK_RESEARCH_AI_AICREDITS_MODEL")
         return AICreditsAnalystModel(
             api_key=api_key,
             model=settings.aicredits_model,
@@ -768,7 +778,14 @@ async def browser_engine(
     )
     try:
         await database.check_ready()
-        model, provider_kind = await live_analyst_model(settings, secret_store)
+        try:
+            model, provider_kind = await live_analyst_model(settings, secret_store)
+        except AnalystConfigurationError as exc:
+            # A Summary-provider configuration problem must not take the whole local
+            # service down: pairing and Detailed Research (no model call) still serve, and
+            # Summary reports PROVIDER_NOT_CONFIGURED on its own path.
+            _LOGGER.warning("Analyst provider unavailable; legacy analysis disabled: %s", exc)
+            model, provider_kind = None, None
         analyst_services = (
             AnalystServices(
                 database.extractions,

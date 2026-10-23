@@ -180,6 +180,9 @@ stock-research-ai backup --output ~/Desktop/stock-research-ai-backup
 ```
 
 This safely copies your research database and evidence (never your AI provider key).
+Generated Detailed Research report files (`~/.stock-research-ai/final-reports/`) are **not**
+included; to keep past reports, copy that folder as well, or download the ones you need
+(PDF / HTML / Markdown / JSON).
 
 ## 14. Upgrading
 

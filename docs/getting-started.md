@@ -8,8 +8,8 @@ Stock Research AI has two parts that work together:
 - a small **local backend service** that runs on your own Mac and does the research
 - a **Chrome extension side panel** you use to trigger and read research
 
-Nothing about your research ever leaves your Mac except the one request your backend
-sends to Anthropic when you click "Research Company" (see
+Research runs on your Mac. The backend fetches public pages and filings, and the Summary
+view sends a bounded set of the page's figures to the AI provider you configured (see
 [`privacy-disclosure.md`](privacy-disclosure.md) for the exact details).
 
 ## 1. Obtain the release bundle
@@ -71,11 +71,15 @@ You'll see a confirmation message once it's healthy. **Running this same command
 later upgrades you in place** — your existing research is never touched (see
 [Upgrading](#12-upgrading)).
 
-## 4. Configure your Anthropic credential
+## 4. Configure the Summary provider
 
-Stock Research AI uses Anthropic's API to run the analytical part of each research
-run. Store your API key securely in your Mac's own Keychain (never in a plain text
-file):
+Detailed Research and Negatives need no AI credential: they are computed locally and
+deterministically. The **Summary** view uses the AI Credits provider. Set, for the service:
+
+- `STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits`
+- `STOCK_RESEARCH_AI_AICREDITS_MODEL=<model id>`
+
+and store the key in your Mac's Keychain (never in a plain text file):
 
 ```sh
 stock-research-ai configure-analyst
@@ -138,20 +142,24 @@ Navigate to a company page on Screener, for example:
 https://www.screener.in/company/INFY/
 ```
 
-The side panel will show a "Research Company" button once it recognizes the page.
+The side panel shows the **Summary** and **Detailed Research** tabs once it recognizes the page.
 
-## 11. Research Company
+## 11. Summary, Detailed Research and Negatives
 
-Click **Research Company**. You'll see real progress stages (preparing, evidence,
-analysis, challenge, report) — never a fake percentage. This step is the one point
-where your backend sends data to Anthropic's API to run the analysis.
+- **Summary** — click **Generate Summary** for a short summary grounded in the page's cited
+  figures (the only step that calls the AI provider).
+- **Detailed Research** — click **Generate Detailed Research**. The report runs locally and
+  opens in the panel when ready; download it as PDF, HTML, Markdown or JSON.
+- **Negatives / Risks** — the same report's company risks, kept apart from data limitations.
 
-## 12. View the report
+## 12. Reading the report
 
-Once complete, click **View Research** to open the full institutional report inside
-the side panel — sections, evidence, the independent challenger's findings, and more.
-You can also download the Institutional Report, Investor Brief, or Research JSON from
-inside the report view.
+The top of each report states the analytical basis, the control basis, the business
+classification, and **Research completeness** (Complete / Partial / Unavailable) — separate
+from the panel's "Ready" message, which only means the report was produced. See the
+[V1 user guide](v1-user-guide.md) for what each status means and the known V1 limitations
+(for example, valuation needs explicitly supplied multiples and is otherwise *Data
+unavailable*).
 
 ## 13. Back up your research
 
@@ -159,7 +167,7 @@ inside the report view.
 stock-research-ai backup --output ~/Desktop/stock-research-ai-backup
 ```
 
-This safely copies your research database and evidence (never your Anthropic key).
+This safely copies your research database and evidence (never your AI provider key).
 
 ## 14. Upgrading
 

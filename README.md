@@ -1,5 +1,7 @@
 # Stock Research AI
 
+> **Using V1?** Start with [docs/getting-started.md](docs/getting-started.md) (install, pairing) and [docs/v1-user-guide.md](docs/v1-user-guide.md) (Summary / Detailed Research / Negatives, how to read a report, configuration, known limitations, release checklist). The rest of this README is the developer history of each part.
+
 A local-first foundation for an institutional-grade equity research system serving
 research heads, portfolio managers, professional analysts, family offices, and
 sophisticated investors. The intended product combines auditable evidence,

@@ -13,6 +13,7 @@
         SHA256SUMS
         getting-started.md
         privacy-disclosure.md
+        v1-user-guide.md
 
 No live network calls are made by this script itself. Building the Python wheel via
 `uv build` uses only already-resolved/cached dependencies (uv.lock); if the local `uv`
@@ -124,7 +125,7 @@ def main() -> int:
         shutil.copy2(source, destination)
         destination.chmod(0o755)
 
-    for doc_name in ("getting-started.md", "privacy-disclosure.md"):
+    for doc_name in ("getting-started.md", "privacy-disclosure.md", "v1-user-guide.md"):
         source = REPO_ROOT / "docs" / doc_name
         if source.is_file():
             shutil.copy2(source, release_dir / doc_name)

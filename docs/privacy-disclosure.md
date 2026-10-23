@@ -34,23 +34,32 @@ The extension:
   address, your pairing token, and a pointer to your last report) — **never**
   `chrome.storage.sync`, so nothing syncs to your Google account or any other device
 - has **no telemetry, no analytics, and no crash-reporting SDK** of any kind
-- **never contacts Anthropic directly** — only your local backend does that
+- **never contacts an AI provider directly** — only your local backend does that
 
-## What the local backend does
+## What the local backend does (V1)
 
-When you click "Research Company", your local backend:
+**Summary** (when you click *Generate Summary*): the backend reads the public Screener company
+page and sends a bounded set of that page's figures (the company's own reported numbers and
+labels, no personal data) to the AI provider **you configured** (AI Credits, with your own key)
+to write the summary. This is the only step that sends data to an AI provider.
 
-- acquires the public company page and any pinned public documents from Screener.in
-  and related public sources
-- sends the assembled research request to the Anthropic API, using **your own**
-  configured Anthropic API key, to perform the analytical (Part 5B) stage of the
-  research
-- runs the deterministic challenge and report-assembly stages entirely locally
+**Detailed Research** (when you click *Generate Detailed Research*): no AI provider is called.
+The backend:
+
+- acquires the public company page (standalone and consolidated views), Screener's peer table
+  and the listed peers' public pages from Screener.in
+- acquires public documents linked from that page (for example annual reports and filings on
+  BSE / NSE / the company's own website, credit-rating releases) within fixed size and count
+  limits
+- acquires public exchange data (NSE / BSE filings and announcements) for the company, and, only
+  if you configured your own Kite credentials, market data from that account
+- computes every number, check and report section locally and deterministically
 - stores the resulting report and evidence locally
 
-No other step in the pipeline makes any external network call.
+These requests go only to the public sources named above; nothing is sent to any analytics,
+telemetry or advertising service.
 
-## Your Anthropic API key
+## Your AI provider key
 
 - In production/pilot use, your key is stored in your Mac's own **Keychain** — never
   in a plain text file, never in the installed LaunchAgent configuration, never in any
@@ -64,7 +73,7 @@ No other step in the pipeline makes any external network call.
 - Stock Research AI writes a local, rotating log file at
   `~/.stock-research-ai/logs/service.log` (bounded in size) to help with
   troubleshooting.
-- Known secret values (your Anthropic key, if it were ever passed via an environment
+- Known secret values (your AI provider key, if it were ever passed via an environment
   variable during development) and `Authorization: Bearer` header values are actively
   redacted from anything written to this log.
 - This log is never uploaded anywhere automatically.
@@ -72,7 +81,7 @@ No other step in the pipeline makes any external network call.
 ## Backups
 
 - `stock-research-ai backup` copies your local database and evidence to a location you
-  choose. It never includes your Anthropic API key.
+  choose. It never includes your AI provider key.
 - Backups are stored wherever you direct them — Stock Research AI does not upload a
   backup anywhere on your behalf.
 
@@ -87,6 +96,8 @@ what you do with an exported file afterward.
 
 - We do not run a cloud service that receives your research data.
 - We do not use your data to train any model.
-- We do not sell or share your data with any third party.
+- We do not sell or share your data with any third party. The only data sent to an AI
+  provider is the bounded set of public company-page figures the Summary view sends to the
+  provider you configured yourself.
 - We do not track you across websites.
 - We do not collect analytics about your usage of the extension or backend.

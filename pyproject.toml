@@ -28,6 +28,12 @@ stock-research-ai = "stock_research_ai:main"
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# uv_build packages every file under the module directory and does not read .gitignore:
+# a local tool cache there (mypy writes SQLite files holding absolute local paths) would
+# otherwise ship inside the wheel and sdist.
+source-exclude = [".mypy_cache", ".ruff_cache", ".pytest_cache"]
+
 [dependency-groups]
 audit = [
     "pip-audit==2.10.1",

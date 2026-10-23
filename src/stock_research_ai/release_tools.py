@@ -13,6 +13,7 @@ Nothing here performs network I/O, and nothing here ever handles a secret value.
 import hashlib
 import json
 import plistlib
+import tarfile
 import zipfile
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
@@ -234,6 +235,37 @@ def validate_extension_zip(zip_path: Path) -> list[str]:
             for marker in FORBIDDEN_SECRET_MARKERS:
                 if marker in text:
                     problems.append(f"forbidden marker {marker!r} found in {name}")
+    return problems
+
+
+# --- Backend wheel / sdist ----------------------------------------------------------------
+
+#: Directory names that are local tool state, never distributable code. uv_build does not
+#: read .gitignore, so these are rejected here as well as excluded in pyproject.toml.
+BACKEND_FORBIDDEN_DIRS = frozenset(
+    {".mypy_cache", ".ruff_cache", ".pytest_cache", "__pycache__", ".git", "tests"}
+)
+
+#: File suffixes a backend archive must never carry: databases, logs, pickles, bytecode.
+BACKEND_FORBIDDEN_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".log", ".pkl", ".pyc")
+
+
+def validate_backend_archive(archive_path: Path) -> list[str]:
+    """Returns a list of problems (empty means valid) for a built wheel or sdist."""
+    if archive_path.name.endswith(".whl"):
+        with zipfile.ZipFile(archive_path) as wheel:
+            names = wheel.namelist()
+    else:
+        with tarfile.open(archive_path) as sdist:
+            names = sdist.getnames()
+    problems: list[str] = []
+    for name in names:
+        parts = name.rstrip("/").split("/")
+        lowered = parts[-1].lower()
+        if any(part in BACKEND_FORBIDDEN_DIRS for part in parts):
+            problems.append(f"forbidden path present in {archive_path.name}: {name}")
+        elif lowered.endswith(BACKEND_FORBIDDEN_SUFFIXES) or lowered.startswith(".env"):
+            problems.append(f"forbidden file present in {archive_path.name}: {name}")
     return problems
 
 

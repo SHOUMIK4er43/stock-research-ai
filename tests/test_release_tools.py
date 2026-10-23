@@ -19,6 +19,7 @@ from stock_research_ai.release_tools import (
     render_launch_agent_plist,
     scan_for_forbidden_markers,
     sha256_of_file,
+    validate_backend_archive,
     validate_extension_zip,
     validate_launch_agent_plist,
     write_release_manifest,
@@ -261,6 +262,56 @@ def test_validate_extension_zip_flags_an_embedded_secret_marker(tmp_path) -> Non
         archive.writestr("src/leaky.js", "const key = 'sk-ant-oops';")
     problems = validate_extension_zip(bad_zip)
     assert any("sk-ant-" in p for p in problems)
+
+
+# --- Backend wheel / sdist -----------------------------------------------------------
+
+
+def test_validate_backend_archive_flags_a_tool_cache_database_in_a_wheel(tmp_path) -> None:
+    """Release smoke test (2026-10-23): uv_build does not read .gitignore, so a stray
+    src/stock_research_ai/.mypy_cache (SQLite files holding absolute local paths) shipped
+    inside the wheel and sdist."""
+    wheel = tmp_path / "pkg-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("stock_research_ai/__init__.py", "")
+        archive.writestr("stock_research_ai/.mypy_cache/3.12/cache.0.db", b"SQLite")
+        archive.writestr("stock_research_ai/data/research.sqlite3", b"SQLite")
+    problems = validate_backend_archive(wheel)
+    assert any(".mypy_cache/3.12/cache.0.db" in p for p in problems)
+    assert any("research.sqlite3" in p for p in problems)
+
+
+def test_validate_backend_archive_flags_an_env_file_in_an_sdist(tmp_path) -> None:
+    import io
+    import tarfile
+
+    sdist = tmp_path / "pkg-0.1.0.tar.gz"
+    with tarfile.open(sdist, "w:gz") as archive:
+        for name in ("pkg-0.1.0/src/stock_research_ai/__init__.py", "pkg-0.1.0/.env.local"):
+            info = tarfile.TarInfo(name)
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+    problems = validate_backend_archive(sdist)
+    assert problems == ["forbidden file present in pkg-0.1.0.tar.gz: pkg-0.1.0/.env.local"]
+
+
+def test_validate_backend_archive_accepts_code_fonts_and_metadata(tmp_path) -> None:
+    wheel = tmp_path / "pkg-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name in ("stock_research_ai/__init__.py",
+                     "stock_research_ai/adapters/rendering/fonts/DejaVuSansCondensed.ttf",
+                     "stock_research_ai-0.1.0.dist-info/METADATA"):
+            archive.writestr(name, "x")
+    assert validate_backend_archive(wheel) == []
+
+
+def test_pyproject_excludes_tool_caches_from_the_build_backend() -> None:
+    import tomllib
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text())
+    excluded = set(config["tool"]["uv"]["build-backend"]["source-exclude"])
+    assert {".mypy_cache", ".ruff_cache", ".pytest_cache"} <= excluded
 
 
 # --- LaunchAgent plist ---------------------------------------------------------------

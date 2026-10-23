@@ -39,6 +39,7 @@ from stock_research_ai.release_tools import (  # noqa: E402
     build_extension_zip,
     build_release_manifest,
     extension_version,
+    validate_backend_archive,
     validate_extension_zip,
     write_release_manifest,
     write_sha256sums,
@@ -107,6 +108,12 @@ def main() -> int:
 
     backend_dir = release_dir / "backend"
     wheel_paths = build_backend_wheel(backend_dir)
+    backend_problems = [p for path in wheel_paths for p in validate_backend_archive(path)]
+    if backend_problems:
+        print("Backend package validation FAILED:", file=sys.stderr)
+        for problem in backend_problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
 
     extension_dir = release_dir / "extension"
     ext_version = extension_version(REPO_ROOT / "extension")
@@ -119,16 +126,21 @@ def main() -> int:
             print(f"  - {problem}", file=sys.stderr)
         return 1
 
+    # uv writes its own .gitignore into --out-dir; it is not part of the bundle.
+    (backend_dir / ".gitignore").unlink(missing_ok=True)
+
+    shipped_files = []
     for script_name in ("install-macos.sh", "uninstall-macos.sh"):
         source = REPO_ROOT / "scripts" / script_name
         destination = release_dir / script_name
         shutil.copy2(source, destination)
         destination.chmod(0o755)
+        shipped_files.append(destination)
 
     for doc_name in ("getting-started.md", "privacy-disclosure.md", "v1-user-guide.md"):
-        source = REPO_ROOT / "docs" / doc_name
-        if source.is_file():
-            shutil.copy2(source, release_dir / doc_name)
+        # A missing user document is a broken bundle, never silently skipped.
+        shutil.copy2(REPO_ROOT / "docs" / doc_name, release_dir / doc_name)
+        shipped_files.append(release_dir / doc_name)
 
     backend_version = application_version()
     artifact_paths = [*wheel_paths, extension_zip]
@@ -147,7 +159,9 @@ def main() -> int:
     )
     write_release_manifest(manifest, release_dir / "RELEASE-MANIFEST.json")
 
-    checksum_targets = [*artifact_paths, release_dir / "RELEASE-MANIFEST.json"]
+    # Every shipped file, including the installer the user runs, so `shasum -c` verifies
+    # the whole bundle (getting-started.md step 2).
+    checksum_targets = [*artifact_paths, *shipped_files, release_dir / "RELEASE-MANIFEST.json"]
     write_sha256sums(checksum_targets, release_dir / "SHA256SUMS", root=release_dir)
 
     print(f"Release bundle assembled at {release_dir}")

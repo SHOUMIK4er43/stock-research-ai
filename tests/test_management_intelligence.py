@@ -1219,3 +1219,53 @@ def test_no_positive_growth_partial_rule_remains():
         assert "POSITIVE_GROWTH" not in text, path.name
         assert "R.PARTIAL," not in text.replace("partial=c[R.PARTIAL]", ""), path.name
     assert (root / "domain" / "management_intelligence.py").exists()
+
+
+async def test_one_word_speaker_labels_start_their_own_turn(tmp_path):
+    """V1 RC1: 'Participant:' and a first-name-only questioner ('Sudhir: Hi. This is Sudhir
+    from Kotak AMC. ... are you seeing any delays?') were folded into the previous
+    management speaker's turn, so an analyst question became a management statement. A
+    one-word label opens a new turn; a self-introduction 'from <organisation>' or a generic
+    participant label is never management."""
+    analyst_day = call(
+        "Q4 FY25 Earnings Conference Call", "April 17, 2025",
+        [
+            WELCOME,
+            "Anil Sharma: We are building depth in specific areas and we expect revenue "
+            "growth of 5% to 6% in rupee terms for FY26.",
+            "Participant: All the best to him and thank you.",
+            "Sudhir: Hi. This is Sudhir from Kotak AMC. Just a couple of questions. Are you "
+            "seeing any sort of decision-making delays by clients because they might want to "
+            "wait and watch how this technology progresses?",
+            "Anil Sharma: We expect large deal closures to continue through FY26 as planned.",
+        ])
+    data, _b, _c = await run(tmp_path, {"/call.pdf": analyst_day})
+    title = "Q4 FY25 Earnings Conference Call"
+    sudhir = person(data, title, "sudhir")
+    assert sudhir.role == Role.ANALYST
+    assert person(data, title, "participant").role == Role.ANALYST
+    management = {p.participant_id for p in data.participants if p.role == Role.MANAGEMENT}
+    quotes = [s.quote for s in data.statements if s.speaker_id in management]
+    assert not [q for q in quotes if "decision-making delays" in q or "All the best" in q]
+    assert [q for q in quotes if "large deal closures" in q]
+
+
+async def test_call_facilitation_is_never_a_management_statement(tmp_path):
+    lines = call("Q4 FY25 Earnings Conference Call", "April 17, 2025", [
+        WELCOME,
+        "Anil Sharma: Thank you. We expect revenue growth of 5% to 6% in rupee terms for FY26.",
+        "With that, I will now hand it over to Priya to walk you through the financials.",
+        "Priya Rao: Thank you Anil. We will continue to invest in automation over the next year.",
+        "So, with that, thank you all and we will now begin the Q&A.",
+        "Moderator: The first question is from the line of Vikram Seth from Alpha Securities.",
+        "Vikram Seth: Two questions on margins and on deals, please.",
+        "Priya Rao: I will take them one by one. We expect margins to improve next year.",
+        "Anil Sharma: Look forward to meeting you again next quarter.",
+    ])
+    data, _b, _c = await run(tmp_path, {"/call.pdf": lines})
+    quotes = [s.quote for s in data.statements]
+    for filler in ("hand it over", "begin the Q&A", "one by one", "Look forward to meeting"):
+        assert not [q for q in quotes if filler in q], filler
+    assert [q for q in quotes if "revenue growth of 5% to 6%" in q]
+    assert [q for q in quotes if "margins to improve" in q]
+    assert [q for q in quotes if "invest in automation" in q]

@@ -71,6 +71,7 @@ class RoleBasis(StrEnum):
     PARTICIPANT_LIST = "PARTICIPANT_LIST"  # printed under a participants heading
     SPEAKER_LABEL = "SPEAKER_LABEL"  # 'Moderator' / 'Operator' label itself
     MODERATOR_INTRODUCTION = "MODERATOR_INTRODUCTION"  # 'next question is from X'
+    SELF_INTRODUCTION = "SELF_INTRODUCTION"  # 'This is X from <organisation>' opening a turn
     DOCUMENT_AUTHOR = "DOCUMENT_AUTHOR"  # the company's own document
     NONE = "NONE"
 

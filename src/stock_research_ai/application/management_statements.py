@@ -41,6 +41,18 @@ _NUMBER = re.compile(
 # `(\w+)\W*$` retries every start position and is quadratic on long words.
 _LAST_WORD_REVERSED = re.compile(r"\W*(\w+)")
 _MIN_WORDS = 5
+#: call facilitation, never evidence about the company: hand-overs, Q&A logistics and
+#: sign-offs ('With that, I will hand it over to Rohit', 'I will take them one by one',
+#: 'Look forward to meeting you again next quarter'). Kept in the transcript turns only.
+_FILLER = re.compile(
+    r"\bhand(?:ing)? (?:it |this |the (?:call|floor|line) )?(?:back )?over to\b"
+    r"|\btake (?:them|these|those|your questions) one by one\b"
+    r"|\blook(?:ing)? forward to (?:meeting|speaking|talking|seeing|interacting)\b"
+    r"|\b(?:begin|start|open|move to|now take) (?:the )?(?:q ?& ?a|question[- ]and[- ]answer"
+    r"|questions)\b"
+    r"|^\W*(?:thank you|thanks)(?: (?:all|everyone|so much|very much))?\W*$",
+    re.I,
+)
 
 
 def _last_word(text: str) -> str | None:
@@ -113,6 +125,8 @@ def extract_statements(
         for index, (start, end) in enumerate(sentences(t.text)):
             sentence = t.text[start:end].strip()
             if len(sentence.split()) < _MIN_WORDS:
+                continue
+            if _FILLER.search(sentence) and not re.search(r"\d", sentence):
                 continue
             types, forward, historical = classify(sentence)
             forward = forward or names_later_year(sentence, current)

@@ -115,6 +115,24 @@ def name_like(text: str, *, min_tokens: int = 1) -> bool:
     )
 
 
+#: transcript labels for an unnamed questioner: never a company speaker
+_GENERIC_QUESTIONERS = frozenset({
+    "participant", "unidentified participant", "unknown participant", "analyst",
+    "unidentified analyst", "questioner", "unidentified speaker", "audience member",
+})
+#: 'This is Sudhir from Kotak AMC' / 'I am X with Y Securities' at the start of a turn
+_SELF_INTRO = re.compile(
+    r"^(?:\W*(?i:hi|hello|good (?:morning|afternoon|evening)|thanks?(?: you)?)\b[^.]{0,40}[.,!]?)*"
+    r"\s*(?i:this is|i am|i'm|my name is)\s+[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3}\s+"
+    r"(?:from|with|of)\s+[A-Z]",
+)
+
+
+def _self_introduced(draft: "_Draft") -> bool:
+    text = " ".join(piece for piece, _ in draft.pieces[:2])
+    return _SELF_INTRO.search(clean(text)) is not None
+
+
 def clean(text: str) -> str:
     return " ".join(text.split())
 
@@ -414,6 +432,10 @@ class CallParser:
                     role, basis = moderator, RoleBasis.SPEAKER_LABEL
                 elif draft.key in introduced:
                     role, basis = introduced[draft.key], RoleBasis.MODERATOR_INTRODUCTION
+                elif draft.key in _GENERIC_QUESTIONERS:
+                    role, basis = Role.ANALYST, RoleBasis.SPEAKER_LABEL
+                elif _self_introduced(draft):
+                    role, basis = Role.ANALYST, RoleBasis.SELF_INTRODUCTION
                 else:
                     role, basis = Role.UNKNOWN, RoleBasis.NONE
                     unknown.add(draft.key)
@@ -614,6 +636,9 @@ class CallParser:
                     or key in people
                     or key in pending
                     or name_like(candidate, min_tokens=2)
+                    # a one-word label that opens its own line ('Sudhir: Hi. This is ...',
+                    # 'Participant: Thank you') is a new speaker, never more of the last one
+                    or (name_like(candidate) and m.group("rest").strip() != "")
                 ):
                     label, rest = candidate, m.group("rest")
             if label is None and words(text) <= 6:

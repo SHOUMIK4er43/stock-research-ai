@@ -608,10 +608,13 @@ def overview(ctx: Ctx) -> None:
 
 def business_evidence(ctx: Ctx, e: Any) -> UUID:
     src = ctx.res.location(e.source)
+    kind = human(e.evidence_kind.value).capitalize()
+    # the Screener company profile is an aggregator's text: never 'disclosed by the company'
+    statement = (f"{kind} per the aggregator's company profile (Screener; not a company "
+                 "filing)." if e.source.source_kind.value == "BOX1B_PROFILE" else
+                 f"{kind} disclosed by the company (p.{e.source.page_start or '-'}).")
     return ctx.book.claim(
-        None, CT.FACT, f"BUSINESS_{e.evidence_kind.value}"[:80],
-        f"{human(e.evidence_kind.value).capitalize()} disclosed by the company "
-        f"(p.{e.source.page_start or '-'}).", basis=NA,
+        None, CT.FACT, f"BUSINESS_{e.evidence_kind.value}"[:80], statement, basis=NA,
         upstream=(up(Layer.BOX7, "BUSINESS_EVIDENCE", e.evidence_id),), sources=(src,),
         source_text=e.raw_text, confidence=e.confidence)
 
@@ -812,12 +815,18 @@ def industry(ctx: Ctx) -> None:
         ctx.add(sec, ctx.book.claim(None, CT.FACT, "INDUSTRY_CLASSIFICATION",
                                     f"Industry classification ({c.level}).", basis=NA,
                                     upstream=dataset, sources=(src,), source_text=c.name))
-    for o in sorted(b9.structure_observations, key=lambda x: (x.topic, str(x.observation_id))):
+    subject = ctx.box4.company_key
+    # a peer's own text (its Screener profile, its calls) describes the PEER: it never
+    # becomes evidence in the subject company's report
+    for o in sorted((x for x in b9.structure_observations if x.company_key == subject),
+                    key=lambda x: (x.topic, str(x.observation_id))):
         claim = industry_text(ctx, o.nature.value, o.source, f"INDUSTRY_{o.topic}"[:80],
                               f"Industry structure ({human(o.topic)}).", o.statement,
                               up(Layer.BOX9, "STRUCTURE_OBSERVATION", o.observation_id))
         ctx.add(sec, claim)
     for sig in (*b9.demand_signals, *b9.pricing_signals):
+        if sig.company_key != subject:
+            continue
         ctx.add(sec, industry_text(ctx, sig.nature.value, sig.source,
                                    f"INDUSTRY_{sig.kind}_SIGNAL",
                                    f"{sig.kind.capitalize()} signal: "
@@ -919,9 +928,13 @@ def industry_text(ctx: Ctx, nature: str, ref: Any, topic: str, statement: str, q
                       "TURN", ref.record_id))
     if nature == "ANALYST_QUESTION":
         return None  # a question is not evidence about the company or the industry
-    src = ctx.book.source(Layer.BOX9, SourceType.FILING if ref.source_url else
-                          SourceType.UPSTREAM_DATASET, f"{ref.layer.value}/{nature}",
+    aggregator = nature == "AGGREGATOR_DATA"
+    kind = (SourceType.PROVIDER_RECORD if aggregator else SourceType.FILING) if ref.source_url \
+        else SourceType.UPSTREAM_DATASET
+    src = ctx.book.source(Layer.BOX9, kind, f"{ref.layer.value}/{nature}",
                           url=ref.source_url, reference=ref.locator or str(record.record_id))
+    if aggregator:
+        statement = statement.rstrip(".") + " — aggregator profile text, not a company filing."
     if nature == "COMPANY_ASSERTION":
         if len(ups) == 1:
             return None

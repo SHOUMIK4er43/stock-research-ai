@@ -111,7 +111,7 @@ PRECISION = 34
 TAX = (M.TOTAL_TAX,)
 GROSS_DEBT_REPORTED = (M.TOTAL_DEBT, M.TOTAL_BORROWINGS)
 CAPEX = (M.CAPEX, M.PURCHASE_OF_PPE)
-EPS_METRICS = (M.EPS, M.DILUTED_EPS, M.BASIC_EPS)
+EPS_METRICS = (M.BASIC_EPS, M.DILUTED_EPS, M.EPS)  # company basic EPS first
 #: an explicit share count further than this factor from the count implied by the latest
 #: reported EPS is flagged (shares stated in lakhs / millions instead of ones)
 SHARE_COUNT_TOLERANCE = Decimal(2)

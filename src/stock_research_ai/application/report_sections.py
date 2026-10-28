@@ -306,6 +306,20 @@ class Ctx:
             return f"as at {name}"
         return f"for {name}"
 
+    def concept(self, v: CanonicalFinancialValue) -> str:
+        """The metric code plus, for concepts one display label hides, the exact definition:
+        profit including NCI vs attributable to owners, a source's EPS vs the company's basic
+        EPS (naming the company's figure for the same period when the two differ)."""
+        code = v.metric.value
+        note = CONCEPT_NOTES.get(code)
+        if code == "EPS":
+            basic = self.b4.get(("BASIC_EPS", v.reporting_basis.value, v.period.period_type.value,
+                                 v.period.period_end)) if v.period.period_end else None
+            if basic is not None and basic.value != v.value:
+                note = (f"{note}; the company's basic EPS for {self.period_name(v.period)} is "
+                        f"{number(basic.value)}")
+        return f"{code} ({note})" if note else code
+
     def period_name(self, period: Any) -> str:
         return period_name(period, self.box4.fiscal_year_end_month)
 
@@ -314,7 +328,7 @@ class Ctx:
         unit = unit_of(v)
         cid = self.book.claim(
             None, CT.FACT, v.metric.value,
-            f"{v.metric.value} reported {number(v.value)} {unit} {self.when(v.period)} "
+            f"{self.concept(v)} reported {number(v.value)} {unit} {self.when(v.period)} "
             f"({v.reporting_basis.value.lower()}).",
             basis=basis_of(v.reporting_basis), upstream=ups, sources=sources, value=v.value,
             metric=v.metric.value, unit=unit, currency=v.currency,
@@ -1052,6 +1066,16 @@ def labels(ctx: Ctx, basis: ClaimBasis, period_type: str) -> dict[date, str]:
             out.setdefault(v.period.period_end, ctx.period_name(v.period))
     return out
 
+
+#: definitions a bare code would hide (Phase 1: one label never stands for two concepts)
+CONCEPT_NOTES = {
+    "PAT": "profit for the period, including non-controlling interests",
+    "PAT_ATTRIBUTABLE_TO_OWNERS": "profit attributable to owners of the company",
+    "MINORITY_INTEREST": "profit attributable to non-controlling interests",
+    "EPS": "EPS as published by the source; basic or diluted not stated",
+    "BASIC_EPS": "basic EPS as reported by the company",
+    "DILUTED_EPS": "diluted EPS as reported by the company",
+}
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 

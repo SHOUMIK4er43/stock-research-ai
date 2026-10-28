@@ -102,7 +102,9 @@ SINGLE_CONCEPT_GROUPS = frozenset({REVENUE})
 #: a primary balance sheet's equity lines: their presence without a hybrid line at that date is
 #: the filing's own evidence that no equity-classified hybrid instrument was outstanding
 FILING_EQUITY_LINES = frozenset({M.EQUITY_SHARE_CAPITAL, M.OTHER_EQUITY, M.TOTAL_EQUITY})
-EPS = (M.EPS, M.DILUTED_EPS, M.BASIC_EPS)
+#: the company's own basic EPS first; an EPS whose basis the source does not state (an
+#: aggregator's, often on shares in issue rather than the weighted average) only without it
+EPS = (M.BASIC_EPS, M.DILUTED_EPS, M.EPS)
 FIXED = (M.PROPERTY_PLANT_EQUIPMENT, M.FIXED_ASSETS)
 AGGREGATOR_RANK = AUTHORITY_RANK[SourceAuthority.SECONDARY_AGGREGATOR]
 

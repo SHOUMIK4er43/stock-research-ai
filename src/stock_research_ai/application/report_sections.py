@@ -348,9 +348,11 @@ class Ctx:
             return None
         unit = m.unit.value if m.currency is None or m.unit.value != "MONEY" else \
             f"{m.currency.value} MONEY"
+        label = m.label + (" — the aggregator's 'Borrowings', which include lease "
+                           "liabilities" if m.formula_id.endswith("/PROVIDER_BORROWINGS") else "")
         cid = self.book.claim(
             None, CT.CALCULATION, m.code,
-            f"{m.label}: {number(m.value)} {unit.lower()} {self.when(m.period)} "
+            f"{label}: {number(m.value)} {unit.lower()} {self.when(m.period)} "
             f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).",
             basis=basis_of(m.reporting_basis), upstream=ups, sources=sources, value=m.value,
             metric=m.code, unit=unit, currency=m.currency, period=self.period_name(m.period),

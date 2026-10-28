@@ -891,8 +891,10 @@ def base_balance_metrics(e: Engine, b: FinancialPeriod) -> None:
             variant="LESS_HYBRID",
         )
     debt = first_available(g([M.TOTAL_DEBT], b), g([M.TOTAL_BORROWINGS], b))
+    provider_debt = isinstance(debt, Fact) and "INPUT_AGGREGATOR_ONLY" in debt.warnings
     if isinstance(debt, Fact):
-        e.emit("GROSS_DEBT", b, [("debt", debt)], lambda v: v["debt"], variant="REPORTED")
+        e.emit("GROSS_DEBT", b, [("debt", debt)], lambda v: v["debt"],
+               variant="PROVIDER_BORROWINGS" if provider_debt else "REPORTED")
     else:
         e.emit(
             "GROSS_DEBT",
@@ -905,12 +907,29 @@ def base_balance_metrics(e: Engine, b: FinancialPeriod) -> None:
             variant="COMPONENTS",
         )
     gross = e.got("GROSS_DEBT", b)
-    e.emit(
-        "LEASE_ADJUSTED_DEBT",
-        b,
-        [("debt", gross), ("leases", g([M.LEASE_LIABILITIES], b))],
-        lambda v: v["debt"] + v["leases"],
-    )
+    if provider_debt:
+        # an aggregator's borrowings already include lease liabilities: adding them again
+        # would count leases twice
+        e.emit("LEASE_ADJUSTED_DEBT", b, [("debt", Missing(
+            S.INPUT_MISSING, f"filed borrowings excluding leases @ {b.label} (the provider's "
+            "'Borrowings' already include lease liabilities)"))], lambda v: v["debt"])
+    elif isinstance(g([M.LEASE_LIABILITIES], b), Fact) or not isinstance(
+            g([M.NON_CURRENT_LEASE_LIABILITIES], b), Fact):
+        e.emit(
+            "LEASE_ADJUSTED_DEBT",
+            b,
+            [("debt", gross), ("leases", g([M.LEASE_LIABILITIES], b))],
+            lambda v: v["debt"] + v["leases"],
+        )
+    else:
+        e.emit(
+            "LEASE_ADJUSTED_DEBT",
+            b,
+            [("debt", gross), ("non_current_leases", g([M.NON_CURRENT_LEASE_LIABILITIES], b)),
+             ("current_leases", g([M.CURRENT_LEASE_LIABILITIES], b))],
+            lambda v: v["debt"] + v["non_current_leases"] + v["current_leases"],
+            variant="LEASE_COMPONENTS",
+        )
     cash = g([M.CASH_AND_CASH_EQUIVALENTS], b)
     net = e.emit("NET_DEBT", b, [("debt", gross), ("cash", cash)], lambda v: v["debt"] - v["cash"])
     if net.value is not None and net.value < 0:

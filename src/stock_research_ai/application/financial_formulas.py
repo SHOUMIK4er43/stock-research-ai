@@ -283,18 +283,21 @@ _f(
 )
 _f(
     "GROSS_DEBT",
-    "Gross debt excluding leases",
+    "Gross debt (borrowings as reported)",
     C.BUILDING_BLOCK,
     U.MONEY,
     "TOTAL_DEBT, or TOTAL_BORROWINGS, or long-term + short-term borrowings",
     ("TOTAL_DEBT | TOTAL_BORROWINGS | LONG_TERM_BORROWINGS, SHORT_TERM_BORROWINGS",),
     periods=BALANCE,
     variants=(
-        ("REPORTED", "total debt / total borrowings as reported"),
+        ("REPORTED", "total debt / total borrowings as reported in a filing"),
         ("COMPONENTS", "long-term + short-term borrowings"),
+        ("PROVIDER_BORROWINGS", "an aggregator's 'Borrowings' line as published (Screener's "
+         "includes lease liabilities)"),
     ),
-    notes="separately reported lease liabilities are excluded; an aggregator's 'borrowings' "
-    "line may itself include leases and is used as reported",
+    notes="a filing's borrowings exclude separately reported lease liabilities; an "
+    "aggregator's 'Borrowings' line includes them (Screener) and is labelled as such, never "
+    "as debt excluding leases",
 )
 _f(
     "LEASE_ADJUSTED_DEBT",
@@ -304,6 +307,10 @@ _f(
     "gross debt + lease liabilities",
     ("GROSS_DEBT", "LEASE_LIABILITIES"),
     periods=BALANCE,
+    variants=(
+        ("LEASE_COMPONENTS", "gross debt + non-current + current lease liabilities"),
+    ),
+    notes="never on an aggregator's borrowings, which already include lease liabilities",
 )
 _f(
     "NET_DEBT",

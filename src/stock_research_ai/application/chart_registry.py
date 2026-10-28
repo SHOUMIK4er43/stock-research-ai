@@ -366,7 +366,7 @@ CHARTS: tuple[ChartDefinition, ...] = (
     ChartDefinition(
         "GROSS_DEBT",
         C.BALANCE_SHEET,
-        "Gross debt (excl. separately reported leases)",
+        "Gross debt (borrowings as reported)",
         T.BAR,
         A.ANNUAL_BALANCE,
         GENERAL,

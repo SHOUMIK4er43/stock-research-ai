@@ -595,6 +595,148 @@ def test_split_numbers_are_rejoined_only_when_unambiguous():
     assert _row_values(unreadable, [2, 3])[1] == "SPLIT_NUMBER_SUSPECT"
 
 
+async def test_split_date_header_row_never_shifts_a_prior_year_into_the_current_year(tmp_path):
+    """pypdf can break a two-date column header ('March 31, 2026 March 31, 2025') into
+    cells that look like a data row ('31,' / '2025'). That row is a header: treating it as
+    data leaves only the statement subtitle's single date, and the right-most (prior-year)
+    column was then reported as the current year."""
+    statement = [
+        "Consolidated Statement of Profit and Loss",
+        "For the year ended March 31, 2026",
+        "Rs. in Million except Earnings per share",
+        "Note",
+        "No.",
+        "For the year ended",
+        "March 31, 2026 March 31, 2025",
+        "I Revenue from Operations 50 568,154 529,883",
+        "II Other Income 29 319 8,554",
+        "Finance Costs 31 3,374 3,217",
+        "Profit after tax 48,055 42,530",
+        "Earnings per equity share",
+        "Basic 54.28 48.00",
+    ]
+    bundle, catalogue = await filings(tmp_path, {"/ar.pdf": (T.ANNUAL_REPORT, [statement])})
+    data = build(bundle=bundle, catalogue=catalogue)
+    current = one(data, M.REVENUE_FROM_OPERATIONS, B.CONSOLIDATED, FY26)
+    prior = one(data, M.REVENUE_FROM_OPERATIONS, B.CONSOLIDATED, FY25)
+    assert (current.value, prior.value) == (Decimal("56815.4"), Decimal("52988.3"))
+    assert obs(data, current.selected_observation_id).raw_value == "568,154"
+    assert one(data, M.BASIC_EPS, B.CONSOLIDATED, FY26).value == Decimal("54.28")
+    assert one(data, M.FINANCE_COST, B.CONSOLIDATED, FY25).value == Decimal("321.7")
+
+
+async def test_schedule_iii_statement_layout_maps_every_line_to_its_own_concept(tmp_path):
+    """The Schedule III layout of a large annual report, as pypdf extracts it: Roman line
+    numbers and their arithmetic ('X Profit after tax (VIII-IX)'), a unit caption above
+    split column dates, profit attributable to owners / NCI under a caption that carries
+    the total, EPS under a caption that carries only its note, and drop-cap initials."""
+    statement = [
+        "Consolidated Statement of Profit and Loss",
+        "Rs. in Million except Earnings per share",
+        "Note",
+        "No.",
+        "For the year ended",
+        "March 31, 2026 March 31, 2025",
+        "I Revenue from Operations 50 568,154 529,883",
+        "II O ther Income 29 319 8,554",
+        "VII Exceptional Item 48C 2,724 -",
+        "VIII Profit before Tax (VI-VII) 65,731 56,532",
+        "X Profit after tax (VIII-IX) 48,055 42,530",
+        "Profit/ (Loss) for the year attributable to: 48,055 42,530",
+        "Owners of the Company 48,109 42,515",
+        "Non Controlling Interests (54) 15",
+        "Earnings per Equity Share (Face Value Rs. 5) in Rs. 56",
+        "Basic 54.28 48.00",
+        "Diluted 54.19 47.91",
+    ]
+    bundle, catalogue = await filings(tmp_path, {"/ar.pdf": (T.ANNUAL_REPORT, [statement])})
+    data = build(bundle=bundle, catalogue=catalogue)
+    expected = {
+        M.REVENUE_FROM_OPERATIONS: ("56815.4", "52988.3"), M.OTHER_INCOME: ("31.9", "855.4"),
+        M.PBT: ("6573.1", "5653.2"), M.PAT: ("4805.5", "4253"),
+        M.PAT_ATTRIBUTABLE_TO_OWNERS: ("4810.9", "4251.5"), M.MINORITY_INTEREST: ("-5.4", "1.5"),
+        M.BASIC_EPS: ("54.28", "48.00"), M.DILUTED_EPS: ("54.19", "47.91"),
+    }
+    for metric, (current, prior) in expected.items():
+        assert one(data, metric, B.CONSOLIDATED, FY26).value == Decimal(current), metric
+        assert one(data, metric, B.CONSOLIDATED, FY25).value == Decimal(prior), metric
+    assert one(data, M.EXCEPTIONAL_ITEMS, B.CONSOLIDATED, FY26).value == Decimal("272.4")
+    # the EPS caption's note number (56) is never an amount of any period
+    assert not [o for o in data.observations if o.raw_value == "56"]
+
+
+async def test_a_captions_note_number_is_never_an_amount(tmp_path):
+    """'Trade Receivables 15' (caption + note; its lines follow) right-aligns the note into
+    the prior-year column. It is a caption, never a 1.5 crore receivable."""
+    balance = [
+        "Consolidated Balance Sheet",
+        "As at March 31, 2026 Rs. in Million",
+        "Note No. As at",
+        "March 31, 2026 March 31, 2025",
+        "ASSETS",
+        "Current Assets",
+        "(a) Inventories 13 1,042 394",
+        "(b) F inancial Assets",
+        "( ii) T rade Receivables 15",
+        "(1) Billed 75,369 65,486",
+        "(2) Unbilled 58,208 49,984",
+        "( iii) C ash and Cash Equivalents 16 50,461 43,185",
+        "Total - Current Assets 275,747 236,792",
+        "Total Assets 493,694 444,945",
+    ]
+    bundle, catalogue = await filings(tmp_path, {"/ar.pdf": (T.ANNUAL_REPORT, [balance])})
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert not [o for o in data.observations if o.raw_value == "15"]
+    assert one(data, M.TRADE_RECEIVABLES, B.CONSOLIDATED, FY26).value == Decimal("7536.9")
+    assert one(data, M.CASH_AND_CASH_EQUIVALENTS, B.CONSOLIDATED, FY25).value == \
+        Decimal("4318.5")
+
+
+async def test_continuation_table_keeps_its_captions_and_current_vs_non_current_leases(
+        tmp_path):
+    """pypdf can split a balance sheet into two tables with the captions in between: the
+    continuation's lines keep 'Non-current liabilities' > 'Financial liabilities', so the
+    two lease lines are two concepts, never one ambiguous 'lease liabilities'."""
+    balance = [
+        "Consolidated Balance Sheet",
+        "Rs. in Million",
+        "Note No. As at",
+        "March 31, 2026 March 31, 2025",
+        "EQUITY AND LIABILITIES",
+        "Equity",
+        "(a) Equity Share Capital 20 4,428 4,424",
+        "Total Equity 300,770 277,917",
+        "Liabilities",
+        "Non-Current liabilities",
+        "(a) Financial Liabilities",
+        "( i) L ease liabilities 15,888 11,472",
+        "Total Non-Current Liabilities 35,645 27,984",
+        "Current liabilities",
+        "(a) Financial Liabilities",
+        "( i) Borrowings 25 696 4,714",
+        "( ii) L ease liabilities 5,278 4,066",
+        "Total Current Liabilities 144,975 126,740",
+    ]
+    bundle, catalogue = await filings(tmp_path, {"/ar.pdf": (T.ANNUAL_REPORT, [balance])})
+    data = build(bundle=bundle, catalogue=catalogue)
+    assert one(data, M.NON_CURRENT_LEASE_LIABILITIES, B.CONSOLIDATED, FY26).value == \
+        Decimal("1588.8")
+    assert one(data, M.CURRENT_LEASE_LIABILITIES, B.CONSOLIDATED, FY26).value == \
+        Decimal("527.8")
+    assert one(data, M.SHORT_TERM_BORROWINGS, B.CONSOLIDATED, FY25).value == Decimal("471.4")
+    assert not values(data, M.LEASE_LIABILITIES, B.CONSOLIDATED, FY26)
+
+
+def test_gap_captions_frame_a_continuation_table():
+    context = financial_reconciliation._gap_captions(
+        ["equity"], ["Liabilities", "Non-Current liabilities", "(a)  F inancial Liabilities"],
+        S.BALANCE_SHEET)
+    assert context == ["liabilities", "non-current liabilities", "financial liabilities"]
+    assert financial_parsing.map_filing_label(
+        S.BALANCE_SHEET, "( i)  L ease liabilities", context, False
+    ) == M.NON_CURRENT_LEASE_LIABILITIES
+
+
 # --- fixtures A-K through the real Box 1/2/3 pipeline -------------------------------------
 
 

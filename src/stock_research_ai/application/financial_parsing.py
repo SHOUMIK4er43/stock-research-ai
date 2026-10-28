@@ -527,8 +527,17 @@ def interpret_columns(
 
 
 def normalize_label(label: str) -> str:
-    text = unicodedata.normalize("NFC", label).replace("’", "'").lower().strip()
-    text = re.sub(r"^(?:\(?[a-z]{1,4}\)|[a-z]{1,4}\.|\d{1,2}[.)]|[•\-–*])\s+", "", text)
+    text = unicodedata.normalize("NFC", label).replace("’", "'").strip()
+    # a drop-cap initial pypdf split from its word: 'C ash and Cash Equivalents'
+    text = re.sub(r"(?<![A-Za-z])([A-Z]) (?=[a-z]{2,})", r"\1", text).lower()
+    text = re.sub(r"^(?:\(?\s*(?:[a-z]{1,4}|\d{1,2})\s*\)|[a-z]{1,4}\.|\d{1,2}[.)]|[•\-–*])\s+",
+                  "", text)
+    # Schedule III line numbering and its arithmetic: 'viii profit before tax (vi-vii)',
+    # 'iii total income (i +ii)', and a trailing note reference such as 'item 48c'
+    text = re.sub(r"^(?:x{0,2}(?:ix|iv|v?i{1,3}|v|x))\s+(?=[a-z(])", "", text)
+    text = re.sub(r"\s*\((?:\s*[ivx]+\s*[-+]\s*)+[ivx]+\s*\)\s*$", "", text)
+    text = re.sub(r"\s+\d{1,3}[a-z]\s*$", "", text)
+    text = re.sub(r"\bnon controlling\b", "non-controlling", text)
     text = re.sub(
         r"\s*\((?:(?:in )?(?:₹|`|rs\.?|inr)(?: per (?:equity )?share)?|refer note[^)]*)\)\s*$",
         "",
@@ -664,6 +673,13 @@ _BS_CONTEXT: dict[tuple[str, str], CanonicalMetric] = {
     ("current assets", "other current assets"): M.OTHER_CURRENT_ASSETS,
     ("non-current assets", "other non-current assets"): M.OTHER_NON_CURRENT_ASSETS,
     ("equity", "non-controlling interests"): M.MINORITY_INTEREST,
+    ("non-current liabilities", "lease liabilities"): M.NON_CURRENT_LEASE_LIABILITIES,
+    ("current liabilities", "lease liabilities"): M.CURRENT_LEASE_LIABILITIES,
+}
+#: (enclosing caption, line) -> metric, for a line whose meaning is its caption's
+#: ('Trade receivables' > 'Billed'; the unbilled line is a contract asset, never mapped)
+_BS_SUBLINE: dict[tuple[str, str], CanonicalMetric] = {
+    ("trade receivables", "billed"): M.TRADE_RECEIVABLES,
 }
 _BS_MAJOR = (
     "non-current assets",
@@ -755,6 +771,14 @@ def _schedule_topline(label: str) -> CanonicalMetric | None:
     return _SCHEDULE_TOPLINE.get(normalize_label(stripped))
 
 
+def _context_match(needle: str, joined: str) -> bool:
+    """'profit attributable' also matches the Schedule III caption 'profit/ (loss) for the
+    year attributable to'; every other needle is a plain substring."""
+    if needle == "profit attributable":
+        return re.search(r"\bprofit\b[^|]*\battributable\b", joined) is not None
+    return needle in joined
+
+
 def map_filing_label(
     statement: StatementType, label: str, context: list[str], bank: bool
 ) -> CanonicalMetric | None:
@@ -765,7 +789,7 @@ def map_filing_label(
         return _BANK[norm]
     if statement in (StatementType.PROFIT_AND_LOSS, StatementType.QUARTERLY_RESULTS):
         for needle, line, metric in _PL_CONTEXT:
-            if norm == line and needle in joined and "comprehensive" not in joined:
+            if norm == line and _context_match(needle, joined) and "comprehensive" not in joined:
                 return metric
         if bank and norm in ("finance costs", "finance cost", "interest expense"):
             return None  # a bank's interest expense is not an industrial finance cost
@@ -774,6 +798,10 @@ def map_filing_label(
         if bank and norm == "borrowings":
             return M.TOTAL_BORROWINGS
         major = next((c for c in reversed(context) if c in _BS_MAJOR), None)
+        if context and (context[-1], norm) in _BS_SUBLINE and major in (
+                "current assets", "non-current assets"):
+            return (_BS_SUBLINE[(context[-1], norm)] if major == "current assets"
+                    else None)  # a non-current receivable is not working capital
         if major is not None and (major, norm) in _BS_CONTEXT:
             return _BS_CONTEXT[(major, norm)]
         return _BS.get(norm)

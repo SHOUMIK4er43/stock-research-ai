@@ -343,16 +343,41 @@ def _is_number(text: str) -> bool:
     return parsed.value is not None and not _YEAR.fullmatch(text.strip())
 
 
+_DATE_HEADER_TOKEN = re.compile(
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?|\d{1,2},?|"
+    r"(?:19|20)\d{2},?|as|at|ended|year|quarter|months?|for|the|and|to|-|–",
+    re.I,
+)
+_MONTH_TOKEN = re.compile(r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?",
+                          re.I)
+
+
+def _date_header_row(cells: dict[int, tuple[str, bool]]) -> bool:
+    """A row made only of column dates, however pypdf split them ('March 31, 2026 March' |
+    '31,' | '2025'): at least one month name and one year, and nothing else but day
+    numbers and date wording - so it is a header, never a data row."""
+    tokens = " ".join(text for text, _ in cells.values()).split()
+    return (
+        bool(tokens)
+        and all(_DATE_HEADER_TOKEN.fullmatch(t) for t in tokens)
+        and any(_MONTH_TOKEN.fullmatch(t) for t in tokens)
+        and any(_YEAR.search(t) for t in tokens)
+    )
+
+
 def _first_data_row(grid: dict[int, dict[int, tuple[str, bool]]]) -> int:
     """Box 3 text tables keep column-header lines as rows. Leading rows are header rows
     while they are flagged as headers, or carry no number other than a year and either
-    have header wording or some non-label text (dates, 'Audited', '2026 2025')."""
+    have header wording or some non-label text (dates, 'Audited', '2026 2025'), or are
+    split column dates."""
     for row in sorted(grid):
         cells = grid[row]
-        if all(header for _, header in cells.values()):
+        if all(header for _, header in cells.values()) or _date_header_row(cells):
             continue
         label = cells.get(0, ("", False))[0].strip()
         rest = [text for column, (text, _) in cells.items() if column > 0 and text.strip()]
+        if not rest and parse_unit_caption(label) is not None:
+            continue  # '` in Million' above the column dates is a header line, never data
         if any(_is_number(text) for text in rest):
             return row
         if _HEADER_WORDS.search(label) or (rest and not _HEADER_WORDS.search(label) and not label):
@@ -503,7 +528,10 @@ def _frame(
         interpret_columns(header, n, statement, fy_end)
         for n in range(1, min(table.column_count - 1, len(_YEAR.findall(" ".join(header)))) + 1)
     ]
-    complete = [p for p in candidates if p and not any(c.ambiguous for c in p)]
+    # a statement never holds two columns of one period: a candidate that repeats one has
+    # counted a title's date ('For the year ended March 31, 2026') as a column of its own
+    complete = [p for p in candidates if p and not any(c.ambiguous for c in p)
+                and len({c.period.key() for c in p}) == len(p)]
     header_periods = complete[-1] if complete else None
     notes_declared = any(_NOTE_HEADER.search(line) for line in context) or bool(
         head and head.notes_declared and not year_columns
@@ -606,6 +634,7 @@ _MAJOR_CAPTION = re.compile(
     r"^(?:earnings per|profit attributable|total comprehensive income attributable|"
     r"other comprehensive income|tax expense|expenses|income|cash flows? (?:from|used))"
 )
+_VALUED_CAPTION = re.compile(r"\battributable to$|^earnings per (?:equity )?share\b")
 _MEDIUM_WARNINGS = {"SPLIT_NUMBER_REJOINED", "CONTINUATION_INFERRED", "STATEMENT_FROM_PAGE_TITLE"}
 
 
@@ -807,9 +836,13 @@ def filing_observations(
             collector.warn(code, f"document {extraction.document_id} excluded from Box 4")
             continue
         frames: dict[UUID, _TableFrame] = {}
+        #: each table's caption context at its end: a continuation table's first lines
+        #: sit under the head table's last captions ('Non-current liabilities' > ...)
+        captions: dict[UUID, list[str]] = {}
         previous: ExtractedTable | None = None
         for table in extraction.tables:
             head = frames.get(table.continuation_of) if table.continuation_of else None
+            head_id = table.continuation_of if head is not None else None
             inferred = False
             titled = None
             # Box 3 copies the previous table's kind onto a continuation, so only a table
@@ -842,6 +875,7 @@ def filing_observations(
                 # Box 3 links only a page's first table; a headerless table right after a
                 # statement table on the same page continues it (pypdf broke the rows).
                 head, inferred = frames[previous.table_id], True
+                head_id = previous.table_id
             previous = table
             if table.statement_kind is None and head is None and titled is None:
                 continue
@@ -864,7 +898,13 @@ def filing_observations(
             elif head is not None and head.inference:
                 frame = replace(frame, inference=head.inference)
             frames[table.table_id] = frame
-            _table_observations(extraction, table, frame, first_row, urls, collector, industry)
+            inherited: list[str] = []
+            if head is not None and head_id is not None:
+                inherited = _gap_captions(
+                    captions.get(head_id, []), _context_lines(extraction, table, first_row),
+                    frame.statement)
+            captions[table.table_id] = _table_observations(
+                extraction, table, frame, first_row, urls, collector, industry, inherited)
 
 
 def _label_currency(label: str) -> Currency | None:
@@ -875,6 +915,24 @@ def _label_currency(label: str) -> Currency | None:
     return Currency.USD if "$" in marker.group(1) else Currency.INR
 
 
+def _caption_context(context: list[str], caption: str, statement: StatementType) -> list[str]:
+    """One caption line applied to the enclosing-caption stack."""
+    if caption in ("assets", "equity and liabilities", "liabilities") or (
+        statement != StatementType.BALANCE_SHEET and _MAJOR_CAPTION.match(caption)
+    ):
+        return [caption]
+    return (context + [caption])[-3:]  # e.g. 'non-current liabilities' > 'financial ...'
+
+
+def _gap_captions(context: list[str], lines: list[str], statement: StatementType) -> list[str]:
+    """A continuation table starts under the head table's last captions plus the caption
+    lines pypdf left between the two tables (lines without an amount)."""
+    for line in lines:
+        if re.search(r"[A-Za-z]", line) and not re.search(r"\d[\d,]*\s*$", line.strip()):
+            context = _caption_context(context, normalize_label(line), statement)
+    return context
+
+
 def _table_observations(
     extraction: DocumentExtraction,
     table: ExtractedTable,
@@ -883,9 +941,10 @@ def _table_observations(
     urls: dict[UUID, str],
     collector: _Collector,
     industry: Industry,
-) -> None:
+    context_in: list[str] | None = None,
+) -> list[str]:
     grid = _cells(table)
-    context: list[str] = []
+    context: list[str] = list(context_in or [])
     bank = industry == Industry.BANK
     for row in sorted(grid):
         if row < first_row:
@@ -895,18 +954,23 @@ def _table_observations(
         values, row_warning = _row_values(
             grid[row], frame.value_columns, note_columns=note_columns, cell_groups=groups
         )
+        filled = [v.strip() for v, _ in values if v.strip()]
+        if (frame.notes_declared and len(frame.value_columns) >= 2 and len(filled) == 1
+                and _NOTE.fullmatch(filled[0]) and re.search(r"[A-Za-z]", label)):
+            # a caption with only its note reference ('Trade Receivables 15' above 'Billed'
+            # and 'Unbilled'): every line of a comparative statement fills each period
+            # (a dash at least), so a lone note number is never one period's amount
+            values = [("", c) for _, c in values]
         if label and not any(v.strip() for v, _ in values):
-            caption = normalize_label(label)
-            if caption in ("assets", "equity and liabilities", "liabilities") or (
-                frame.statement != StatementType.BALANCE_SHEET and _MAJOR_CAPTION.match(caption)
-            ):
-                context = [caption]
-            else:
-                # e.g. 'non-current liabilities' > 'financial liabilities'
-                context = (context + [caption])[-3:]
+            context = _caption_context(context, normalize_label(label), frame.statement)
             continue
         if not any(v.strip() for v, _ in values):
             continue  # an empty line inside the table
+        if label and _VALUED_CAPTION.search(normalize_label(label)):
+            # a caption that also carries a total or a note reference ('Profit for the year
+            # attributable to: 48,055', 'Earnings per equity share ... 56') still frames
+            # the lines below it ('Owners of the Company', 'Basic')
+            context = [normalize_label(label)]
         statement = frame.statement
         metric = None
         segment = None
@@ -1025,6 +1089,7 @@ def _table_observations(
                     warnings=tuple(warnings),
                 )
             )
+    return context
 
 
 # --- reconciliation ------------------------------------------------------------------------------

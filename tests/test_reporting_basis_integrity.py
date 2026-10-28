@@ -420,8 +420,9 @@ def _rows(summary_input) -> dict[tuple[str, str], tuple[str, str]]:
             for v in r.values}
 
 
-def _claim(report, metric, value_period="Mar 2026"):
-    return [c for c in report.claims if c.metric == metric and c.period == value_period
+def _claim(report, metric, value_end=date(2026, 3, 31)):
+    # every period ending on that date: FY2026, Q4 FY2026 and the balance sheet at 31-Mar-2026
+    return [c for c in report.claims if c.metric == metric and c.period_end == value_end
             and "HISTORICAL_FINANCIALS" in {s.value for s in c.section_ids}]
 
 

@@ -4,7 +4,11 @@ Forensic audit (2026-10-22): a quarter and the fiscal year ending the same month
 label 'Mar 2026'. Claim statements read 'REVENUE reported 3563 INR CRORES for Mar 2026
 (consolidated)' (Q4) next to '... 13150 ... for Mar 2026 (consolidated)' (FY2026), so the
 report's claim lists showed two different revenues for one apparent period. The statement now
-names the period type; the structured `period` field is unchanged.
+names the period type.
+
+V1 RC1 (2026-10-28): the period is named canonically in the statement AND the structured
+field - FY2026, Q4 FY2026, a balance sheet at 31-Mar-2026 - never the source's ambiguous
+'Mar 2026' (or a filing header such as 'year ended March 31 2026 March 31 2026').
 """
 
 import pytest
@@ -17,14 +21,14 @@ def report():
 
 
 def test_quarter_and_fiscal_year_claims_are_distinguishable(report):
-    revenue = [c for c in report.claims if c.metric == "REVENUE" and c.period == "Mar 2026"
-               and c.basis.value == "CONSOLIDATED" and c.claim_type.value == "FACT"]
-    by_value = {str(c.value): c.statement for c in revenue}
-    assert by_value["13150"] == ("REVENUE reported 13150 INR CRORES for the fiscal year ended "
-                                 "Mar 2026 (consolidated).")
-    assert by_value["3563"] == ("REVENUE reported 3563 INR CRORES for the quarter ended "
-                                "Mar 2026 (consolidated).")
-    assert {c.period for c in revenue} == {"Mar 2026"}  # the structured field is unchanged
+    revenue = [c for c in report.claims if c.metric == "REVENUE" and str(c.period_end) ==
+               "2026-03-31" and c.basis.value == "CONSOLIDATED" and c.claim_type.value == "FACT"]
+    by_value = {str(c.value): c for c in revenue}
+    assert by_value["13150"].statement == "REVENUE reported 13150 INR CRORES for FY2026 " \
+        "(consolidated)."
+    assert by_value["3563"].statement == "REVENUE reported 3563 INR CRORES for Q4 FY2026 " \
+        "(consolidated)."
+    assert (by_value["13150"].period, by_value["3563"].period) == ("FY2026", "Q4 FY2026")
 
 
 def test_no_two_fact_values_share_one_statement_context(report):
@@ -37,6 +41,6 @@ def test_no_two_fact_values_share_one_statement_context(report):
 
 
 def test_balance_sheet_facts_read_as_at(report):
-    assets = [c for c in report.claims if c.metric == "TOTAL_ASSETS" and c.period == "Mar 2026"
+    assets = [c for c in report.claims if c.metric == "TOTAL_ASSETS" and c.period == "31-Mar-2026"
               and c.basis.value == "CONSOLIDATED"]
-    assert assets and all("as at Mar 2026" in c.statement for c in assets)
+    assert assets and all("as at 31-Mar-2026" in c.statement for c in assets)

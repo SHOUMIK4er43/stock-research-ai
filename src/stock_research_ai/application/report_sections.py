@@ -297,19 +297,17 @@ class Ctx:
                                 reference=source.reference, title=source.reference)
 
     # --- claim factories ------------------------------------------------------------------
-    @staticmethod
-    def when(period: Any) -> str:
+    def when(self, period: Any) -> str:
         """The period WITH its type: a quarter and the fiscal year ending the same month share
-        a label ('Mar 2026'), so a claim's text never relies on its table for that context."""
-        label, kind = period.label, period.period_type.value
+        a source label ('Mar 2026'), so a claim names the period canonically (FY2026,
+        Q4 FY2026, as at 31-Mar-2026) and never relies on its table for that context."""
+        name, kind = self.period_name(period), period.period_type.value
         if kind == "POINT_IN_TIME":
-            return f"as at {label}"
-        if kind == "FY":
-            return f"for {label}" if label.upper().startswith("FY") else (
-                f"for the fiscal year ended {label}")
-        phrase = {"QUARTER": "the quarter ended", "TTM": "the twelve months to",
-                  "HALF_YEAR": "the half year ended", "NINE_MONTH": "the nine months ended"}
-        return f"for {phrase[kind]} {label}" if kind in phrase else f"for {label}"
+            return f"as at {name}"
+        return f"for {name}"
+
+    def period_name(self, period: Any) -> str:
+        return period_name(period, self.box4.fiscal_year_end_month)
 
     def fact(self, v: CanonicalFinancialValue, section: SectionId | None = None) -> UUID:
         sources, ups, evidence = self.res.canonical(v.canonical_value_id)
@@ -319,8 +317,9 @@ class Ctx:
             f"{v.metric.value} reported {number(v.value)} {unit} {self.when(v.period)} "
             f"({v.reporting_basis.value.lower()}).",
             basis=basis_of(v.reporting_basis), upstream=ups, sources=sources, value=v.value,
-            metric=v.metric.value, unit=unit, currency=v.currency, period=v.period.label,
-            period_end=v.period.period_end, evidence_ids=evidence, confidence=v.confidence)
+            metric=v.metric.value, unit=unit, currency=v.currency,
+            period=self.period_name(v.period), period_end=v.period.period_end,
+            evidence_ids=evidence, confidence=v.confidence)
         if section is not None:
             self.add(section, cid)
         return cid
@@ -340,7 +339,7 @@ class Ctx:
             f"{m.label}: {number(m.value)} {unit.lower()} {self.when(m.period)} "
             f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).",
             basis=basis_of(m.reporting_basis), upstream=ups, sources=sources, value=m.value,
-            metric=m.code, unit=unit, currency=m.currency, period=m.period.label,
+            metric=m.code, unit=unit, currency=m.currency, period=self.period_name(m.period),
             period_end=m.period.period_end, evidence_ids=evidence,
             calculation_ids=(m.metric_id,), formula_ids=(m.formula_id,), confidence=m.confidence)
         if section is not None:
@@ -1037,8 +1036,45 @@ def labels(ctx: Ctx, basis: ClaimBasis, period_type: str) -> dict[date, str]:
     for v in ctx.box4.canonical_values:
         if v.period.period_type.value == period_type and basis_of(v.reporting_basis) == basis \
                 and v.period.period_end is not None:
-            out.setdefault(v.period.period_end, v.period.label)
+            out.setdefault(v.period.period_end, ctx.period_name(v.period))
     return out
+
+
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def day_name(day: date) -> str:
+    return f"{day.day:02d}-{_MONTHS[day.month - 1]}-{day.year}"
+
+
+def period_name(period: Any, fy_end_month: int | None) -> str:
+    """One unambiguous reader name per period, whatever the source printed ('Mar 2026',
+    'year ended March 31 2026 March 31 2026'): FY2026 (the fiscal year named by the year it
+    ends), Q2 FY2027, H1 FY2027, 9M FY2027, TTM to 30-Sep-2026, or a balance-sheet date
+    31-Mar-2026. Without an end date the source label is kept as it is."""
+    end, kind = getattr(period, "period_end", None), period.period_type.value
+    label = str(period.label)
+    if end is None:
+        return label
+    if kind == "POINT_IN_TIME":
+        return day_name(end)
+    if kind == "TTM":
+        return f"TTM to {day_name(end)}"
+    month = fy_end_month or 3
+    fiscal_year = end.year if end.month <= month else end.year + 1
+    if kind == "FY":
+        return f"FY{fiscal_year}" if end.month == month else f"year ended {day_name(end)}"
+    elapsed = (end.month - month - 1) % 12 + 1  # months of the fiscal year to the end date
+    if elapsed % 3:
+        return f"period ended {day_name(end)}"
+    if kind == "QUARTER":
+        return f"Q{elapsed // 3} FY{fiscal_year}"
+    prefix = {"HALF_YEAR": "H", "NINE_MONTH": "9M"}.get(kind)
+    if prefix == "H" and elapsed in (6, 12):
+        return f"H{elapsed // 6} FY{fiscal_year}"
+    if prefix == "9M" and elapsed == 9:
+        return f"9M FY{fiscal_year}"
+    return f"{label} (to {day_name(end)})"
 
 
 def _one_concept_per_row(ctx: Ctx, specs: tuple[Spec, ...], basis: ClaimBasis,

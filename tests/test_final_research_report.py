@@ -528,7 +528,7 @@ def test_one_fact_is_one_claim_across_sections(report):
                 c.statement, c.source_text, tuple(sorted(str(u.record_id) for u in c.upstream)))
                for c in report.claims]
     assert len(content) == len(set(content))
-    pat = [c for c in report.claims if c.topic == "PAT" and c.period == "Mar 2026"
+    pat = [c for c in report.claims if c.topic == "PAT" and c.period == "FY2026"
            and c.basis == ClaimBasis.CONSOLIDATED and c.claim_type == CT.FACT]
     assert len(pat) == 1  # the annual figure, cited by the table and the risk inputs alike
 

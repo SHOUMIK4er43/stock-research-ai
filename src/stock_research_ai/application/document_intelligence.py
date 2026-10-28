@@ -127,6 +127,10 @@ def _declared_issuer_names(text: str) -> set[tuple[str, ...]]:
         ("national", "stock", "exchange", "of", "india"),
         ("bse",), ("bombay", "stock", "exchange"),
         ("securities", "and", "exchange", "board", "of", "india"),
+        # credit rating agencies author rating rationales; they are never the issuer
+        ("care", "ratings"), ("crisil",), ("crisil", "ratings"), ("icra",),
+        ("india", "ratings", "and", "research"), ("acuite", "ratings", "and", "research"),
+        ("brickwork", "ratings", "india"), ("infomerics", "valuation", "and", "rating"),
     }
     declared: set[tuple[str, ...]] = set()
     lines = text.splitlines()
@@ -143,6 +147,8 @@ def _declared_issuer_names(text: str) -> set[tuple[str, ...]]:
         if not all(token in title_terms or token.isdigit() for token in tokens[suffix_index + 1:]):
             continue
         name_tokens = list(tokens[:suffix_index])
+        while name_tokens and name_tokens[0].isdigit():
+            name_tokens.pop(0)  # a page number printed before a running header ('1 CARE ...')
         while name_tokens and name_tokens[0] in {"for", "by", "the"}:
             name_tokens.pop(0)
         while name_tokens and name_tokens[-1] in {"private", "pvt"}:

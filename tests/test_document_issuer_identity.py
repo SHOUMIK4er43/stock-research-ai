@@ -399,3 +399,39 @@ async def test_real_captured_infy_and_yesbank_sources_do_not_cross_canonical_dat
     )
     assert crossed.observations == ()
     assert "COMPANY_IDENTITY_MISMATCH" in {w.code for w in crossed.warnings}
+
+
+async def test_printed_isin_binds_once_an_exchange_stated_it_for_the_listing(tmp_path):
+    """An annual report's cover letter prints NSE symbol AND ISIN. With no ISIN for the
+    company it stays unverified (above); with the ISIN the exchange master states for the
+    listing it binds, and a different printed ISIN still fails closed."""
+    lines = ["Infosys Limited", "NSE Symbol: INFY", "ISIN: INE009A01021",
+             *profit_and_loss("Consolidated")]
+    target = COMPANY.model_copy(update={"name": "Infosys Limited", "nse_symbol": "INFY",
+                                        "isin": "INE009A01021"})
+    bundle, catalogue = await filings(tmp_path / "ok", {"/ar.pdf": (T.ANNUAL_REPORT, [lines])},
+                                      company=target, issuer_name="")
+    extraction = bundle.extractions[0]
+    assert extraction.issuer_binding_status is IssuerBindingStatus.VERIFIED
+    assert extraction.issuer_binding_method is IssuerBindingMethod.NAME_AND_EXCHANGE
+    other = target.model_copy(update={"isin": "INE999A01099"})
+    bundle, _ = await filings(tmp_path / "other", {"/ar.pdf": (T.ANNUAL_REPORT, [lines])},
+                              company=other, issuer_name="")
+    assert bundle.extractions[0].issuer_binding_status is IssuerBindingStatus.MISMATCH
+
+
+async def test_rating_agency_running_header_is_not_a_second_issuer(tmp_path):
+    """'1 CARE Ratings Ltd.' (page number + the agency's running header) is the author of a
+    rating rationale, never a conflicting issuer; a rationale about another company still
+    fails closed."""
+    target = COMPANY.model_copy(update={"name": "Tata Consultancy Services Limited",
+                                        "nse_symbol": "TCS"})
+    rationale = ["1 CARE Ratings Ltd.", "Press Release", "Tata Consultancy Services Limited",
+                 "September 29, 2025", "Long-Term Bank Facilities 175.00 CARE AAA; Stable"]
+    bundle, _ = await filings(tmp_path / "ok", {"/r.pdf": (T.CREDIT_RATING_REPORT, [rationale])},
+                              company=target, issuer_name="")
+    assert bundle.extractions[0].issuer_binding_status is IssuerBindingStatus.VERIFIED
+    foreign = ["1 CARE Ratings Ltd.", "Press Release", "Wipro Limited", "September 29, 2025"]
+    bundle, _ = await filings(tmp_path / "no", {"/r.pdf": (T.CREDIT_RATING_REPORT, [foreign])},
+                              company=target, issuer_name="")
+    assert bundle.extractions[0].issuer_binding_status is IssuerBindingStatus.MISMATCH

@@ -47,8 +47,8 @@ from stock_research_ai.domain.screener_dataset import DetailedScreenerDataset, P
 
 Page = tuple[CompanyExtractionResult, bytes]
 FetchPage = Callable[[str], Awaitable[Page]]
-FetchEvidence = Callable[[Page], Awaitable[tuple[EvidenceCatalogue | None,
-                                                 EvidenceBundle | None]]]
+#: (primary page[, isin=<exchange-verified ISIN>]) -> catalogue and Box 3 bundle
+FetchEvidence = Callable[..., Awaitable[tuple[EvidenceCatalogue | None, EvidenceBundle | None]]]
 FetchExchange = Callable[[MarketIntelligenceRequest], Awaitable[tuple[RawPayload, ...]]]
 FetchPeers = Callable[[str], Awaitable[PeerFetch]]  # warehouse ID -> the peer fragment
 
@@ -169,7 +169,6 @@ async def capture_stage(request: StageRequest, *, now: datetime, fetch_page: Fet
             peer_fetch = await fetch_peers(primary.profile.warehouse_id)
         except Exception:  # noqa: BLE001 - the peer fragment is optional
             peer_fetch = None
-    catalogue, bundle = await fetch_evidence(pages[0])
     market_request = None
     payloads: tuple[RawPayload, ...] = ()
     if fetch_exchange is not None and (nse or bse):
@@ -179,6 +178,10 @@ async def capture_stage(request: StageRequest, *, now: datetime, fetch_page: Fet
             nse_symbol=nse, bse_code=bse, isin=None, company_name=primary.profile.name,
             as_of=now)
         payloads = await fetch_exchange(market_request)
+    # Exchange first: a filing that prints its ISIN binds only against an ISIN an exchange
+    # stated for this listing (never a caller's); without one it stays unverified.
+    isin = exchange_isin(market_request, payloads) if market_request is not None else None
+    catalogue, bundle = await fetch_evidence(pages[0], **({"isin": isin} if isin else {}))
     stage = build_research_stage(
         generated_at=now, pages=pages, catalogue=catalogue, bundle=bundle,
         market_request=market_request, market_payloads=payloads,
@@ -200,6 +203,31 @@ async def capture_stage(request: StageRequest, *, now: datetime, fetch_page: Fet
         "diligence_request": diligence,
         "report_request": FinalReportRequest(as_of=request.as_of, company_key=key,
                                              nse_symbol=nse, isin=request.isin)})
+
+
+def exchange_isin(request: MarketIntelligenceRequest,
+                  payloads: tuple[RawPayload, ...]) -> str | None:
+    """The ISIN the NSE equity master states for exactly this NSE symbol (the Box 12
+    identity rules: exact key, one listing, valid check digit), else None."""
+    from stock_research_ai.application.exchange_intelligence import (
+        Budget,
+        IdentityInputs,
+        by_kind,
+        resolve_identity,
+    )
+    from stock_research_ai.application.market_intelligence import _sorted_unique
+    from stock_research_ai.domain.market_intelligence import IdentityField as F
+    from stock_research_ai.domain.market_intelligence import PayloadKind, Provider
+
+    if request.nse_symbol is None:
+        return None
+    nse_only = request.model_copy(update={"bse_code": None})
+    identity = resolve_identity(nse_only, IdentityInputs(
+        nse_master=by_kind(_sorted_unique(payloads), PayloadKind.NSE_EQUITY_MASTER)),
+        Budget())
+    stated = {e.value for e in identity.evidence
+              if e.field == F.ISIN and e.provider == Provider.NSE}
+    return identity.isin if identity.isin is not None and stated == {identity.isin} else None
 
 
 # --- live wiring (the existing adapters; network) ---------------------------------------------
@@ -247,10 +275,13 @@ def live_fetchers(work: Path, *, now: datetime) -> tuple[FetchPage, FetchEvidenc
         content = await FileRawArtifactStore(out / "page").read(extraction.raw_artifacts[0])
         return extraction, content
 
-    async def fetch_evidence(page: Page) -> tuple[EvidenceCatalogue | None,
-                                                  EvidenceBundle | None]:
+    async def fetch_evidence(page: Page, *, isin: str | None = None) -> tuple[
+            EvidenceCatalogue | None, EvidenceBundle | None]:
         src = ScreenerEvidenceSource(*page)
-        catalogue = await build_evidence_catalogue(src.company(), [src], catalogued_at=now)
+        company = src.company()
+        if isin is not None:
+            company = company.model_copy(update={"isin": isin})
+        catalogue = await build_evidence_catalogue(company, [src], catalogued_at=now)
         policy = RetrievalPolicy(
             max_tier=3, max_documents=7, concurrency=2, max_file_bytes=60_000_000,
             timeout_seconds=180, per_type_limit={t: 0 for t in T} | {

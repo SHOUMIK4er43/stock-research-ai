@@ -1082,6 +1082,44 @@ async def test_capture_stage_chains_existing_adapters_and_renders_offline(tmp_pa
     assert {"BOX12_MARKET", "MARKET_DATA"} <= missing  # surfaced in Section 0
 
 
+async def test_capture_stage_binds_filings_with_the_exchange_stated_isin(tmp_path):
+    """Exchange acquisition runs before evidence: the ISIN the NSE equity master states for
+    the acquired page's NSE symbol is the one a filing's printed ISIN must match (a caller's
+    ISIN never is); with no exchange ISIN, evidence binds without one."""
+    from test_market_intelligence import nse_master
+
+    infy = await page(tmp_path, FIXTURES, INFY)
+    order: list[str] = []
+    passed: list[Any] = []
+
+    async def fetch_page(url: str):
+        return infy
+
+    async def fetch_evidence(p, **kw):
+        order.append("evidence")
+        passed.append(kw.get("isin"))
+        return None, None
+
+    async def fetch_exchange(req):
+        order.append("exchange")
+        return (nse_master(("INFY", "Infosys Limited", "INE009A01021"),
+                           ("TCS", "Tata Consultancy Services Limited", "INE467B01029")),)
+
+    await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10),
+                                     isin="INE999A01099"), now=NOW, fetch_page=fetch_page,
+                        fetch_evidence=fetch_evidence, fetch_exchange=fetch_exchange)
+    assert order == ["exchange", "evidence"] and passed == ["INE009A01021"]
+
+    async def no_master(req):
+        return ()
+
+    passed.clear()
+    await capture_stage(StageRequest(source_url=INFY[1], as_of=date(2026, 10, 10)), now=NOW,
+                        fetch_page=fetch_page, fetch_evidence=fetch_evidence,
+                        fetch_exchange=no_master)
+    assert passed == [None]
+
+
 async def test_capture_stage_binds_identity_to_the_acquired_page(tmp_path):
     """H-2: the acquired Screener page defines the company; identity is never invented and
     never taken from a caller. A declared value that disagrees fails before any evidence or

@@ -647,10 +647,17 @@ class GuidanceBuilder:
                 warnings = set(g.warnings)
                 state: Lifecycle = Lifecycle.ISSUED
                 link: UUID | None = None
-                if previous is not None and (
+                bases_differ = previous is not None and (
                     ReportingBasis.UNKNOWN not in (previous.reporting_basis, g.reporting_basis)
                     and previous.reporting_basis != g.reporting_basis
-                ):
+                )
+                if bases_differ and previous is not None and "STATEMENT_TEXT" not in (
+                        previous.basis_method, g.basis_method):
+                    # a basis read off incidental words elsewhere in a call never splits one
+                    # target into two: the chain continues, the basis is flagged unconfirmed
+                    warnings.add("BASIS_UNCONFIRMED")
+                    bases_differ = False
+                if bases_differ:
                     warnings.add("BASIS_CHANGED")
                 elif previous is not None and (
                     None not in (previous.qualifier, g.qualifier)

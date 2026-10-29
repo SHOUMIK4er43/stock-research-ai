@@ -537,9 +537,11 @@ class _Builder:
             if actual is not None:
                 actual_text = actual.statement
             shown.add(g.statement_claim_id)
+            for i in g.earlier_statement_claim_ids:
+                shown.add(i)
             rows.append((g.metric, (
                 str(g.date_made) if g.date_made else "Date not stated",
-                g.target, g.deadline or "Not stated", g.result, g.lifecycle,
+                g.target, g.deadline or "Not stated", g.result, g.history or g.lifecycle,
                 st.statement if st else "Statement not found", actual_text)))
         return [self.text_table(
             "guidance-tracker", "Guidance tracker (MANAGEMENT STATEMENTS until an outcome is "

@@ -615,6 +615,10 @@ class GuidanceTrackerEntry(BaseModel):
     actual_claim_id: UUID | None  # FACT / CALCULATION, linked separately
     lifecycle: Code
     evidence_ids: tuple[UUID, ...]
+    #: one row per real target: its lifecycle across calls, oldest first ('ISSUED
+    #: 16-Jan-2026 -> REITERATED 15-Oct-2026'); the earlier statements stay cited claims
+    history: Label | None = None
+    earlier_statement_claim_ids: tuple[UUID, ...] = ()
 
 
 class OrderBucketKind(StrEnum):
@@ -1311,7 +1315,8 @@ class FinalResearchReportDataset(BaseModel):
         known(self.order_book.metric_claim_ids, "The order book")
         # --- management statements, scenarios and valuation stay what they are
         for g in self.guidance_tracker:
-            known((g.statement_claim_id,), "The guidance tracker")
+            known((g.statement_claim_id, *g.earlier_statement_claim_ids),
+                  "The guidance tracker")
             if claims[g.statement_claim_id].claim_type != ClaimType.MANAGEMENT_STATEMENT:
                 fail("Guidance is a management statement until realised")
             if g.actual_claim_id is not None:

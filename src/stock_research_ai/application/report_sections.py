@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.diligence_inputs import FAMILIES, fid
-from stock_research_ai.application.period_names import period_name
+from stock_research_ai.application.period_names import day_name, period_name
 from stock_research_ai.application.red_flags import NS as NS13
 from stock_research_ai.application.report_claims import (
     NS,
@@ -1352,8 +1352,9 @@ def management(ctx: Ctx) -> None:
     if r.sample_status != "SUFFICIENT":
         ctx.limit(sec, "MANAGEMENT_RELIABILITY", "INSUFFICIENT_GUIDANCE_SAMPLE"
                   if r.sample_status == "INSUFFICIENT_SAMPLE" else "DATA_UNAVAILABLE",
-                  f"{r.completed} completed of {r.issued} issued quantitative targets "
-                  f"(minimum {r.minimum_sample}); open guidance is never counted as missed")
+                  f"{r.completed} completed of {r.issued} quantitative targets due so far, "
+                  f"{r.open} not yet due (minimum {r.minimum_sample} completed targets); open "
+                  "guidance is never counted as missed")
     elif r.accuracy_pct is not None and ctx.box8 is not None:
         sources = tuple(outcome_sources(ctx, r.outcome_ids))
         if sources:
@@ -1591,8 +1592,22 @@ def guidance_tracker(ctx: Ctx, b8: ManagementIntelligenceDataset) -> list[Guidan
     sec = S.CONCALL_GUIDANCE
     outcomes = {o.guidance_id: o for o in b8.outcomes}
     statements = {s.statement_id: s for s in b8.statements}
+    by_id = {g.guidance_id: g for g in b8.guidance}
+    # one row per real target: a reiterated / revised target continues its earlier item's
+    # chain (Box 8 previous_guidance_id) and is never a second target
+    superseded = {g.previous_guidance_id for g in b8.guidance if g.previous_guidance_id}
     out: list[GuidanceTrackerEntry] = []
-    for g in sorted(b8.guidance, key=lambda x: (x.issued_date or date.min, str(x.guidance_id))):
+    for g in sorted((g for g in b8.guidance if g.guidance_id not in superseded),
+                    key=lambda x: (x.issued_date or date.min, str(x.guidance_id))):
+        chain = [g]
+        while chain[-1].previous_guidance_id in by_id and len(chain) < 50:
+            chain.append(by_id[chain[-1].previous_guidance_id])
+        chain.reverse()  # oldest first
+        earlier = [guidance_claim(ctx, x) for x in chain[:-1]]
+        ctx.add(sec, *earlier)
+        history = " -> ".join(
+            f"{x.lifecycle.value} {day_name(x.issued_date) if x.issued_date else 'undated'}"
+            for x in chain) if len(chain) > 1 else None
         target = g.raw_target_text
         claim = guidance_claim(ctx, g)
         ctx.add(sec, claim)
@@ -1616,7 +1631,9 @@ def guidance_tracker(ctx: Ctx, b8: ManagementIntelligenceDataset) -> list[Guidan
             if actual is not None:
                 ctx.add(sec, actual)
         out.append(GuidanceTrackerEntry(
-            guidance_id=g.guidance_id, statement_claim_id=claim, date_made=g.issued_date,
+            guidance_id=g.guidance_id, statement_claim_id=claim,
+            date_made=chain[0].issued_date, history=history,
+            earlier_statement_claim_ids=tuple(earlier),
             deadline=g.target_period.raw_text if g.target_period else None,
             deadline_end=g.target_period.period_end if g.target_period else None,
             metric=g.subject.subject_code, target=target, outcome_id=o.outcome_id if o else None,

@@ -30,6 +30,7 @@ from stock_research_ai.application.management_registry import (
     QUESTIONER_INTRO,
     TOPICS,
 )
+from stock_research_ai.application.semantic_guards import mask
 from stock_research_ai.domain.document_intelligence import (
     BlockType,
     DocumentExtraction,
@@ -187,7 +188,8 @@ def parse_date(text: str) -> date | None:
 
 
 def topics_of(text: str) -> tuple[str, ...]:
-    return tuple(code for code, pattern in TOPICS if pattern.search(text))
+    meaning = mask(text)  # never a topic from a keyword in its non-financial sense
+    return tuple(code for code, pattern in TOPICS if pattern.search(meaning))
 
 
 @dataclass

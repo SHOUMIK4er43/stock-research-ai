@@ -23,6 +23,7 @@ from stock_research_ai.application.management_registry import (
     SENTENCE_END,
     STATEMENT_RULES,
 )
+from stock_research_ai.application.semantic_guards import mask
 from stock_research_ai.domain.management_intelligence import (
     Confidence,
     ManagementEvent,
@@ -78,7 +79,10 @@ def sentences(text: str) -> list[tuple[int, int]]:
 
 
 def classify(sentence: str) -> tuple[list[StatementType], bool, bool]:
-    types = [kind for kind, pattern in STATEMENT_RULES if pattern.search(sentence)]
+    # a keyword in its non-financial sense ('technical debt', 'chip prices', 'Target Group')
+    # is never a statement type
+    meaning = mask(sentence)
+    types = [kind for kind, pattern in STATEMENT_RULES if pattern.search(meaning)]
     if EXPECTATION.search(sentence):
         lead = [t for t in types if t in (ST.GUIDANCE, ST.TARGET)]
         types = [*lead, ST.EXPECTATION, *[t for t in types if t not in lead]]

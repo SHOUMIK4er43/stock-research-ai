@@ -29,6 +29,7 @@ from stock_research_ai.application.peer_registry import (
     STRUCTURE_TOPICS,
 )
 from stock_research_ai.application.peer_selection import CompanyLayers
+from stock_research_ai.application.semantic_guards import mask
 from stock_research_ai.domain.industry_intelligence import (
     IndustryEvidenceConflict,
     IndustryStructureObservation,
@@ -103,9 +104,10 @@ def market_signals(units: list[TextUnit]) -> tuple[list[MarketSignal], list[Mark
             ("DEMAND", DEMAND_SUBJECT, demand),
             ("PRICING", PRICING_SUBJECT, pricing),
         ):
-            if not subject.search(u.text):
+            meaning = mask(u.text)  # an input-cost price is not the industry's pricing
+            if not subject.search(meaning):
                 continue
-            direction, direction_words, subject_words = _direction(u.text, subject)
+            direction, direction_words, subject_words = _direction(meaning, subject)
             bucket.append(
                 MarketSignal(
                     signal_id=uuid5(NS, f"signal|{kind}|{u.layer.value}|{u.record_id}|{u.locator}"),

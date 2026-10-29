@@ -186,6 +186,11 @@ class DerivationMethod(StrEnum):
     GUIDANCE_POINT = "GUIDANCE_POINT"
     EXPLICIT_VALUE = "EXPLICIT_VALUE"
     FALLBACK_CONSTANT = "FALLBACK_CONSTANT"
+    #: the reported months of the first forecast year (vs the same months a year earlier)
+    YEAR_TO_DATE_TRAJECTORY = "YEAR_TO_DATE_TRAJECTORY"
+    #: a first-year value (year-to-date trajectory or BULL / BEAR historical extreme) closing
+    #: its gap to the historical BASE by 1 / horizon a year
+    HISTORICAL_FADE_TO_BASE = "HISTORICAL_FADE_TO_BASE"
 
 
 class HistoryCompleteness(StrEnum):
@@ -463,6 +468,19 @@ class ScenarioCompleteness(BaseModel):
     fallback_assumptions: NonNegativeInt
 
 
+class YearToDateBase(BaseModel):
+    """The reported months of the first forecast fiscal year. That year is forecast as these
+    actual months plus a forecast of the remaining months only - never re-forecast."""
+
+    model_config = _model()
+    fiscal_year: FiscalYear
+    months: int = Field(ge=3, le=9)
+    period: FinancialPeriod  # e.g. H1 FY2027 (reported)
+    prior_period: FinancialPeriod  # the same months a year earlier
+    quarter_keys: tuple[Label, ...]  # the Box 4 quarters summed, oldest first
+    prior_quarter_keys: tuple[Label, ...]
+
+
 class HistoricalBase(BaseModel):
     model_config = _model()
     reporting_basis: ReportingBasis
@@ -478,6 +496,8 @@ class HistoricalBase(BaseModel):
     other_basis_available: bool  # informational: the other basis is never blended in
     #: None only in datasets written before the model was recorded
     forecast_model: ForecastModel | None = None
+    #: the reported months of the first forecast year, when Box 4 has them
+    year_to_date: YearToDateBase | None = None
 
 
 class Box4Source(BaseModel):
@@ -519,10 +539,13 @@ class ForecastDataset(BaseModel):
     completeness: tuple[ScenarioCompleteness, ...]
     issues: tuple[ForecastIssue, ...]
     manifest: ForecastManifest
+    #: the reported year-to-date of the first forecast year (and the prior year's remaining
+    #: months) the first forecast year is built on; kept apart from the fiscal-year anchors
+    year_to_date_actuals: tuple[ForecastValue, ...] = ()
 
     @model_validator(mode="after")
     def closed(self) -> Self:
-        actual_ids = [v.value_id for v in self.actuals]
+        actual_ids = [v.value_id for v in (*self.actuals, *self.year_to_date_actuals)]
         value_ids = [v.value_id for v in self.values]
         assumption_ids = [a.assumption_id for a in self.assumptions]
         everything = actual_ids + value_ids + assumption_ids
@@ -534,7 +557,8 @@ class ForecastDataset(BaseModel):
             "ASSUMPTION": set(assumption_ids),
         }
         assumptions = {a.assumption_id: a for a in self.assumptions}
-        values = {v.value_id: v for v in (*self.actuals, *self.values)}
+        values = {v.value_id: v for v in (*self.actuals, *self.year_to_date_actuals,
+                                          *self.values)}
         formulas = {f.formula_id for f in self.manifest.formulas}
         for v in self.values:
             if v.kind != "FORECAST":
@@ -552,8 +576,10 @@ class ForecastDataset(BaseModel):
                     source = values[i.ref_id]
                     if source.value != i.value or source.scenario not in (None, v.scenario):
                         raise ValueError("a forecast input is another value of its scenario")
-        if any(v.kind != "ACTUAL" for v in self.actuals):
+        if any(v.kind != "ACTUAL" for v in (*self.actuals, *self.year_to_date_actuals)):
             raise ValueError("actuals holds actual anchors only")
+        if bool(self.year_to_date_actuals) != (self.base.year_to_date is not None):
+            raise ValueError("year-to-date actuals exist exactly when the base records them")
         if any(a.scenario not in self.scenarios for a in self.assumptions):
             raise ValueError("assumption for a scenario that was not forecast")
         years = [p.fiscal_year for p in self.forecast_years]

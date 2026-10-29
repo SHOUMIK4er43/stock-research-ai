@@ -1214,20 +1214,52 @@ async def test_infy_fixture_forecast(tmp_path, fixture_dir):
     assert (
         f.base.ignored_period_types.get("QUARTER", 0) > 0 and "TTM" in f.base.ignored_period_types
     )
-    growth = f.assumption(D.REVENUE_GROWTH, S.BASE, 2027)
     revenue = {
         v.period.fiscal_year: v.value
         for v in data.canonical_values
         if v.metric == M.REVENUE_FROM_OPERATIONS and v.period.period_type == PeriodType.FY
+        and v.reporting_basis == B.STANDALONE
     }
+    quarters = {
+        v.period.period_end: v.value
+        for v in data.canonical_values
+        if v.metric == M.REVENUE_FROM_OPERATIONS and v.period.period_type == PeriodType.QUARTER
+        and v.reporting_basis == B.STANDALONE
+    }
+    # RC1 (TECHM): FY2027 is the reported FY2027 quarters + a forecast of the rest only
+    ytd_ends = [e for e in (date(2026, 6, 30), date(2026, 9, 30), date(2026, 12, 31))
+                if e in quarters]
+    ytd_ends = ytd_ends[:next((i for i, e in enumerate(ytd_ends)
+                               if e != (date(2026, 6, 30), date(2026, 9, 30),
+                                        date(2026, 12, 31))[i]), len(ytd_ends))]
+    assert ytd_ends, "the INFY fixture reports FY2027 quarters"
+    ytd = f.base.year_to_date
+    assert ytd is not None and ytd.months == 3 * len(ytd_ends) and ytd.fiscal_year == 2027
+    ytd_sum = sum(quarters[e] for e in ytd_ends)
+    prior = sum(quarters[e.replace(year=e.year - 1)] for e in ytd_ends)
+    growth = f.assumption(D.REVENUE_GROWTH, S.BASE, 2027)
+    assert growth.method.value == "YEAR_TO_DATE_TRAJECTORY"
     with localcontext() as ctx:
         ctx.prec = P
+        trajectory = (ytd_sum / prior - 1) * 100
         cagr = ((revenue[2026] / revenue[2022]).ln() / 4).exp() - 1
-    assert growth.value == round(cagr * 100, 6)
-    assert num(f, L.REVENUE) == mul(revenue[2026], 1 + growth.value / 100)
+        expected_2027 = ytd_sum + (revenue[2026] - prior) * (1 + growth.value / 100)
+    assert growth.value == round(trajectory, 6)
+    assert num(f, L.REVENUE) == expected_2027
+    # later years grow from that full year, the trajectory closing 1/3 of its gap to the
+    # historical CAGR each year (never held flat, never snapping back)
+    later = f.assumption(D.REVENUE_GROWTH, S.BASE, 2028)
+    with localcontext() as ctx:
+        ctx.prec = P
+        historical = round(cagr * 100, 6)
+        assert later.value == round(growth.value + (historical - growth.value) / 3, 6)
+    assert num(f, L.REVENUE, year=2028) == mul(expected_2027, 1 + later.value / 100)
     assert f.status == ForecastStatus.PARTIAL  # Screener has no capex / working-capital detail
     assert val(f, L.CAPEX).status == "UNAVAILABLE" and val(f, L.PAT).status == "AVAILABLE"
-    assert num(f, L.PBT) == num(f, L.EBIT) - num(f, L.FINANCE_COST)
+    with localcontext() as ctx:
+        ctx.prec = P
+        assert num(f, L.PBT, year=2028) == num(f, L.EBIT, year=2028) - num(
+            f, L.FINANCE_COST, year=2028)
 
 
 # --- historical BULL / BEAR extremes obey the driver bounds -----------------------------------

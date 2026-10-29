@@ -35,8 +35,11 @@ from stock_research_ai.application.forecasting import (
     ACTUAL_COMPOSITES,
     FORMULAS,
     LENDER_ANCHORS,
+    YTD_METRICS,
     History,
+    Issues,
     _anchor,
+    _year_to_date,
     evaluate,
     lender_anchors,
     quantize,
@@ -126,13 +129,20 @@ COMPOSITE_PARTS: dict[str, tuple[tuple[CanonicalMetric, ...], tuple[int, ...]]] 
     ),
 }
 METHODS: dict[AssumptionSource, frozenset[DerivationMethod]] = {
-    SRC.HISTORICAL: frozenset(m for m in DM if m.value.startswith("HISTORICAL_")),
+    SRC.HISTORICAL: frozenset(m for m in DM if m.value.startswith("HISTORICAL_"))
+    | {DM.YEAR_TO_DATE_TRAJECTORY},
     SRC.MANAGEMENT_GUIDANCE: frozenset(m for m in DM if m.value.startswith("GUIDANCE_")),
     SRC.EXPLICIT: frozenset({DM.EXPLICIT_VALUE}),
     SRC.INDUSTRY_INTELLIGENCE: frozenset({DM.EXPLICIT_VALUE}),
     SRC.FALLBACK: frozenset({DM.FALLBACK_CONSTANT}),
 }
 EXPLICIT_SOURCES = (SRC.EXPLICIT, SRC.INDUSTRY_INTELLIGENCE)
+#: the role naming the prior-year revenue of the remaining months (first forecast year)
+REMAINDER_ROLE = "PRIOR_YEAR_REMAINDER_REVENUE"
+#: lines whose first forecast year is year-to-date + remainder when Box 10 recorded one
+YTD_FORMULA_LINES = frozenset({L.REVENUE, L.OPERATING_PROFIT, L.OTHER_INCOME,
+                               L.DEPRECIATION_AMORTIZATION, L.FINANCE_COST, L.PBT, L.TAX,
+                               L.PAT})
 
 Years = dict[int | None, FinancialPeriod]
 Assumptions = dict[tuple[Driver, Scenario, int], ForecastAssumption]
@@ -171,7 +181,9 @@ def verify_forecast_integrity(
     first = forecast.forecast_years[0].fiscal_year if forecast.forecast_years else None
     _check_anchors(forecast, box4)
     assumptions = _check_assumptions(forecast, years)
-    by_id: dict[UUID, ForecastValue] = {v.value_id: v for v in forecast.actuals}
+    _check_year_to_date(forecast, box4)
+    by_id: dict[UUID, ForecastValue] = {
+        v.value_id: v for v in (*forecast.actuals, *forecast.year_to_date_actuals)}
     keys = Counter((v.line, v.scenario, v.period.fiscal_year) for v in forecast.values)
     if any(n > 1 for n in keys.values()):
         raise ForecastIntegrityError("a forecast line is recorded twice for one scenario and year")
@@ -262,6 +274,22 @@ def _check_value(v: ForecastValue, ix: Index) -> None:
             if source is None or source is not expected:
                 raise ForecastIntegrityError(f"{where}: {i.role} is not last year's {line.value}")
             got = source.value
+        elif i.role.startswith("YTD_") or i.role == REMAINDER_ROLE:
+            ytd = forecast.base.year_to_date
+            source = by_id.get(i.ref_id)
+            ytd_line = L.REVENUE if i.role == REMAINDER_ROLE else L.__members__.get(i.role[4:])
+            if (
+                ytd is None
+                or fy != first
+                or i.kind != "ACTUAL"
+                or source is None
+                or source not in forecast.year_to_date_actuals
+                or source.line != ytd_line
+                or (source.period == ytd.period) == (i.role == REMAINDER_ROLE)
+            ):
+                raise ForecastIntegrityError(
+                    f"{where}: {i.role} is not this forecast's reported year to date")
+            got = source.value
         elif i.role in Driver.__members__:
             a = ix.assumption_ids.get(i.ref_id)
             if (
@@ -310,6 +338,24 @@ def _check_formula_choice(v: ForecastValue, ix: Index) -> None:
     def a(driver: Driver) -> ForecastAssumption | None:
         return ix.assumptions.get((driver, scenario, fy))
 
+    ytd = ix.forecast.base.year_to_date
+    ytd_year = ytd is not None and fy == ix.first
+    second = "/2/" in (v.formula_id or "")
+    if ytd_year and (v.line in YTD_FORMULA_LINES or (
+            v.line == L.EBITDA and route == OperatingRoute.REPORTED_EBITDA)):
+        assert ytd is not None
+        rate = ix.assumptions.get((Driver.INTEREST_RATE_ON_DEBT, scenario, fy))
+        ratio = ix.assumptions.get((Driver.FINANCE_COST_TO_REVENUE, scenario, fy))
+        stated_ratio = ratio is not None and ratio.source != SRC.HISTORICAL
+        uses_rate = rate is not None and (rate.source != SRC.HISTORICAL or not stated_ratio)
+        expected = (f"FINANCE_COST/2/RATE_YTD_REMAINING_{12 - ytd.months}M"
+                    if v.line == L.FINANCE_COST and uses_rate
+                    else f"{v.line.value}/2/YTD_PLUS_REMAINDER")
+        if v.formula_id != expected:
+            raise ForecastIntegrityError(f"{_where(v)}: not the formula Box 10 applies here")
+        return
+    if second:  # a year-to-date formula outside the first year of a year-to-date forecast
+        raise ForecastIntegrityError(f"{_where(v)}: not the formula Box 10 applies here")
     if _lender(ix.forecast):
         if LENDER_FORMULAS.get(v.line) != v.formula_id:
             raise ForecastIntegrityError(f"{_where(v)}: not the formula Box 10 applies here")
@@ -406,6 +452,40 @@ def _signed_sum(components: tuple[MetricInput, ...], signs: tuple[int, ...]) -> 
 
 def _lender(forecast: ForecastDataset) -> bool:
     return forecast.base.forecast_model == ForecastModel.NON_BANK_FINANCIAL
+
+
+def _check_year_to_date(forecast: ForecastDataset,
+                        box4: CanonicalFinancialDataset | None) -> None:
+    """The reported year-to-date anchors: their shape and sums, and - with the forecast's own
+    Box 4 - exactly what Box 10's own year-to-date code rebuilds from it."""
+    ytd, anchors = forecast.base.year_to_date, forecast.year_to_date_actuals
+    if ytd is None:
+        return
+    first = forecast.forecast_years[0] if forecast.forecast_years else None
+    if first is None or first.fiscal_year != ytd.fiscal_year:
+        raise ForecastIntegrityError("the year to date is not of the first forecast year")
+    for v in anchors:
+        where = f"{_where(v)} (year to date)"
+        if (v.status != "AVAILABLE" or v.value is None or v.formula_id not in ACTUAL_COMPOSITES
+                or ACTUAL_COMPOSITES[v.formula_id][0] != v.line or v.actual is not None
+                or v.currency != forecast.base.currency or v.scale != Scale.CRORES
+                or any(c.reporting_basis != forecast.base.reporting_basis
+                       or c.currency != v.currency for c in v.actual_components)):
+            raise ForecastIntegrityError(f"{where}: not a Box 10 year-to-date anchor")
+        summed = v.formula_id.startswith("ACTUAL_YTD/1/") and v.line in YTD_METRICS
+        if summed and (v.period != ytd.period or sum(
+                (c.value for c in v.actual_components), Decimal(0)) != v.value):
+            raise ForecastIntegrityError(f"{where}: not the sum of its reported quarters")
+    if box4 is None or forecast.base.latest_actual is None:
+        return
+    end = forecast.base.latest_actual.period_end
+    assert end is not None
+    base = forecast.base
+    rebuilt = _year_to_date(forecast.source_box4.canonical_sha256, base.reporting_basis,
+                            base.currency, History(box4, base.reporting_basis, base.currency),
+                            end, base.operating_route, Issues())
+    if rebuilt is None or rebuilt.base != ytd or rebuilt.anchors() != anchors:
+        raise ForecastIntegrityError("the year-to-date anchors differ from Box 4")
 
 
 def _check_anchors(forecast: ForecastDataset, box4: CanonicalFinancialDataset | None) -> None:

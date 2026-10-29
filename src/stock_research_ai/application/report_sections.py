@@ -2160,6 +2160,12 @@ LENDER_FORECAST_LINES = ("TOTAL_ASSETS", "PAT", "COMMON_EQUITY", "NON_EQUITY_FUN
                          "TOTAL_BORROWINGS", "FINANCE_COST", "TOTAL_INCOME")
 
 
+def _anchor_label(v: ForecastValue) -> str:
+    """A fiscal-year / balance-sheet anchor, or the reported months of the forecast year."""
+    return "Historical anchor" if v.period.period_type.value in ("FY", "POINT_IN_TIME") \
+        else "Reported months"
+
+
 def forecast_claim(ctx: Ctx, v: ForecastValue) -> UUID | None:
     if v.status != "AVAILABLE" or v.value is None or ctx.box10 is None:
         return None
@@ -2174,7 +2180,8 @@ def forecast_claim(ctx: Ctx, v: ForecastValue) -> UUID | None:
             return None
         return ctx.book.claim(
             None, CT.CALCULATION if v.formula_id else CT.FACT, f"ACTUAL_{v.line.value}",
-            f"Historical anchor {human(v.line.value)}: {number(v.value)} {v.currency.value} "
+            f"{_anchor_label(v)} "
+            f"{human(v.line.value)}: {number(v.value)} {v.currency.value} "
             f"{v.scale.value} ({v.period.label}; Box 10 actual).",
             basis=basis_of(ctx.box10.base.reporting_basis), value=v.value,
             upstream=(up(Layer.BOX10, "FORECAST_VALUE", v.value_id), *u_), sources=s_,
@@ -2243,6 +2250,13 @@ def forecasts(ctx: Ctx) -> dict[Scenario, tuple[list[UUID], list[UUID]]]:
     lender = f.base.forecast_model is not None and \
         f.base.forecast_model.value == "NON_BANK_FINANCIAL"
     lines = LENDER_FORECAST_LINES if lender else FORECAST_LINES
+    ytd = f.base.year_to_date
+    ytd_rows = {v.line.value: v for v in f.year_to_date_actuals
+                if ytd is not None and v.period == ytd.period}
+    ytd_note = (f"{years[0].label} = {ytd.period.label} actual + a forecast of the remaining "
+                f"{12 - ytd.months} months only (the reported months are never re-forecast; "
+                "the remaining months grow from the same months a year earlier).",
+                ) if ytd is not None and years else ()
     model_note = ("Forecast model: NON_BANK_FINANCIAL (balance-sheet lender model: assets -> "
                   "PAT on ROA -> equity -> funding -> borrowings -> finance cost; no EBITDA, "
                   "working-capital, capex or revenue driver). Finance cost uses a "
@@ -2259,6 +2273,10 @@ def forecasts(ctx: Ctx) -> dict[Scenario, tuple[list[UUID], list[UUID]]]:
                                and v.period.period_end == end), None)
                 cells.append(cell(f"A_{end.year}", ctx.book, forecast_claim(ctx, actual)
                                   if actual else None, note="NOT_AVAILABLE"))
+            if ytd is not None:
+                reported = ytd_rows.get(line)
+                cells.append(cell("YTD", ctx.book, forecast_claim(ctx, reported)
+                                  if reported else None, note="NOT_REPORTED"))
             for y in years:
                 v = next((x for x in f.values if x.line.value == line and x.scenario == scenario
                           and x.period.period_end == y.period_end), None)
@@ -2272,6 +2290,10 @@ def forecasts(ctx: Ctx) -> dict[Scenario, tuple[list[UUID], list[UUID]]]:
                 rows.append(row(line, human(line).capitalize(), RowKind.FORECAST, cells))
         columns = [col(f"A_{e.year}", f"FY ending {e} (historical)", ColumnKind.HISTORICAL,
                        period_end=e) for e in anchors]
+        if ytd is not None:
+            columns.append(col("YTD", f"{ytd.period.label} (reported months)",
+                               ColumnKind.HISTORICAL, period=ytd.period.label,
+                               period_end=ytd.period.period_end))
         columns += [col(f"F_{y.fiscal_year or y.label}"[:80].upper().replace(" ", "_"),
                         f"{y.label} ({sc.value} forecast)", ColumnKind.FORECAST,
                         period=y.label, period_end=y.period_end, scenario=sc) for y in years]
@@ -2280,7 +2302,7 @@ def forecasts(ctx: Ctx) -> dict[Scenario, tuple[list[UUID], list[UUID]]]:
                   "labelled)", basis_of(f.base.reporting_basis), columns,
                   rows, scenario=sc, footnotes=(
                       "Forecast columns are scenario outputs, not reported results.",
-                      *model_note))
+                      *ytd_note, *model_note))
         drivers: list[UUID] = []
         arows: list[TableRow] = []
         for driver in sorted({a.driver.value for a in f.assumptions if a.scenario == scenario}):
@@ -2295,7 +2317,8 @@ def forecasts(ctx: Ctx) -> dict[Scenario, tuple[list[UUID], list[UUID]]]:
                     " ", "_"), ctx.book, cid, note="NOT_ASSUMED"))
             arows.append(row(driver, human(driver).capitalize(), RowKind.ASSUMPTION, acells))
         ctx_table(ctx, sec, f"ASSUMPTIONS_{sc.value}", f"{sc.value} forecast assumptions (Box 10 "
-                  "assumption IDs)", basis_of(f.base.reporting_basis), columns[len(anchors):],
+                  "assumption IDs)", basis_of(f.base.reporting_basis),
+                  columns[len(anchors) + (1 if ytd is not None else 0):],
                   arows, scenario=sc)
         out[sc] = (drivers, forecast_ids)
     return out

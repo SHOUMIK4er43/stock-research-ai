@@ -488,7 +488,8 @@ class Resolver:
                 self.box7_obs[g.observation_id] = g.source
             for k in box7.operating_kpi_observations:
                 self.box7_obs[k.kpi_observation_id] = k.source
-        self.forecast_values = {v.value_id: v for v in (*box10.actuals, *box10.values)} \
+        self.forecast_values = {v.value_id: v for v in (*box10.actuals, *box10.year_to_date_actuals,
+                                                        *box10.values)} \
             if box10 else {}
         self.assumptions = {a.assumption_id: a for a in box10.assumptions} if box10 else {}
         self.valuation_values = {v.value_id: v for v in box11.values} if box11 else {}

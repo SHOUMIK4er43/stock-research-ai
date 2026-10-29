@@ -421,7 +421,7 @@ async def test_generate_summary_through_the_adapter_with_mock_transport(tmp_path
     ]
     assert len(request.content) < adapter.MAX_REQUEST_BYTES
     assert result.company.name == "Infosys Ltd"
-    assert "Infosys Ltd — Standalone reporting." in result.summary_text
+    assert "Infosys Ltd — Standalone figures from the Screener page" in result.summary_text
     assert result.grounding_claims
     assert result.reported_model == "claude-sonnet-5"
     assert result.provider == "aicredits"

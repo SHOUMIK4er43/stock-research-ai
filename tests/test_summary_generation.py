@@ -4,7 +4,7 @@ import ast
 import hashlib
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -75,6 +75,10 @@ async def generate(value: SummaryInput, model: FakeModel) -> SummaryResult:
     return await generate_summary(value, model, now=NOW, summary_id=SUMMARY_ID)
 
 
+#: the observations a calculated ratio claim cites (numerator and denominator)
+RATIO_INPUTS = {"operating_margin": {"operating_profit", "sales", "revenue"},
+                "cash_conversion": {"cash_operating", "net_profit"}}
+
 def selection(value: SummaryInput, *claim_ids: str) -> str:
     return json.dumps({"claim_ids": list(claim_ids)})
 
@@ -103,6 +107,17 @@ def synthetic_input(
     )
 
 
+def _month_end(label: str) -> date | None:
+    """A Screener column label's end date ('Mar 2026' -> 31-Mar-2026), as the projection
+    records it."""
+    try:
+        start = datetime.strptime(label, "%b %Y").date()
+    except ValueError:
+        return None
+    following = date(start.year + start.month // 12, start.month % 12 + 1, 1)
+    return following - timedelta(days=1)
+
+
 def grounded_row(
     metric_id: str,
     label: str,
@@ -120,6 +135,7 @@ def grounded_row(
         values=tuple(
             SummaryValue(
                 period=period,
+                period_end=_month_end(period),
                 value=value,
                 status=ValueStatus.AVAILABLE,
                 source_observation_id=UUID(int=i + 100),
@@ -153,7 +169,9 @@ async def test_infy_prompt_contract(tmp_path, fixture_dir):
     assert {claim["id"] for claim in catalogue["claims"]}
     assert any("Revenue" in claim["statement"] for claim in catalogue["claims"])
     assert any("Operating profit" in claim["statement"] for claim in catalogue["claims"])
-    assert any("PAT" in claim["statement"] for claim in catalogue["claims"])
+    # Screener's profit is named as Screener's concept (it can include NCI), never 'PAT'
+    assert any("Net profit (Screener definition)" in claim["statement"]
+               for claim in catalogue["claims"])
     assert any("EPS" in claim["statement"] for claim in catalogue["claims"])
     for rule in (
         "Do not write prose, numbers, labels,",
@@ -236,7 +254,8 @@ async def test_success_calls_model_exactly_once_and_maps_result(tmp_path, fixtur
     assert result.data_retrieved_at == value.company.retrieved_at
     assert result.limitations == value.limitations
     assert result.input_sha256 == hashlib.sha256(canonical_summary_json(value)).hexdigest()
-    assert result.summary_text.startswith("Company overview\nInfosys Ltd — Standalone reporting.")
+    assert result.summary_text.startswith(
+        "Company overview\nInfosys Ltd — Standalone figures from the Screener page")
     assert result.grounding_claims
     assert all(claim.text in result.summary_text.splitlines() for claim in result.grounding_claims)
     assert result.requested_model == MODEL
@@ -279,8 +298,8 @@ async def test_c_wrong_period_pat_cannot_be_emitted():
         c for c in claims if c.metric_id == "net_profit" and c.periods == ("Mar 2026",)
     )
     result = await generate(value, FakeModel(summary_text=selection(value, actual_2026.claim_id)))
-    assert "Mar 2026: ₹700 Cr" in result.summary_text
-    assert "Mar 2026: ₹500 Cr" not in result.summary_text
+    assert "FY2026: ₹700 Cr" in result.summary_text
+    assert "FY2026: ₹500 Cr" not in result.summary_text
 
 
 async def test_d_borrowings_cannot_be_relabelled_as_cash():
@@ -313,7 +332,9 @@ async def test_f_period_direction_is_deterministic_and_evidence_linked():
     trend = next(c for c in build_summary_claims(value) if c.kind == "trend")
     result = await generate(value, FakeModel(summary_text=selection(value, trend.claim_id)))
     assert trend.text in result.summary_text.splitlines()
-    assert "increased from ₹10,000 Cr in Mar 2025 to ₹12,000 Cr in Mar 2026" in trend.text
+    # periods are named (fiscal years), and the change is stated
+    assert "increased from ₹10,000 Cr in FY2025 to ₹12,000 Cr in FY2026" in trend.text
+    assert "+20.0%" in trend.text
     assert len(trend.source_observation_ids) == len(trend.source_artifact_ids) == 2
 
 
@@ -335,9 +356,13 @@ async def test_h_unsupported_selection_is_dropped_without_losing_grounded_claims
     result = await generate(
         value, FakeModel(summary_text=selection(value, claim.claim_id, invented_id))
     )
-    assert len(result.grounding_claims) == 1
-    assert result.grounding_claims[0].claim_id == claim.claim_id
-    assert result.summary_text.count(claim.periods[0]) == 1
+    # the selected claim is kept, the invented ID dropped; the only other claims shown are
+    # the analytical core (like-for-like trends and calculated ratios), always shown
+    ids = [c.claim_id for c in result.grounding_claims]
+    assert claim.claim_id in ids and invented_id not in ids
+    assert all(c.claim_id == claim.claim_id or c.kind in ("trend", "ratio")
+               for c in result.grounding_claims)
+    assert result.summary_text.count(claim.text) == 1
     assert "No verified financial observations are available" not in result.summary_text
 
 
@@ -364,11 +389,12 @@ async def test_j_hudco_summary_remains_usable_with_explicit_consolidated_scope()
     )
     result = await generate(value, FakeModel())
     assert (
-        "Housing and Urban Development Corporation Ltd — Consolidated reporting."
-        in result.summary_text
+        "Housing and Urban Development Corporation Ltd — Consolidated figures from the "
+        "Screener page" in result.summary_text
     )
     assert (
-        "PAT (source label: Net Profit) — Mar 2026: ₹500 Cr (Consolidated)." in result.summary_text
+        "Net profit (Screener definition) — FY2026: ₹500 Cr (Consolidated)."
+        in result.summary_text
     )
     assert result.grounding_claims[0].source_observation_ids == (UUID(int=100),)
 
@@ -399,15 +425,17 @@ async def test_real_fixture_summary_claims_trace_to_normalized_source_evidence(
     assert result.grounding_claims
     for claim in result.grounding_claims:
         assert claim.text in result.summary_text.splitlines()
-        expected_scope_label = {
-            ReportingScope.STANDALONE: "(Standalone).",
-            ReportingScope.CONSOLIDATED: "(Consolidated).",
-            ReportingScope.UNKNOWN: "(Scope unknown).",
+        scope_name = {
+            ReportingScope.STANDALONE: "Standalone",
+            ReportingScope.CONSOLIDATED: "Consolidated",
+            ReportingScope.UNKNOWN: "Scope unknown",
         }[claim.reporting_scope]
-        assert claim.text.endswith(expected_scope_label)
+        assert claim.text.endswith((f"({scope_name}).", f"{scope_name}).")) or (
+            f"({scope_name}, " in claim.text)
+        allowed = RATIO_INPUTS.get(claim.metric_id, {claim.metric_id})
         for index, observation_id in enumerate(claim.source_observation_ids):
             observation = observations[observation_id]
-            assert observation.metric_id == claim.metric_id
+            assert observation.metric_id in allowed
             assert observation.reporting_scope == claim.reporting_scope
             assert observation.value == claim.values[index]
             assert observation.period.fiscal_label == claim.periods[index]
@@ -529,6 +557,13 @@ def test_result_contract_is_strict():
 
 
 def test_generation_module_imports_only_the_isolated_summary_path():
+    from stock_research_ai.application import period_names
+
+    for node in ast.walk(ast.parse(Path(period_names.__file__).read_text())):
+        if isinstance(node, ast.ImportFrom | ast.Import):
+            names = [node.module or ""] if isinstance(node, ast.ImportFrom) else [
+                a.name for a in node.names]
+            assert all(n.split(".")[0] in sys.stdlib_module_names for n in names), names
     source = Path(summary_generation.__file__).read_text()
     forbidden = (
         "analyst",
@@ -555,5 +590,7 @@ def test_generation_module_imports_only_the_isolated_summary_path():
             assert module.split(".")[0] in sys.stdlib_module_names or module in {
                 "stock_research_ai.application.summary",
                 "stock_research_ai.domain.summary",
+                # the ONE period-naming rule shared with Detailed Research (stdlib only)
+                "stock_research_ai.application.period_names",
             }, module
             assert not any(word in module for word in forbidden), module

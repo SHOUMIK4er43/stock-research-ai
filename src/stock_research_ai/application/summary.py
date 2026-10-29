@@ -71,7 +71,7 @@ BLOCKS: tuple[
     tuple[SummaryBlockName, Section, tuple[MetricGroup, ...], PeriodFrequency, int], ...
 ] = (
     ("annual", Section.PROFIT_LOSS, ANNUAL, PeriodFrequency.ANNUAL, 4),
-    ("quarterly", Section.QUARTERLY, QUARTERLY, PeriodFrequency.QUARTERLY, 4),
+    ("quarterly", Section.QUARTERLY, QUARTERLY, PeriodFrequency.QUARTERLY, 5),
     ("balance_sheet", Section.BALANCE_SHEET, BALANCE_SHEET, PeriodFrequency.POINT_IN_TIME, 2),
     ("cash_flow", Section.CASH_FLOW, CASH_FLOW, PeriodFrequency.ANNUAL, 2),
 )
@@ -187,6 +187,7 @@ def _label(observation: FinancialObservation) -> str:
 def _value(observation: FinancialObservation) -> SummaryValue:
     return SummaryValue(
         period=observation.period.fiscal_label,
+        period_end=observation.period.end_date,
         value=observation.value,
         status=observation.value_status,
         source_observation_id=observation.id,

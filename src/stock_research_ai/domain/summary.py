@@ -4,6 +4,7 @@ Every value is copied from an existing normalized observation; nothing is calcul
 Bounds are enforced by validation, never by silent truncation.
 """
 
+from datetime import date
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -78,6 +79,8 @@ class SummaryValue(BaseModel):
     period: BoundedText
     value: ExactDecimal | None
     status: ValueStatus
+    #: the column's end date when the source resolved it (names FY / quarter / BS date)
+    period_end: date | None = None
     source_observation_id: UUID | None = None
     source_artifact_id: UUID | None = None
     source_location: Annotated[str, StringConstraints(min_length=1, max_length=500)] | None = None
@@ -117,7 +120,7 @@ class SummaryRow(BaseModel):
     metric_id: MetricId
     unit: FinancialUnit
     reporting_scope: ReportingScope
-    values: tuple[SummaryValue, ...] = Field(max_length=4)
+    values: tuple[SummaryValue, ...] = Field(max_length=5)  # 5 quarters: one year-on-year
     ttm: SummaryValue | None = None
 
 
@@ -311,7 +314,9 @@ class SummaryGroundingClaim(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     claim_id: ClaimId
-    kind: Literal["observation", "trend"]
+    #: observation: one value; trend: the same metric in two comparable periods; ratio: a
+    #: calculated ratio of two cited values of the same period (numerator, denominator)
+    kind: Literal["observation", "trend", "ratio"]
     block: SummaryBlockName
     metric_id: MetricId
     label: BoundedText
@@ -328,7 +333,7 @@ class SummaryGroundingClaim(BaseModel):
 
     @model_validator(mode="after")
     def linked_inputs(self) -> Self:
-        count = 2 if self.kind == "trend" else 1
+        count = 1 if self.kind == "observation" else 2
         if not all(
             len(items) == count
             for items in (

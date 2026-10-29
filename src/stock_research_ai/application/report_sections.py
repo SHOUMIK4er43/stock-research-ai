@@ -14,6 +14,7 @@ from typing import Any, Literal, cast
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.diligence_inputs import FAMILIES, fid
+from stock_research_ai.application.period_names import period_name
 from stock_research_ai.application.red_flags import NS as NS13
 from stock_research_ai.application.report_claims import (
     NS,
@@ -1081,41 +1082,6 @@ CONCEPT_NOTES = {
     "DILUTED_EPS": "diluted EPS as reported by the company",
 }
 
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-
-def day_name(day: date) -> str:
-    return f"{day.day:02d}-{_MONTHS[day.month - 1]}-{day.year}"
-
-
-def period_name(period: Any, fy_end_month: int | None) -> str:
-    """One unambiguous reader name per period, whatever the source printed ('Mar 2026',
-    'year ended March 31 2026 March 31 2026'): FY2026 (the fiscal year named by the year it
-    ends), Q2 FY2027, H1 FY2027, 9M FY2027, TTM to 30-Sep-2026, or a balance-sheet date
-    31-Mar-2026. Without an end date the source label is kept as it is."""
-    end, kind = getattr(period, "period_end", None), period.period_type.value
-    label = str(period.label)
-    if end is None:
-        return label
-    if kind == "POINT_IN_TIME":
-        return day_name(end)
-    if kind == "TTM":
-        return f"TTM to {day_name(end)}"
-    month = fy_end_month or 3
-    fiscal_year = end.year if end.month <= month else end.year + 1
-    if kind == "FY":
-        return f"FY{fiscal_year}" if end.month == month else f"year ended {day_name(end)}"
-    elapsed = (end.month - month - 1) % 12 + 1  # months of the fiscal year to the end date
-    if elapsed % 3:
-        return f"period ended {day_name(end)}"
-    if kind == "QUARTER":
-        return f"Q{elapsed // 3} FY{fiscal_year}"
-    prefix = {"HALF_YEAR": "H", "NINE_MONTH": "9M"}.get(kind)
-    if prefix == "H" and elapsed in (6, 12):
-        return f"H{elapsed // 6} FY{fiscal_year}"
-    if prefix == "9M" and elapsed == 9:
-        return f"9M FY{fiscal_year}"
-    return f"{label} (to {day_name(end)})"
 
 
 def _one_concept_per_row(ctx: Ctx, specs: tuple[Spec, ...], basis: ClaimBasis,
@@ -2470,8 +2436,12 @@ def market_context(ctx: Ctx) -> list[UUID]:
     sec = S.VALUATION
     b12 = ctx.box12
     out: list[UUID] = []
+    undated = ("no dated market price: the exchange / market-data sources returned none. An "
+               "aggregator snapshot without an observation date (the Screener price, market cap "
+               "and P/E the Summary shows, labelled undated) is not used for valuation")
     if b12 is None:
         ctx.drafts[sec].missing.add(InputFamily.MARKET_DATA)
+        ctx.limit(sec, "MARKET_PRICE", "DATA_UNAVAILABLE", undated)
         return out
     dataset = up(Layer.BOX12, "DATASET", b12.dataset_id)
     history = b12.company_history
@@ -2488,6 +2458,8 @@ def market_context(ctx: Ctx) -> list[UUID]:
                 f"({snap.freshness.value.lower()}; {snap.source.value}). Context only.",
                 basis=NA, upstream=(up(Layer.BOX12, "SNAPSHOT", snap.snapshot_id),),
                 sources=(src,), value=snap.last_price, unit="INR", period_end=snap.market_date))
+    if not out:
+        ctx.limit(sec, "MARKET_PRICE", "DATA_UNAVAILABLE", undated, upstream=(dataset,))
     for st in b12.statistics:
         if st.status.value == "AVAILABLE" and st.value is not None and history_sources:
             out.append(ctx.book.claim(

@@ -169,9 +169,9 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         counts = (("EVALUATED", cov.evaluated), ("APPLICABLE", cov.applicable),
                   ("GREEN", cov.green), ("YELLOW", cov.yellow), ("RED", cov.red),
                   ("NOT_EVALUATED", cov.not_evaluated), ("NOT_APPLICABLE", cov.not_applicable))
-        clear = [PanelItem(label=r.title, severity="GREEN",
-                           statement="Evaluated - no adverse evidence found",
-                           detail=f"{_label(r.category)} · {r.code}")
+        clear = [PanelItem(label=r.measured or r.title, severity="GREEN",
+                           statement="Evaluated - no adverse evidence found; risk tested: "
+                           + r.title.lower(), detail=f"{_label(r.category)} · {r.code}")
                  for r in cov.rules if r.outcome == "GREEN"]
         unevaluated = [PanelItem(label=r.title, statement="Not evaluated - "
                                  + (r.reason_text or _label(r.reason or "")),

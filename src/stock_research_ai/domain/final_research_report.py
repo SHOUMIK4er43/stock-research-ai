@@ -750,6 +750,9 @@ class RuleCoverage(BaseModel):
     outcome: RuleOutcome
     reason: Code | None = None  # the upstream reason code (PLEDGE_DATA_NOT_SUPPLIED ...)
     reason_text: Label | None = None  # 'promoter pledge data not available'
+    #: an evaluated rule's measure and value, 'EBIT / finance cost = 20.48x' - what a GREEN
+    #: result is about (the title names the risk tested, not a finding)
+    measured: Label | None = None
 
 
 class RiskCoverage(BaseModel):

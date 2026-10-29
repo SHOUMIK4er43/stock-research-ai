@@ -5,6 +5,7 @@ the claim type honest (FACT / CALCULATION / MANAGEMENT_STATEMENT / SCENARIO / DA
 and selects a material core layer deterministically; everything else goes to an appendix.
 """
 
+import re
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -16,10 +17,12 @@ from uuid import UUID, uuid5
 from stock_research_ai.application.diligence_inputs import FAMILIES, fid
 from stock_research_ai.application.period_names import day_name, period_name
 from stock_research_ai.application.red_flags import NS as NS13
+from stock_research_ai.application.red_flags import RULES
 from stock_research_ai.application.report_claims import (
     NS,
     Book,
     Resolver,
+    amount,
     basis_of,
     cell,
     col,
@@ -98,6 +101,7 @@ from stock_research_ai.domain.fundamental_valuation import ValuationDataset
 from stock_research_ai.domain.industry_intelligence import IndustryIntelligenceDataset
 from stock_research_ai.domain.management_intelligence import ManagementIntelligenceDataset
 from stock_research_ai.domain.market_intelligence import MarketIntelligenceDataset
+from stock_research_ai.domain.report_rendering import display_number
 
 M = CanonicalMetric
 S = SectionId
@@ -331,7 +335,7 @@ class Ctx:
         unit = unit_of(v)
         cid = self.book.claim(
             None, CT.FACT, v.metric.value,
-            f"{self.concept(v)} reported {number(v.value)} {unit} {self.when(v.period)} "
+            f"{self.concept(v)} reported {amount(v.value, unit)} {self.when(v.period)} "
             f"({v.reporting_basis.value.lower()}).",
             basis=basis_of(v.reporting_basis), upstream=ups, sources=sources, value=v.value,
             metric=v.metric.value, unit=unit, currency=v.currency,
@@ -358,7 +362,7 @@ class Ctx:
                "items, is negative." if flagged else "")
         cid = self.book.claim(
             None, CT.CALCULATION, m.code,
-            f"{label}: {number(m.value)} {unit.lower()} {self.when(m.period)} "
+            f"{label}: {amount(m.value, unit)} {self.when(m.period)} "
             f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).{why}",
             limitations=("EBITDA_BELOW_OPERATING_PROFIT",) if flagged else (),
             basis=basis_of(m.reporting_basis), upstream=ups, sources=sources, value=m.value,
@@ -399,7 +403,7 @@ class Ctx:
             return None
         cid = self.book.claim(
             None, CT.CALCULATION, f.code,
-            f"{f.label}: {number(f.value)} {f.unit.lower()} ({f.period or 'no period'}, "
+            f"{f.label}: {amount(f.value, f.unit)} ({f.period or 'no period'}, "
             f"{f.basis.value.lower()}; Box 13 {f.formula_id}).",
             basis=basis_of(f.basis.value), value=f.value, metric=f.code, unit=f.unit,
             period=f.period, period_end=f.period_end, sources=sources, evidence_ids=evidence,
@@ -484,16 +488,12 @@ def build_signals(ctx: Ctx) -> None:
                 ctx.issues.append(ReportIssue(code="SIGNAL_VALUE_WITHOUT_SOURCE",
                                               severity="WARNING", detail=s.code))
             cid = ctx.book.claim(
-                None, CT.CALCULATION, s.code,
-                f"{s.code} ({s.signal_class.value.lower().replace('_', ' ')}, "
-                f"{s.category.value.lower()}): {grade}; {s.metric} = {number(value)} "
-                f"{s.unit.lower()} ({s.period or 'no period'}, {s.basis.value.lower()}; rule "
-                f"{s.rule_id})." + (f" Not applicable: {s.reason}." if s.reason else ""),
+                None, CT.CALCULATION, s.code, signal_statement(s, grade, value),
                 basis=basis_of(s.basis.value), upstream=ups, sources=sources, value=value,
                 metric=s.metric, unit=s.unit, period=s.period, period_end=s.period_end,
                 evidence_ids=(), calculation_ids=(s.risk_id,), formula_ids=(s.formula_id,),
                 risk_ids=(s.risk_id,), confidence=s.confidence, polarity=polarity,
-                source_text=s.explanation,
+                source_text=None if s.explanation.startswith(f"{s.title}:") else s.explanation,
                 limitations=(("NOT_APPLICABLE",) if s.status == SignalStatus.NOT_APPLICABLE
                              else ("NOT_APPLICABLE", s.status.value) if gated else ()) + extra)
         else:
@@ -525,6 +525,34 @@ def build_signals(ctx: Ctx) -> None:
                 ctx.add(section, cid)
 
 
+_COMPARISONS = {"GT": ">", "GE": ">=", "LT": "<", "LE": "<=", "EQ": "="}
+
+
+def measured(s: RiskSignal) -> str:
+    """What a rule measures, from its registered formula (never its alarm-sounding title):
+    'EBIT / finance cost', not 'Weak interest cover'."""
+    rule = RULES.get(s.code)
+    text = rule.formula_text if rule is not None else human(s.code)
+    text = re.sub(r"\s*\([^()]*\)\s*$", "", text)
+    # the threshold belongs in the thresholds, not in the measure ('equity < 0' -> 'equity')
+    text = re.sub(r"\s*(?:<=|>=|<|>|=)\s*-?[\d.]+\s*$", "", text)
+    return text.strip() or human(s.code)
+
+
+def signal_statement(s: RiskSignal, grade: str, value: Decimal | None) -> str:
+    """'EBIT / finance cost = 20.48x (FY2026, consolidated) - GREEN: no adverse evidence.
+    Risk tested: weak interest cover; thresholds RED if < 1.5x, YELLOW if < 3x.' The
+    thresholds are the rule's own, in the unit of the measure shown."""
+    bands = "; ".join(f"{t.severity.value} if {_COMPARISONS[t.comparison]} "
+                      f"{amount(t.value, s.unit)}" for t in s.threshold)
+    verdict = {"GREEN": "GREEN: no adverse evidence", "YELLOW": "YELLOW", "RED": "RED"}.get(
+        grade, grade.replace("_", " ").lower())
+    return (f"{measured(s)} = {amount(value, s.unit)} ({s.period or 'no period'}, "
+            f"{s.basis.value.lower()}) - {verdict}. Risk tested: {s.title.lower()}"
+            + (f"; thresholds {bands}" if bands else "") + f" (rule {s.rule_id})."
+            + (f" Not applicable: {s.reason}." if s.reason else ""))
+
+
 def signal_inputs(ctx: Ctx, s: RiskSignal) -> list[UUID]:
     """The calculation inputs of a flag / control, each as its own (deduplicated) claim."""
     out: list[UUID] = []
@@ -549,7 +577,7 @@ def signal_inputs(ctx: Ctx, s: RiskSignal) -> list[UUID]:
                 continue  # an uncited analyst number is never presented as a company fact
             out.append(ctx.book.claim(
                 None, CT.FACT, f"INPUT_{family.upper()}"[:80],
-                f"Cited input ({human(family)}): {i.role} = {number(i.value)} {i.unit.lower()}"
+                f"Cited input ({human(family)}): {i.role} = {amount(i.value, i.unit)}"
                 f"{' (' + i.period + ')' if i.period else ''}.",
                 basis=basis_of(i.basis.value), upstream=(up(Layer.BOX13, "REQUEST_INPUT", rid),),
                 sources=(source,), value=i.value, unit=i.unit, period=i.period,
@@ -652,7 +680,7 @@ def ownership_point(ctx: Ctx, category: str, p: Any) -> UUID:
         source = resolved[0] if resolved else ctx.res.label(p.source_id, layer, "SHAREHOLDING")
     return ctx.book.claim(
         None, CT.FACT, f"HOLDING_{category}"[:80],
-        f"{human(category).capitalize()} holding {number(p.pct)} % at {p.period_end}.",
+        f"{human(category).capitalize()} holding {amount(p.pct, 'PERCENT')} at {p.period_end}.",
         basis=NA, upstream=(up(layer, kind, p.record_id),), sources=(source,), value=p.pct,
         unit="PERCENT", period=str(p.period_end), period_end=p.period_end)
 
@@ -736,7 +764,7 @@ def segments(ctx: Ctx, b7: BusinessIntelligenceDataset) -> None:
             continue
         ctx.add(sec, ctx.book.claim(
             None, CT.CALCULATION, f"SEGMENT_{a.code}"[:80],
-            f"{a.subject_name}: {human(a.code)} {number(a.value)} % ({a.period.label}).",
+            f"{a.subject_name}: {human(a.code)} {amount(a.value, 'PERCENT')} ({a.period.label}).",
             basis=ctx.analytical, upstream=(up(Layer.BOX7, "SEGMENT_ANALYTIC", a.analytic_id),),
             sources=sources, value=a.value, unit="PERCENT", period=a.period.label,
             period_end=a.period.period_end, calculation_ids=(a.analytic_id,),
@@ -765,7 +793,7 @@ def geographies(ctx: Ctx, b7: BusinessIntelligenceDataset) -> None:
         cid = ctx.book.claim(
             None, CT.FACT, "GEOGRAPHY_REVENUE",
             f"Revenue attributed to {v.geography_name} ({v.attribution.value.lower()}): "
-            f"{number(v.value)} {v.currency.value} {v.scale.value} ({v.period.label}).",
+            f"{amount(v.value, f'{v.currency.value} {v.scale.value}')} ({v.period.label}).",
             basis=basis_of(v.reporting_basis), value=v.value,
             upstream=(up(Layer.BOX7, "GEOGRAPHY_VALUE", v.canonical_value_id),),
             sources=(ctx.res.location(loc),), unit=f"{v.currency.value} {v.scale.value}",
@@ -1361,8 +1389,8 @@ def management(ctx: Ctx) -> None:
             ctx.add(sec, ctx.book.claim(
                 None, CT.CALCULATION, "GUIDANCE_ACCURACY",
                 f"Guidance delivery: {r.met} met / {r.missed} missed / {r.partial} partial of "
-                f"{r.completed} completed targets ({number(r.accuracy_pct)} %; {r.open} still "
-                "open).", basis=NA, upstream=tuple(up(Layer.BOX8, "OUTCOME", o)
+                f"{r.completed} completed targets ({amount(r.accuracy_pct, 'PERCENT')}; "
+                f"{r.open} still open).", basis=NA, upstream=tuple(up(Layer.BOX8, "OUTCOME", o)
                                                    for o in r.outcome_ids[:400]),
                 sources=sources, value=r.accuracy_pct, unit="PERCENT",
                 calculation_ids=r.outcome_ids[:400], formula_ids=("BOX13/GUIDANCE_ACCURACY",)))
@@ -1624,7 +1652,7 @@ def guidance_tracker(ctx: Ctx, b8: ManagementIntelligenceDataset) -> list[Guidan
                 if s_:
                     actual = ctx.book.claim(
                         None, CT.FACT, f"GUIDANCE_ACTUAL_{a.code}"[:80],
-                        f"Reported outcome for {human(a.code)}: {number(a.value)} {a.unit}.",
+                        f"Reported outcome for {human(a.code)}: {amount(a.value, a.unit)}.",
                         basis=basis_of(a.reporting_basis), value=a.value, unit=a.unit,
                         upstream=(up(Layer.BOX8, "OUTCOME", o.outcome_id), *u_), sources=s_,
                         period_end=a.period_end)
@@ -1791,7 +1819,7 @@ def event_claims(ctx: Ctx, e: Any, risk_ids: tuple[UUID, ...] = ()) -> tuple[UUI
             ctx.book.get(claim).value is not None:
         ratio = ctx.book.claim(
             None, CT.CALCULATION, f"EVENT_MATERIALITY_{e.event_type.value}"[:80],
-            f"Stated value equals {number(m.ratio_pct)} % of reference annual revenue (FY "
+            f"Stated value equals {amount(m.ratio_pct, 'PERCENT')} of reference annual revenue (FY "
             f"{m.denominator_fiscal_year}; Box 12 {m.method.lower()}).", basis=NA,
             upstream=(up(Layer.BOX12, "EVENT", e.event_id),), sources=sources,
             value=m.ratio_pct, unit="PERCENT", period=str(e.event_date),
@@ -1954,7 +1982,7 @@ def order_metric(ctx: Ctx, m: Any, members: list[Any]) -> UUID:
                          f"{human(m.kind.value)}: no source documents", upstream=ups)
     return ctx.book.claim(
         None, CT.CALCULATION, f"ORDER_{m.kind.value}"[:80],
-        f"{human(m.kind.value).capitalize()}: {number(m.value)} {m.unit.lower()} "
+        f"{human(m.kind.value).capitalize()}: {amount(m.value, m.unit)} "
         f"({m.period_start or '-'} to {m.period_end or '-'}; {m.completeness.lower()}; "
         f"{m.chains} chains).", basis=NA, upstream=ups, sources=sources[:500], value=m.value,
         unit=m.unit, period=f"{m.period_start} to {m.period_end}", period_end=m.period_end,
@@ -2174,8 +2202,9 @@ def forecast_claim(ctx: Ctx, v: ForecastValue) -> UUID | None:
         return ctx.book.claim(
             None, CT.CALCULATION if v.formula_id else CT.FACT, f"ACTUAL_{v.line.value}",
             f"{_anchor_label(v)} "
-            f"{human(v.line.value)}: {number(v.value)} {v.currency.value} "
-            f"{v.scale.value} ({v.period.label}; Box 10 actual).",
+            f"{human(v.line.value)}: "
+            f"{amount(v.value, f'{v.currency.value} {v.scale.value}')} ({v.period.label}; Box 10 "
+            "actual).",
             basis=basis_of(ctx.box10.base.reporting_basis), value=v.value,
             upstream=(up(Layer.BOX10, "FORECAST_VALUE", v.value_id), *u_), sources=s_,
             unit=f"{v.currency.value} {v.scale.value}", period=v.period.label,
@@ -2183,10 +2212,12 @@ def forecast_claim(ctx: Ctx, v: ForecastValue) -> UUID | None:
             formula_ids=(v.formula_id,) if v.formula_id else ())
     assert v.scenario is not None
     sources = (ctx.book.dataset_sources[Layer.BOX10], *ctx.res.anchored(v.value_id))
+    forecast_unit = (f"{v.currency.value} {v.scale.value}" if v.unit == "MONEY"
+                     else f"{v.currency.value} per share")
     return ctx.book.claim(
         None, CT.SCENARIO, f"FORECAST_{v.line.value}",
-        f"{v.scenario.value} scenario forecast {human(v.line.value)}: {number(v.value)} "
-        f"{v.currency.value} {v.scale.value} for {v.period.label} (Box 10 {v.formula_id}).",
+        f"{v.scenario.value} scenario forecast {human(v.line.value)}: "
+        f"{amount(v.value, forecast_unit)} for {v.period.label} (Box 10 {v.formula_id}).",
         basis=basis_of(ctx.box10.base.reporting_basis), value=v.value,
         upstream=(up(Layer.BOX10, "FORECAST_VALUE", v.value_id),), sources=sources,
         unit=f"{v.currency.value} {v.scale.value}" if v.unit == "MONEY" else
@@ -2208,8 +2239,8 @@ def assumption_claim(ctx: Ctx, a: Any) -> UUID:
                     if s in statements]
     return ctx.book.claim(
         None, CT.SCENARIO, f"ASSUMPTION_{a.driver.value}",
-        f"{a.scenario.value} assumption {human(a.driver.value)} = {number(a.value)} "
-        f"{a.unit.value.lower()} for FY{a.fiscal_year} ({a.source.value.lower()}, "
+        f"{a.scenario.value} assumption {human(a.driver.value)} = "
+        f"{amount(a.value, a.unit.value)} for FY{a.fiscal_year} ({a.source.value.lower()}, "
         f"{a.method.value.lower()}; Box 10).", basis=basis_of(ctx.box10.base.reporting_basis),
         value=a.value, unit=a.unit.value, period=f"FY{a.fiscal_year}",
         scenario=Scenario(a.scenario.value),
@@ -2435,10 +2466,12 @@ def valuation_claim(ctx: Ctx, x: Any, scenario: Scenario, method: str) -> UUID:
     sources = (ctx.book.dataset_sources[Layer.BOX11], *ctx.res.anchored(x.value_id))
     return ctx.book.claim(
         None, CT.SCENARIO, f"VALUATION_{x.name}"[:80],
-        f"{scenario.value} {method} {human(x.name)}: {number(x.value)} "
-        f"{(x.currency.value + ' ') if x.currency else ''}{x.unit.value.lower()} (Box 11 "
+        f"{scenario.value} {method} {human(x.name)}: "
+        f"{amount(x.value, (x.currency.value + ' ' if x.currency else '') + x.unit.value)} "
+        f"(Box 11 "
         f"{x.formula_id or 'input'}).", basis=basis_of(ctx.box11.reporting_basis),
-        value=x.value, unit=x.unit.value, scenario=scenario,
+        value=x.value, unit=(x.currency.value + " " if x.currency else "") + x.unit.value,
+        scenario=scenario,
         upstream=(up(Layer.BOX11, "VALUATION_VALUE", x.value_id),), sources=sources,
         calculation_ids=(x.value_id,), formula_ids=(x.formula_id or "BOX11/INPUT",),
         metric=method)
@@ -2452,8 +2485,8 @@ def valuation_assumption(ctx: Ctx, a: Any, scenario: Scenario) -> UUID:
                                        "EXPLICIT_ASSUMPTION", reference=a.reference))
     return ctx.book.claim(
         None, CT.SCENARIO, f"VALUATION_ASSUMPTION_{a.kind.value}"[:80],
-        f"{scenario.value} valuation assumption {human(a.kind.value)} = {number(a.value)} "
-        f"{a.unit.value.lower()} (explicit input to Box 11).",
+        f"{scenario.value} valuation assumption {human(a.kind.value)} = "
+        f"{amount(a.value, a.unit.value)} (explicit input to Box 11).",
         basis=basis_of(ctx.box11.reporting_basis), value=a.value, unit=a.unit.value,
         scenario=scenario, upstream=(up(Layer.BOX11, "ASSUMPTION", a.assumption_id),),
         sources=sources)
@@ -2481,7 +2514,7 @@ def market_context(ctx: Ctx) -> list[UUID]:
         if src is not None:
             out.append(ctx.book.claim(
                 None, CT.FACT, "MARKET_PRICE",
-                f"Reference price {number(snap.last_price)} INR on {snap.market_date} "
+                f"Reference price {amount(snap.last_price, 'INR')} on {snap.market_date} "
                 f"({snap.freshness.value.lower()}; {snap.source.value}). Context only.",
                 basis=NA, upstream=(up(Layer.BOX12, "SNAPSHOT", snap.snapshot_id),),
                 sources=(src,), value=snap.last_price, unit="INR", period_end=snap.market_date))
@@ -2491,7 +2524,7 @@ def market_context(ctx: Ctx) -> list[UUID]:
         if st.status.value == "AVAILABLE" and st.value is not None and history_sources:
             out.append(ctx.book.claim(
                 None, CT.CALCULATION, f"MARKET_{st.kind.value}"[:80],
-                f"{human(st.kind.value).capitalize()}: {number(st.value)} {st.unit.lower()} "
+                f"{human(st.kind.value).capitalize()}: {amount(st.value, st.unit)} "
                 f"({st.window_start} to {st.window_end}; Box 12). Context only.", basis=NA,
                 upstream=(dataset,), sources=history_sources, value=st.value, unit=st.unit,
                 period_end=st.window_end, calculation_ids=(b12.dataset_id,),
@@ -2501,7 +2534,8 @@ def market_context(ctx: Ctx) -> list[UUID]:
                 history_sources:
             out.append(ctx.book.claim(
                 None, CT.CALCULATION, f"MARKET_RETURN_{r.period.value}"[:80],
-                f"Price return {r.period.value.lower()}: {number(r.absolute_return_pct)} % "
+                f"Price return {r.period.value.lower()}: "
+                f"{amount(r.absolute_return_pct, 'PERCENT')} "
                 f"({r.start_date} to {r.end_date}; price only). Context only.", basis=NA,
                 upstream=(dataset,), sources=history_sources, value=r.absolute_return_pct,
                 unit="PERCENT", period_end=r.end_date, calculation_ids=(b12.dataset_id,),
@@ -2699,7 +2733,9 @@ def risk_coverage(ctx: Ctx) -> RiskCoverage:
         rules.append(RuleCoverage(
             risk_id=e.risk_id, code=e.code, title=s.title, category=e.category,
             outcome=outcome, reason=(s.reason or s.status.value) if missing else s.reason,
-            reason_text=_reason_text(s) if missing or outcome == "NOT_APPLICABLE" else None))
+            reason_text=_reason_text(s) if missing or outcome == "NOT_APPLICABLE" else None,
+            measured=f"{measured(s)} = {amount(s.value, s.unit)}"[:400]
+            if s.value is not None and outcome in ("RED", "YELLOW", "GREEN") else None))
     n = Counter(r.outcome for r in rules)
     evaluated = n["RED"] + n["YELLOW"] + n["GREEN"] + n["INFORMATIONAL"]
     applicable = evaluated + n["NOT_EVALUATED"]
@@ -2734,8 +2770,9 @@ def reconciliation(ctx: Ctx) -> list[ReconciliationEntry]:
         if comparable and c.absolute_difference is not None and sources:
             diff = ctx.book.claim(
                 None, CT.CALCULATION, f"RECON_DIFFERENCE_{c.metric}"[:80],
-                f"{c.metric} consolidated minus standalone {number(c.absolute_difference)} for "
-                f"{c.period}: {c.status.value.lower()} (Box 13).", basis=NA,
+                f"{c.metric} consolidated minus standalone "
+                f"{display_number(c.absolute_difference)} {_when(c.period)}: "
+                f"{c.status.value.lower()} (Box 13).", basis=NA,
                 upstream=(*ups, *u_), sources=sources, value=c.absolute_difference,
                 period=c.period, period_end=c.period_end, calculation_ids=(c.comparison_id,),
                 formula_ids=("BOX13/BASIS_COMPARISON",),
@@ -2781,14 +2818,19 @@ def reconciliation(ctx: Ctx) -> list[ReconciliationEntry]:
     return out
 
 
+def _when(label: str) -> str:
+    """'for FY2026', but 'as at 31-Mar-2026' - never 'for As at ...' / 'as at As at ...'."""
+    return label[0].lower() + label[1:] if label.lower().startswith("as at ") else f"for {label}"
+
+
 def recon_value(ctx: Ctx, c: Any, v: Decimal | None, basis: ClaimBasis,
                 sources: tuple[UUID, ...], ups: tuple[UpstreamRecord, ...]) -> UUID | None:
     if v is None or not sources:
         return None
     return ctx.book.claim(
         None, CT.CALCULATION, f"RECON_{basis.value}_{c.metric}"[:80],
-        f"{c.metric} ({basis.value.lower()}) {number(v)} for {c.period} (Box 13 basis "
-        "comparison).", basis=basis, upstream=(up(Layer.BOX13, "COMPARISON", c.comparison_id),
+        f"{c.metric} ({basis.value.lower()}) {display_number(v)} {_when(c.period)} (Box 13 "
+        "basis comparison).", basis=basis, upstream=(up(Layer.BOX13, "COMPARISON", c.comparison_id),
                                                *ups), sources=sources, value=v,
         period=c.period, period_end=c.period_end, calculation_ids=(c.comparison_id,),
         formula_ids=("BOX13/BASIS_COMPARISON",))

@@ -24,9 +24,9 @@ def test_quarter_and_fiscal_year_claims_are_distinguishable(report):
     revenue = [c for c in report.claims if c.metric == "REVENUE" and str(c.period_end) ==
                "2026-03-31" and c.basis.value == "CONSOLIDATED" and c.claim_type.value == "FACT"]
     by_value = {str(c.value): c for c in revenue}
-    assert by_value["13150"].statement == "REVENUE reported 13150 INR CRORES for FY2026 " \
+    assert by_value["13150"].statement == "REVENUE reported ₹13,150.00 Cr for FY2026 " \
         "(consolidated)."
-    assert by_value["3563"].statement == "REVENUE reported 3563 INR CRORES for Q4 FY2026 " \
+    assert by_value["3563"].statement == "REVENUE reported ₹3,563.00 Cr for Q4 FY2026 " \
         "(consolidated)."
     assert (by_value["13150"].period, by_value["3563"].period) == ("FY2026", "Q4 FY2026")
 

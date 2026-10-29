@@ -61,6 +61,7 @@ from stock_research_ai.domain.report_rendering import (
     cell_number,
     display_exact,
     display_value,
+    unit_label,
 )
 
 S = SectionId
@@ -258,7 +259,8 @@ class _Builder:
                 else:
                     cells.append(Cell(UNAVAILABLE_TEXT, "UNAVAILABLE", cell.note,
                                       forecast=forecast))
-            label = row.label + (f" ({row.unit})" if row.unit else "")
+            shown_unit = unit_label(row.unit)
+            label = row.label + (f" ({shown_unit})" if shown_unit else "")
             gaps = [c for c in cells if c.kind in ("UNAVAILABLE", "NOT_APPLICABLE")]
             notes = {(c.kind, c.note) for c in gaps}
             if len(gaps) > 1 and len(notes) == 1:
@@ -461,7 +463,8 @@ class _Builder:
             ("NOT EVALUATED", str(cov.not_evaluated)),
             ("NOT APPLICABLE", str(cov.not_applicable))))]
         out.append(Paragraph(cov.headline, "NOTICE", label="Coverage"))
-        clear = tuple((r.title, f"GREEN - no adverse evidence found ({r.code})")
+        clear = tuple((f"{r.measured or r.code} — GREEN",
+                       f"no adverse evidence found; risk tested: {r.title.lower()} ({r.code})")
                       for r in cov.rules if r.outcome == "GREEN")
         if clear:
             out.append(KeyValues("Rules evaluated with no adverse evidence found", "POSITIVE",

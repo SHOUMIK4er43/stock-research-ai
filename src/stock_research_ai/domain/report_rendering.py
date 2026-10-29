@@ -174,8 +174,19 @@ def unit_kind(unit: str | None) -> str:
         return "PP"
     if key in ("TIMES", "X"):
         return "TIMES"
-    if key == "COUNT":
+    if key in ("COUNT", "CODE"):
         return "COUNT"
+    if key in ("DAYS", "DAY"):
+        return "DAYS"
+    if key in ("YEARS", "YEAR"):
+        return "YEARS"
+    if key == "INR":
+        return "INR"
+    # Box 4 / 5 / 13 money is in the canonical crore scale (financial_canonical.CANONICAL_SCALE)
+    if key in ("INR MONEY", "MONEY INR"):
+        return "INR_CRORE"
+    if key == "MONEY":
+        return "CRORE"
     if "CRORE" in key:
         return "INR_CRORE" if "INR" in key or key.startswith("CRORE") else "CRORE"
     if "PER SHARE" in key:
@@ -195,6 +206,12 @@ def display_value(value: Decimal, unit: str | None, *, exact: bool = False) -> s
         return f"{number}x"
     if kind == "COUNT":
         return number
+    if kind == "DAYS":
+        return f"{number} days"
+    if kind == "YEARS":
+        return f"{number} years"
+    if kind == "INR":
+        return f"-₹{number[1:]}" if number.startswith("-") else f"₹{number}"
     if kind == "INR_CRORE":
         return f"-₹{number[1:]} Cr" if number.startswith("-") else f"₹{number} Cr"
     if kind == "INR_PER_SHARE":
@@ -202,6 +219,15 @@ def display_value(value: Decimal, unit: str | None, *, exact: bool = False) -> s
     if kind == "CRORE":
         return f"{number} crore"
     return f"{number} {unit}" if unit else number
+
+
+def unit_label(unit: str | None) -> str | None:
+    """A row's unit as a reader names it: %, pp, x, ₹ Cr, ₹/share, days - never 'INR MONEY'."""
+    if not unit:
+        return None
+    return {"PERCENT": "%", "PP": "pp", "TIMES": "x", "INR_CRORE": "₹ Cr", "CRORE": "crore",
+            "INR_PER_SHARE": "₹/share", "PER_SHARE": "per share", "DAYS": "days",
+            "YEARS": "years", "INR": "₹", "COUNT": "count"}.get(unit_kind(unit), unit)
 
 
 def cell_number(value: Decimal, unit: str | None) -> str:

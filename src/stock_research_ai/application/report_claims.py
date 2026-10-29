@@ -67,6 +67,7 @@ from stock_research_ai.domain.market_intelligence import (
     MarketIntelligenceDataset,
     OrderChain,
 )
+from stock_research_ai.domain.report_rendering import display_value
 
 NS = UUID("0f7c2b9e-54a1-5d3c-8e6f-14b1a2c3d4e5")
 
@@ -104,6 +105,14 @@ def basis_of(value: ReportingBasis | str | None) -> ClaimBasis:
 
 
 STATEMENT_PLACES = Decimal("0.000001")
+
+
+def amount(value: Decimal | None, unit: str | None) -> str:
+    """A value as a reader sees it in a statement - Rs 29,615.80 Cr, 16.87%, 20.48x, 84 days -
+    through the ONE display policy; the claim's own value keeps every digit (JSON)."""
+    if value is None:
+        return "unavailable"
+    return display_value(value, unit)
 
 
 def number(value: Decimal | None) -> str:

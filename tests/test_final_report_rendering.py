@@ -211,7 +211,10 @@ def test_display_units_keep_sign_and_never_infer_a_scale():
     assert display_value(Decimal("-5.36"), "PERCENTAGE_POINTS") == "-5.36 pp"
     assert display_value(Decimal("0.967852"), "TIMES") == "0.97x"
     assert display_value(Decimal("2.18"), "INR per share") == "₹2.18/share"
-    assert display_value(Decimal("8863"), "INR MONEY") == "8,863.00 INR MONEY"
+    # Box 5 'MONEY' is defined as the Box 4 canonical crore scale (AnalyticsUnit.MONEY,
+    # CANONICAL_SCALE): a documented unit, not an inferred scale (RC1: 'inr money')
+    assert display_value(Decimal("8863"), "INR MONEY") == "₹8,863.00 Cr"
+    assert display_value(Decimal("8863"), "USD THOUSANDS") == "8,863.00 USD THOUSANDS"
     assert display_value(Decimal("13.086771"), "PERCENT", exact=True) == "13.086771%"
     assert cell_number(Decimal("-4064"), "INR CRORES") == "-4,064.00"
     assert display_exact(Decimal("-0.938861")) == "-0.938861"

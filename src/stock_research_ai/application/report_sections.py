@@ -2598,20 +2598,36 @@ def risks(ctx: Ctx) -> RiskPresentation:
         col("SEVERITY", "Severity", ColumnKind.TEXT), col("BASIS", "Basis", ColumnKind.TEXT),
         col("VALUE", "Value")], rows, appendix=True)
     limitations: list[LimitationEntry] = []
+    # ONE register: an unevaluated rule is listed once (its own limitation below), identical
+    # upstream items are merged with their count, and every item names what it is about
+    rule_limited = {r.code for r in ctx.risk_entries
+                    if ctx.book.get(r.claim_id).claim_type == CT.DATA_LIMITATION}
+    merged: dict[tuple[str, str, str], list[Any]] = {}
+    absorbed: dict[str, list[UUID]] = {}  # rule code -> its rule-input items
     for item in d13.data_quality_summary.items:
+        if item.kind == "RULE_INPUTS_UNAVAILABLE" and set(item.affects) <= rule_limited:
+            for code in item.affects:
+                absorbed.setdefault(code, []).append(item.item_id)
+            continue
+        merged.setdefault((item.kind, item.layer.value, item.detail), []).append(item)
+    for (kind, layer, detail), items in merged.items():
+        item = items[0]
+        affects = tuple(dict.fromkeys(a for i in items for a in i.affects))
+        count = f" ({len(items)} identical upstream items)" if len(items) > 1 else ""
         cid = ctx.book.claim(
-            None, CT.DATA_LIMITATION, f"DQ_{item.kind}"[:80],
-            limitation_text("SOURCE_CONFLICT_UNRESOLVED" if item.kind == "INPUT_CONFLICT"
-                            else "PROVIDER_UNAVAILABLE" if item.kind == "BLOCKED_SOURCE"
-                            else "DATA_UNAVAILABLE", f"{human(item.kind)} ({item.layer.value})"),
-            basis=NA, upstream=(up(Layer.BOX13, "DATA_QUALITY_ITEM", item.item_id),),
-            limitations=(item.kind,), source_text=item.detail)
-        limitations.append(LimitationEntry(entry_id=item.item_id, kind=item.kind,
-                                           layer=item.layer.value, claim_id=cid,
-                                           affects=item.affects))
-        target = sec if item.kind != "RULE_INPUTS_UNAVAILABLE" else None
-        if target is not None:
-            ctx.add(target, cid)
+            None, CT.DATA_LIMITATION, f"DQ_{kind}"[:80],
+            limitation_text("SOURCE_CONFLICT_UNRESOLVED" if kind == "INPUT_CONFLICT"
+                            else "PROVIDER_UNAVAILABLE" if kind == "BLOCKED_SOURCE"
+                            else "DATA_UNAVAILABLE", f"{detail}{count} ({layer})"[:900]),
+            basis=NA, upstream=tuple(up(Layer.BOX13, "DATA_QUALITY_ITEM", i.item_id)
+                                     for i in items[:400]),
+            limitations=(kind,), source_text=detail)
+        limitations.append(LimitationEntry(entry_id=item.item_id, kind=kind, layer=layer,
+                                           claim_id=cid, affects=affects,
+                                           occurrences=len(items),
+                                           merged_item_ids=tuple(i.item_id for i in items[1:])))
+        if kind != "RULE_INPUTS_UNAVAILABLE":
+            ctx.add(sec, cid)
         ctx.add(S.DATA_QUALITY_RECONCILIATION, cid)
     for r in ctx.risk_entries:
         claim = ctx.book.get(r.claim_id)
@@ -2619,7 +2635,10 @@ def risks(ctx: Ctx) -> RiskPresentation:
             ctx.add(S.DATA_QUALITY_RECONCILIATION, r.claim_id)
             limitations.append(LimitationEntry(
                 entry_id=uuid5(NS, f"signal-limitation|{r.risk_id}"), kind=r.reason or r.status,
-                layer="BOX13", claim_id=r.claim_id, affects=(r.code,)))
+                layer="BOX13", claim_id=r.claim_id, affects=(r.code,),
+                merged_item_ids=tuple(absorbed.pop(r.code, ()))))
+    limitations = [e.model_copy(update={"ref": f"DL-{n:03d}"})
+                   for n, e in enumerate(limitations, start=1)]
     diligence: list[DiligenceEntry] = []
     drows: list[TableRow] = []
     for oi in d13.open_diligence_items:

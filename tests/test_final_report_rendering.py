@@ -390,7 +390,11 @@ def test_due_diligence_status_is_prominent_and_counts_upstream(report, rendered)
     kv = next(b for b in zero.blocks if isinstance(b, rr.KeyValues))
     rows = dict(kv.rows)
     dd = report.due_diligence_status
-    assert rows["Open diligence items"] == str(len(dd.open_diligence_item_ids))
+    # RC1 (TECHM): every open item, then by priority - never the HIGH / MEDIUM subset alone
+    items = report.risks.open_diligence
+    assert rows["Open diligence items"].startswith(f"{len(items)} total (HIGH ")
+    assert len(dd.open_diligence_item_ids) == sum(
+        1 for o in items if o.importance in ("HIGH", "MEDIUM"))
     assert rows["Blocked / failed sources"] == str(len(dd.blocked_sources))
     assert rows["Score"].startswith("None")
 

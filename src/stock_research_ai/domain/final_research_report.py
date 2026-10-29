@@ -714,6 +714,13 @@ class LimitationEntry(BaseModel):
     layer: Label
     claim_id: UUID
     affects: tuple[Code, ...] = ()
+    #: the canonical limitation ID every section cites (DL-001 ...); full detail is printed
+    #: once, in the register (None only on reports composed before the register)
+    ref: Annotated[str, StringConstraints(pattern=r"^DL-\d{3,5}$")] | None = None
+    occurrences: int = Field(default=1, ge=1)  # identical upstream items merged into this one
+    #: further Box 13 data-quality items this entry stands for (identical ones merged, or a
+    #: rule-input item the rule's own entry already states) - none is ever silently dropped
+    merged_item_ids: tuple[UUID, ...] = ()
 
 
 class DiligenceEntry(BaseModel):

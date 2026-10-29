@@ -129,6 +129,8 @@ class _Builder:
         self.refs = {s.source_id: f"S{i}" for i, s in enumerate(report.sources, start=1)}
         self.risks = {e.risk_id: e for e in report.risks.risk_register}
         self.risk_by_claim = {e.claim_id: e for e in report.risks.risk_register}
+        self.limitation_ref = {d.claim_id: d.ref for d in report.risks.data_limitations
+                               if d.ref is not None}
         self.svg: dict[UUID, str] = {}
         if charts is not None:
             art = {a.sha256: a.svg for a in charts.artifacts}
@@ -148,6 +150,8 @@ class _Builder:
         c = self.claims[claim_id]
         self.rendered.add(claim_id)
         type_label = CLAIM_TYPE_LABELS[c.claim_type.value]
+        if claim_id in self.limitation_ref:  # one register entry, the same ID everywhere
+            type_label = f"{self.limitation_ref[claim_id]} · {type_label}"
         if c.scenario is not None:
             type_label = f"{type_label} · {c.scenario.value}"
         refs, more = self.ref_list(c.source_ids)
@@ -312,6 +316,16 @@ class _Builder:
                 out.append(self.table(self.tables[tid]))
         out.extend(self.chart(c) for c in s.chart_ids if c in self.chart_refs)
         limits = [i for i in s.limitation_claim_ids if i not in shown]
+        # a register limitation is printed in full once (Section 17); elsewhere it is cited
+        cited = [i for i in limits if i in self.limitation_ref] if (
+            s.section_id != S.RISKS) else []
+        if cited:
+            shown.update(cited)
+            out.append(Paragraph(", ".join(dict.fromkeys(self.limitation_ref[i] for i in cited))
+                                 + " — data limitations stated in full in Section 17's register "
+                                 "(not company risks).", "LIMITATION",
+                                 label="Data limitations"))
+        limits = [i for i in limits if i not in cited]
         if limits:
             out.append(self.claim_list("Data limitations (not company risks)", "LIMITATION",
                                        limits, shown=shown))
@@ -338,7 +352,9 @@ class _Builder:
             ("Forecast availability",
              f"{dd.forecast_status} (inputs complete: "
              f"{'yes' if dd.forecast_inputs_complete else 'no'})"),
-            ("Open diligence items", str(len(dd.open_diligence_item_ids))),
+            ("Open diligence items", self.diligence_count()),
+            ("Data limitations (register)", f"{len(self.r.risks.data_limitations)} entries "
+             "(DL-001 ...), each listed once in Section 17"),
             *((("Risk rules evaluated", f"{cov.evaluated} / {cov.applicable} (NOT EVALUATED "
                                         f"{cov.not_evaluated})"),)
               if (cov := self.r.risks.coverage) else ()),
@@ -419,6 +435,12 @@ class _Builder:
             codes = [self.risks[m].code for m in e.mitigating_risk_ids if m in self.risks]
             detail.append("mitigating: " + ", ".join(codes))
         return _with_label(view, f"{view.type_label} · {'; '.join(detail)}", e.severity)
+
+    def diligence_count(self) -> str:
+        """THE open-diligence count: every open item, then by priority (one definition)."""
+        items = self.r.risks.open_diligence
+        by = {k: sum(1 for o in items if o.importance == k) for k in ("HIGH", "MEDIUM", "LOW")}
+        return f"{len(items)} total (HIGH {by['HIGH']}, MEDIUM {by['MEDIUM']}, LOW {by['LOW']})"
 
     def risk_coverage(self) -> list[Block]:
         """The canonical coverage first: how many rules ran, what they found, and - by name,

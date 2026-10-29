@@ -70,6 +70,14 @@ SUBJECT_GROUP = {
 # --- source disagreements ---------------------------------------------------------------------
 
 
+
+def _endpoint(url: str) -> str:
+    """Host, path and query of a source URL (Box 12 URLs carry no credential), bounded.
+    Plain string handling: Box 13 imports no network or URL library."""
+    text = url.split("://", 1)[-1].split("#", 1)[0]
+    return text.split("@", 1)[-1][:160] or "endpoint not stated"
+
+
 def source_disagreements(
     ctx: Ctx, box4: CanonicalFinancialDataset, box12: MarketIntelligenceDataset | None
 ) -> SourceDisagreements:
@@ -233,12 +241,16 @@ def data_quality(
             add("IDENTITY_PARTIAL", Layer.BOX12, f"Box 12 identity is "
                 f"{box12.identity.status.value}: some listings unverified")
         for p in box12.payloads:
+            # which endpoint and window: two calls to one provider are never anonymous twins
+            where = _endpoint(p.url) + (
+                f" for {p.coverage_window_start} to {p.coverage_window_end}"
+                if p.coverage_window_start and p.coverage_window_end else "")
             if p.status in (FetchStatus.BLOCKED, FetchStatus.AUTH_REQUIRED,
                             FetchStatus.RATE_LIMITED):
-                add("BLOCKED_SOURCE", Layer.BOX12, f"{p.kind.value}: {p.status.value} "
+                add("BLOCKED_SOURCE", Layer.BOX12, f"{p.kind.value} ({where}): {p.status.value} "
                     f"({p.error_code}); never bypassed", (p.payload_id,))
             elif p.status != FetchStatus.OK:
-                add("SOURCE_FAILED", Layer.BOX12, f"{p.kind.value}: {p.status.value} "
+                add("SOURCE_FAILED", Layer.BOX12, f"{p.kind.value} ({where}): {p.status.value} "
                     f"({p.error_code})", (p.payload_id,))
         for c in box12.coverage.items:
             if c.status == CoverageStatus.STALE:

@@ -632,7 +632,10 @@ def test_open_diligence_and_data_quality_are_preserved(report, d13):
     assert len(report.risks.open_diligence) == len(d13.open_diligence_items)
     assert {o.item_id for o in report.risks.open_diligence} == {
         i.item_id for i in d13.open_diligence_items}
-    dq_ids = {x.entry_id for x in report.risks.data_limitations}
+    # every Box 13 item is accounted for: an entry of its own, or merged into / absorbed by one
+    # (identical items; a rule-input item the rule's own entry states) - never dropped
+    dq_ids = {x.entry_id for x in report.risks.data_limitations} | {
+        m for x in report.risks.data_limitations for m in x.merged_item_ids}
     assert {i.item_id for i in d13.data_quality_summary.items} <= dq_ids
     appendix = next(a for a in report.appendices if a.appendix_id == fr.AppendixId.OPEN_DILIGENCE)
     assert appendix.entries == len(d13.open_diligence_items)
@@ -1283,9 +1286,11 @@ def test_no_diligence_or_data_quality_item_from_inapplicability(industry):
     gated = {s.risk_id for s in d.signals if s.status.value == GATED}
     assert len(r.risks.open_diligence) == len(d.open_diligence_items)
     assert not any(set(o.related_risk_ids) & gated for o in r.risks.open_diligence)
-    dq = [e for e in r.risks.data_limitations if e.layer != "BOX13" or e.entry_id in
-          {i.item_id for i in d.data_quality_summary.items}]
-    assert len(dq) == len(d.data_quality_summary.items)
+    upstream = {i.item_id for i in d.data_quality_summary.items}
+    accounted = [x for e in r.risks.data_limitations
+                 for x in (e.entry_id, *e.merged_item_ids) if x in upstream]
+    # each upstream item exactly once, and no limitation created from inapplicability
+    assert sorted(accounted, key=str) == sorted(upstream, key=str)
     assert set(r.due_diligence_status.open_diligence_item_ids) == {
         i.item_id for i in d.open_diligence_items if i.importance.value in ("HIGH", "MEDIUM")}
 

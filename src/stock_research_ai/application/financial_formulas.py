@@ -186,7 +186,8 @@ _f(
         ("DERIVED", "PBT + finance cost + depreciation & amortization"),
     ),
     notes="never Screener OPERATING_PROFIT; includes other income and exceptional items "
-    "when derived from PBT",
+    "when derived from PBT, so it falls below Screener operating profit whenever other income "
+    "(which can net exceptional items) is negative (flagged EBITDA_BELOW_OPERATING_PROFIT)",
 )
 _f(
     "EBIT",
@@ -197,6 +198,19 @@ _f(
     ("EBIT | PBT, FINANCE_COST",),
     periods=FLOWS,
     variants=(("REPORTED", "EBIT as reported"), ("DERIVED", "PBT + finance cost")),
+    notes="when derived from PBT it includes other income, exceptional items and associates: "
+    "not a company's operating EBIT (see OPERATING_EBIT)",
+)
+_f(
+    "OPERATING_EBIT",
+    "Operating EBIT (Screener operating profit - D&A)",
+    C.BUILDING_BLOCK,
+    U.MONEY,
+    "Screener operating profit - depreciation & amortization",
+    ("OPERATING_PROFIT", "DEPRECIATION_AMORTIZATION"),
+    periods=FLOWS,
+    notes="excludes other income and exceptional items: the calculated measure closest to a "
+    "company-reported EBIT; the company's own definition is not verified",
 )
 _f(
     "NOPAT",
@@ -447,15 +461,19 @@ for _name in (
 
 # profitability
 for _code, _name, _num, _sectors, _periods in (
-    ("EBITDA_MARGIN", "EBITDA margin", "EBITDA", GENERAL, FLOWS),
+    ("EBITDA_MARGIN", "EBITDA margin (reported, else from PBT: incl. other income and "
+     "exceptional items)", "EBITDA", GENERAL, FLOWS),
     (
         "OPERATING_MARGIN",
-        "Operating margin (Screener operating profit)",
+        "Operating margin before D&A and other income (Screener operating profit)",
         "OPERATING_PROFIT",
         GENERAL,
         FLOWS,
     ),
-    ("EBIT_MARGIN", "EBIT margin", "EBIT", GENERAL, FLOWS),
+    ("EBIT_MARGIN", "EBIT margin (reported, else PBT + finance cost: incl. other income and "
+     "exceptional items)", "EBIT", GENERAL, FLOWS),
+    ("OPERATING_EBIT_MARGIN", "Operating EBIT margin (operating profit - D&A; excludes other "
+     "income)", "OPERATING_EBIT", GENERAL, FLOWS),
     ("PBT_MARGIN", "PBT margin", "PBT", ALL_SECTORS, FLOWS),
     ("PAT_MARGIN", "PAT (net) margin", "PAT", ALL_SECTORS, FLOWS),
     ("EMPLOYEE_COST_TO_REVENUE", "Employee cost / revenue", "EMPLOYEE_COST", ALL_SECTORS, FY),

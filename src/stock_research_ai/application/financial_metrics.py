@@ -749,20 +749,30 @@ def base_flow_metrics(e: Engine, p: FinancialPeriod) -> None:
     """EBITDA, EBIT, tax rate, NOPAT, capex, FCF and COGS for one flow period."""
     g = e.canonical
     reported = g([M.EBITDA], p)
+    operating, depreciation = g([M.OPERATING_PROFIT], p), g([M.DEPRECIATION_AMORTIZATION], p)
     if isinstance(reported, Fact):
         e.emit("EBITDA", p, [("ebitda", reported)], lambda v: v["ebitda"], variant="REPORTED")
     else:
+        pbt, finance = g([M.PBT], p), g([M.FINANCE_COST], p)
+        # PBT-based EBITDA carries other income (which can net exceptional items): below the
+        # provider's operating profit it is flagged, never silently presented as operating
+        below = all(isinstance(x, Fact) for x in (pbt, finance, depreciation, operating)) and (
+            pbt.value + finance.value + depreciation.value < operating.value  # type: ignore[union-attr]
+        )
         e.emit(
             "EBITDA",
             p,
             [
-                ("pbt", g([M.PBT], p)),
-                ("finance_cost", g([M.FINANCE_COST], p)),
-                ("depreciation", g([M.DEPRECIATION_AMORTIZATION], p)),
+                ("pbt", pbt),
+                ("finance_cost", finance),
+                ("depreciation", depreciation),
             ],
             lambda v: v["pbt"] + v["finance_cost"] + v["depreciation"],
             variant="DERIVED",
+            warnings=("EBITDA_BELOW_OPERATING_PROFIT",) if below else (),
         )
+    e.emit("OPERATING_EBIT", p, [("operating_profit", operating), ("depreciation", depreciation)],
+           lambda v: v["operating_profit"] - v["depreciation"])
     reported = g([M.EBIT], p)
     if isinstance(reported, Fact):
         e.emit("EBIT", p, [("ebit", reported)], lambda v: v["ebit"], variant="REPORTED")
@@ -1070,6 +1080,7 @@ def annual_metrics(e: Engine, end: date) -> None:
         "EBITDA_MARGIN": e.got("EBITDA", p),
         "OPERATING_MARGIN": g([M.OPERATING_PROFIT], p),
         "EBIT_MARGIN": e.got("EBIT", p),
+        "OPERATING_EBIT_MARGIN": e.got("OPERATING_EBIT", p),
         "PBT_MARGIN": g([M.PBT], p),
         "PAT_MARGIN": g([M.PAT], p),
         "CFO_MARGIN": g([M.CFO], p),

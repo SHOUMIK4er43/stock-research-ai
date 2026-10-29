@@ -39,7 +39,11 @@ from stock_research_ai.application.financial_metrics import (
     weakest,
 )
 from stock_research_ai.application.financial_reconciliation import canonical_dataset_json
-from stock_research_ai.domain.financial_analytics import AnalyticsLimits, MetricInput
+from stock_research_ai.domain.financial_analytics import (
+    AnalyticsLimits,
+    CalculationStatus,
+    MetricInput,
+)
 from stock_research_ai.domain.financial_business import RESTRICTED_INDUSTRIES
 from stock_research_ai.domain.financial_canonical import (
     BusinessClass,
@@ -2510,6 +2514,24 @@ def _derive_operating(
             candidates[driver] = found
 
 
+def _rate_denominator(history: History, end: date) -> Fact | Missing:
+    """Opening gross debt for an interest rate on debt. Finance cost includes lease interest:
+    filed borrowings that exclude reported lease liabilities are not its denominator (the rate
+    would be overstated), so that year gives no rate; a provider's borrowings that already
+    include leases, or a company without leases, are used as they are."""
+    debt = history.gross_debt(end)
+    if isinstance(debt, Missing) or "INPUT_AGGREGATOR_ONLY" in debt.warnings:
+        return debt
+    leases = [history.balance([m], end) for m in (M.LEASE_LIABILITIES,
+                                                  M.NON_CURRENT_LEASE_LIABILITIES,
+                                                  M.CURRENT_LEASE_LIABILITIES)]
+    if any(isinstance(x, Fact) and x.value > 0 for x in leases):
+        return Missing(CalculationStatus.NOT_APPLICABLE,
+                       f"gross debt @ {end} excludes reported lease liabilities while finance "
+                       "cost includes lease interest (FINANCE_COST_INCLUDES_LEASE_INTEREST)")
+    return debt
+
+
 def _derive_finance(
     history: History,
     derive: Deriver,
@@ -2519,7 +2541,7 @@ def _derive_finance(
     rate_obs = derive.ratio_series(
         D.INTEREST_RATE_ON_DEBT,
         lambda e: history.flow([M.FINANCE_COST], e),
-        lambda e: history.gross_debt(shift(e, -12)),
+        lambda e: _rate_denominator(history, shift(e, -12)),
         what="opening gross debt",
     )
     rate = (

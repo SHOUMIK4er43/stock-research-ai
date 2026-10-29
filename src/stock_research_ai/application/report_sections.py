@@ -353,10 +353,14 @@ class Ctx:
             f"{m.currency.value} MONEY"
         label = m.label + (" — the aggregator's 'Borrowings', which include lease "
                            "liabilities" if m.formula_id.endswith("/PROVIDER_BORROWINGS") else "")
+        flagged = m.code == "EBITDA" and "EBITDA_BELOW_OPERATING_PROFIT" in m.warnings
+        why = (" It is below operating profit because other income, which can net exceptional "
+               "items, is negative." if flagged else "")
         cid = self.book.claim(
             None, CT.CALCULATION, m.code,
             f"{label}: {number(m.value)} {unit.lower()} {self.when(m.period)} "
-            f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).",
+            f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).{why}",
+            limitations=("EBITDA_BELOW_OPERATING_PROFIT",) if flagged else (),
             basis=basis_of(m.reporting_basis), upstream=ups, sources=sources, value=m.value,
             metric=m.code, unit=unit, currency=m.currency, period=self.period_name(m.period),
             period_end=m.period.period_end, evidence_ids=evidence,
@@ -970,9 +974,12 @@ ANNUAL: tuple[Spec, ...] = (
     ("REVENUE", "Revenue", "B4", ("REVENUE_FROM_OPERATIONS", "REVENUE"), "FY"),
     ("REVENUE_GROWTH_YOY", "Revenue growth (YoY)", "B5", ("REVENUE_GROWTH_YOY",), "FY"),
     ("OPERATING_PROFIT", "Operating profit", "B4", ("OPERATING_PROFIT",), "FY"),
-    ("OPERATING_MARGIN", "Operating margin", "B5", ("OPERATING_MARGIN",), "FY"),
-    ("EBITDA", "EBITDA", "B5", ("EBITDA",), "FY"),
-    ("EBIT", "EBIT", "B5", ("EBIT",), "FY"),
+    ("OPERATING_MARGIN", "Operating margin before D&A and other income", "B5",
+     ("OPERATING_MARGIN",), "FY"),
+    ("OPERATING_EBIT_MARGIN", "Operating EBIT margin (operating profit - D&A; excl. other "
+     "income)", "B5", ("OPERATING_EBIT_MARGIN",), "FY"),
+    ("EBITDA", "EBITDA (reported, else from PBT: incl. other income)", "B5", ("EBITDA",), "FY"),
+    ("EBIT", "EBIT (reported, else PBT + finance cost)", "B5", ("EBIT",), "FY"),
     ("OTHER_INCOME", "Other income", "B4", ("OTHER_INCOME",), "FY"),
     ("FINANCE_COST", "Finance cost", "B4", ("FINANCE_COST",), "FY"),
     ("PBT", "PBT", "B4", ("PBT",), "FY"),
@@ -1000,7 +1007,10 @@ QUARTERLY: tuple[Spec, ...] = (
     ("REVENUE_GROWTH_YOY", "Revenue growth (YoY)", "B5", ("REVENUE_GROWTH_YOY",), "QUARTER"),
     ("REVENUE_GROWTH_QOQ", "Revenue growth (QoQ)", "B5", ("REVENUE_GROWTH_QOQ",), "QUARTER"),
     ("OPERATING_PROFIT", "Operating profit", "B4", ("OPERATING_PROFIT",), "QUARTER"),
-    ("OPERATING_MARGIN", "Operating margin", "B5", ("OPERATING_MARGIN",), "QUARTER"),
+    ("OPERATING_MARGIN", "Operating margin before D&A and other income", "B5",
+     ("OPERATING_MARGIN",), "QUARTER"),
+    ("OPERATING_EBIT_MARGIN", "Operating EBIT margin (operating profit - D&A; excl. other "
+     "income)", "B5", ("OPERATING_EBIT_MARGIN",), "QUARTER"),
     ("OTHER_INCOME", "Other income", "B4", ("OTHER_INCOME",), "QUARTER"),
     ("PBT", "PBT", "B4", ("PBT",), "QUARTER"),
     ("PAT", "PAT", "B4", ("PAT",), "QUARTER"),

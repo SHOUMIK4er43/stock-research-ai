@@ -121,7 +121,7 @@ CHARTS: tuple[ChartDefinition, ...] = (
     ChartDefinition(
         "OPERATING_MARGIN",
         C.MARGINS,
-        "Operating margin (Screener operating profit)",
+        "Operating margin before D&A and other income (Screener operating profit)",
         T.LINE,
         A.ANNUAL_FLOW,
         GENERAL,

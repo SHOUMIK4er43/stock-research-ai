@@ -1161,10 +1161,14 @@ def test_no_rating_or_recommendation_fields(report):
 def test_section_statuses_reflect_available_inputs(report):
     st = {s.section_id: s.status for s in report.sections}
     assert st[S.HISTORICAL_FINANCIALS] == SectionStatus.COMPLETE
-    assert st[S.ORDER_BOOK] == SectionStatus.COMPLETE
     assert st[S.INDUSTRY_COMPETITION] == SectionStatus.UNAVAILABLE
-    assert st[S.SHAREHOLDING] == SectionStatus.COMPLETE
-    assert st[S.CREDIT_LIQUIDITY] == SectionStatus.COMPLETE
+    # RC1 (TECHM): every input family is present, but a material rule of each section could
+    # not run - the section is PARTIAL and names the rule, never COMPLETE
+    for sec, rule in ((S.ORDER_BOOK, "LOW_EXECUTION_RATE"), (S.SHAREHOLDING, "PROMOTER_PLEDGE"),
+                      (S.CREDIT_LIQUIDITY, "CREDIT_DETERIORATION")):
+        assert st[sec] == SectionStatus.PARTIAL
+        assert not report.section(sec).completeness.missing
+        assert f"RULE_NOT_EVALUATED_{rule}" in report.section(sec).completeness.material_gaps
     shareholding = report.table("SHAREHOLDING")
     assert {c.key for c in shareholding.columns} >= {"QOQ", "Q4", "Q12"}
 
@@ -1330,13 +1334,19 @@ def test_non_financial_industrial_keeps_every_rule_and_section():
     assert INDUSTRIAL_MONITORING <= {m.topic for m in r.monitoring}
     models = r.table("FORENSIC_MODELS")
     assert any(c.status == fr.CellStatus.AVAILABLE for row in models.rows for c in row.cells)
-    assert r.section(S.ACCOUNTING_FORENSICS).status == SectionStatus.COMPLETE
+    # RC1 (TECHM): forensic rules without their evidence keep the section PARTIAL
+    forensics = r.section(S.ACCOUNTING_FORENSICS)
+    assert forensics.status == SectionStatus.PARTIAL and not forensics.completeness.missing
+    assert forensics.completeness.material_gaps and all(
+        g.startswith("RULE_NOT_EVALUATED_") for g in forensics.completeness.material_gaps)
 
 
 def test_epc_order_book_stays_applicable(report, d13):
     assert d13.sector_gate.value == "NON_FINANCIAL" and report.order_book.applicable
     order = report.section(S.ORDER_BOOK)
-    assert order.status == SectionStatus.COMPLETE and order.completeness.not_applicable == ()
+    # applicable (never NOT_APPLICABLE); PARTIAL only because order-book rules lack evidence
+    assert order.status == SectionStatus.PARTIAL and order.completeness.not_applicable == ()
+    assert all(g.startswith("RULE_NOT_EVALUATED_") for g in order.completeness.material_gaps)
     point = next(p for p in report.executive_summary.points
                  if p.kind == fr.SummaryKind.ORDER_BOOK)
     assert point.status == "AVAILABLE"

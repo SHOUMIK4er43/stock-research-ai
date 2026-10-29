@@ -302,11 +302,8 @@ class _Renderer:
         self.story.append(RLParagraph(lead + x(b.text), style))
 
     def chart(self, b: rr.Chart) -> None:
-        self.story.append(self.tone_bar(f"Chart: {b.title}", "NEUTRAL"))
-        self.story.append(self.p(
-            f"Chart image not rendered in the PDF (see the HTML export); Box 6 definition "
-            f"{x(b.code)} · basis {x(b.basis)} · upstream status {x(b.status)} · "
-            f"{x(b.purpose)} · metrics: {x(', '.join(b.metrics) or 'not stated')}", "meta"))
+        """The PDF draws no SVG: a chart is omitted (noted once in the front matter), never
+        printed as a placeholder."""
 
     # --- tables --------------------------------------------------------------------------------
 
@@ -498,6 +495,9 @@ class _Renderer:
         self.story.append(self.paragraph_flow(d.disclaimer, "NOTICE"))
         facts = [*d.identifiers, *d.header_facts, ("Composed at", d.generated_at)]
         self.key_values(rr.KeyValues(None, "NEUTRAL", tuple(facts)))
+        note = rr.chart_note(d.sections)
+        if note:
+            self.story.append(self.p(x(note), "meta"))
         self.story.append(self.p("Contents", "h2"))
         for s in d.sections:
             self.story.append(self.p(f'<a href="#s{s.order}" color="#14527a">{s.order}. '

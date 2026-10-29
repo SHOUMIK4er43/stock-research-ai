@@ -25,6 +25,7 @@ The exact value always remains in report.json.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -331,6 +332,16 @@ class Chart:
 
 
 Block = Paragraph | ClaimList | KeyValues | Table | Chart
+
+
+def chart_note(sections: "Sequence[Section]") -> str | None:
+    """Formats that cannot draw an SVG (PDF, Markdown) omit charts - never a placeholder -
+    and say so once, up front."""
+    n = sum(1 for s in sections for b in s.blocks if isinstance(b, Chart))
+    if not n:
+        return None
+    return (f"{n} chart{'s are' if n != 1 else ' is'} drawn in the HTML export only; this "
+            "format omits chart images, and every charted metric appears in the tables.")
 
 
 @dataclass(frozen=True, slots=True)

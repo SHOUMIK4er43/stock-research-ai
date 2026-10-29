@@ -129,6 +129,7 @@ class _Builder:
         self.refs = {s.source_id: f"S{i}" for i, s in enumerate(report.sources, start=1)}
         self.risks = {e.risk_id: e for e in report.risks.risk_register}
         self.risk_by_claim = {e.claim_id: e for e in report.risks.risk_register}
+        self.omitted_charts = 0
         self.limitation_ref = {d.claim_id: d.ref for d in report.risks.data_limitations
                                if d.ref is not None}
         self.svg: dict[UUID, str] = {}
@@ -278,11 +279,12 @@ class _Builder:
         return Table(str(t.table_id), t.title, tuple(tags), tuple(columns), tuple(rows),
                      footnotes=t.footnotes, notices=tuple(notices), refs=refs, more_refs=more)
 
-    def chart(self, chart_id: UUID) -> Chart:
+    def chart(self, chart_id: UUID) -> Chart | None:
         ref = self.chart_refs[chart_id]
         svg = self.svg.get(ref.upstream_chart_id)
         if svg is None:
-            self.warnings.append(f"CHART_FALLBACK:{ref.chart_code}")
+            self.omitted_charts += 1
+            return None
         return Chart(str(ref.chart_id), ref.title, ref.chart_code, ref.purpose,
                      ref.basis.value, ref.upstream_status, ref.metric_codes, svg)
 
@@ -314,7 +316,9 @@ class _Builder:
         for tid in (s.table_ids if tables is None else tables):
             if tid in self.tables:
                 out.append(self.table(self.tables[tid]))
-        out.extend(self.chart(c) for c in s.chart_ids if c in self.chart_refs)
+        # a chart is shown only with its Box 6 image: no placeholder for an undrawn chart
+        out.extend(c for c in (self.chart(i) for i in s.chart_ids if i in self.chart_refs)
+                   if c is not None)
         limits = [i for i in s.limitation_claim_ids if i not in shown]
         # a register limitation is printed in full once (Section 17); elsewhere it is cited
         cited = [i for i in limits if i in self.limitation_ref] if (
@@ -840,7 +844,10 @@ class _Builder:
             title=f"Detailed Research — {m.company_name}", company_name=m.company_name,
             identifiers=identifiers, as_of=str(m.as_of), generated_at=m.generated_at.isoformat(),
             box14_sha256=sha, header_facts=facts, sections=tuple(sections),
-            warnings=tuple(dict.fromkeys(self.warnings)), cells=self.cells)
+            warnings=tuple(dict.fromkeys(self.warnings)) + ((
+                f"CHARTS_OMITTED: {self.omitted_charts} Box 14 chart reference(s) without a "
+                "Box 6 image are not shown (no placeholder is drawn)",)
+                if self.omitted_charts else ()), cells=self.cells)
 
 
 #: readable text for structured reason codes (the code itself is always kept)

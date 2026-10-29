@@ -406,17 +406,24 @@ def test_valuation_methods_are_separate_and_nothing_is_blended(report, rendered)
     assert "Blended value: none" in md_text and "Price objective: none" in md_text
 
 
-def test_charts_use_box6_svg_in_html_and_a_reference_fallback_elsewhere(report, stack):
+def test_charts_use_box6_svg_in_html_and_are_never_placeholders(report, stack):
+    """RC1 (TECHM): the PDF printed 'Chart image not rendered' 78 times. A chart is drawn from
+    its Box 6 SVG (HTML) or omitted; PDF and Markdown state that once, up front."""
     with_svg = build_presentation(report, charts=stack.box6)
     charts = [b for s in with_svg.sections for b in s.blocks if isinstance(b, rr.Chart)]
     assert charts and all(c.svg for c in charts)
     html = render_html(with_svg)
     assert html.count('src="data:image/svg+xml;base64,') == len(charts)
-    assert "Box 6 SVG available in the HTML export" in render_markdown(with_svg)
-    without = build_presentation(report)
-    assert any(w.startswith("CHART_FALLBACK:") for w in without.warnings)
-    assert "Box 6 definition referenced" in render_html(without)
-    assert "Chart image not rendered in the PDF" in pdf_text(render_pdf(without))
+    md_text = render_markdown(with_svg)
+    assert "#### Chart:" not in md_text and "not rendered" not in md_text
+    assert f"{len(charts)} charts are drawn in the HTML export only" in md_text
+    pdf = pdf_text(render_pdf(with_svg))
+    assert "not rendered" not in pdf and "drawn in the HTML export only" in pdf
+    without = build_presentation(report)  # no Box 6 images: nothing chart-shaped at all
+    assert not any(isinstance(b, rr.Chart) for s in without.sections for b in s.blocks)
+    assert any(w.startswith("CHARTS_OMITTED:") for w in without.warnings)
+    for text in (render_html(without), render_markdown(without), pdf_text(render_pdf(without))):
+        assert "Box 6 definition referenced" not in text and "not rendered" not in text
 
 
 def test_disclaimer_and_no_recommendation(rendered, pdf_plain):

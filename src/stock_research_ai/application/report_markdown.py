@@ -21,6 +21,7 @@ from stock_research_ai.domain.report_rendering import (
     RenderError,
     Section,
     Table,
+    chart_note,
 )
 
 _BREAKS = re.compile(r"[\r\n  \x0b\x0c\x85]+")
@@ -121,15 +122,8 @@ def _block(b: Block) -> list[str]:
         return [*out, ""]
     if isinstance(b, Table):
         return _table(b)
-    if isinstance(b, Chart):
-        image = ("Box 6 SVG available in the HTML export" if b.svg else
-                 "Chart image not rendered in this format; Box 6 definition referenced")
-        return [f"#### Chart: {md(b.title)}", "",
-                f"- Code: {md(b.code)} · Basis: {md(b.basis)} · Upstream status: "
-                f"{md(b.status)}",
-                f"- Purpose: {md(b.purpose)}",
-                f"- Metrics: {md(', '.join(b.metrics) or 'Not stated')}",
-                f"- {md(image)}", ""]
+    if isinstance(b, Chart):  # Markdown draws no image: the chart is omitted, noted once
+        return []
     raise TypeError(f"unknown block {type(b).__name__}")
 
 
@@ -152,6 +146,9 @@ def render_markdown(doc: RenderDocument) -> str:
            "| Item | Value |", "|---|---|"]
     out += [f"| {md(k)} | {md(v)} |" for k, v in (*doc.identifiers, *doc.header_facts,
                                                   ("Composed at", doc.generated_at))]
+    note = chart_note(doc.sections)
+    if note:
+        out += ["", f"*{md(note)}*"]
     out += ["", "## Contents", ""]
     out += [f"{s.order}. {md(s.title)} — {md(s.status_label)}" for s in doc.sections]
     out.append("")

@@ -47,6 +47,7 @@ from stock_research_ai.application.report_claims import (
     verify_references,
 )
 from stock_research_ai.application.report_sections import (
+    CATEGORY_SECTIONS,
     Ctx,
     build_signals,
     business,
@@ -73,8 +74,11 @@ from stock_research_ai.application.report_sections import (
 )
 from stock_research_ai.application.research_completeness import (
     build_completeness,
+    forecast_block,
+    governance_block,
     peer_block,
     risk_block,
+    valuation_block,
 )
 from stock_research_ai.domain.business_intelligence import BusinessIntelligenceDataset
 from stock_research_ai.domain.document_intelligence import EvidenceBundle
@@ -89,6 +93,7 @@ from stock_research_ai.domain.final_research_report import (
     ChartReference,
     ClaimBasis,
     ClaimType,
+    CompletenessBlock,
     DueDiligenceStatus,
     ExecutiveSummary,
     FamilyCheck,
@@ -445,17 +450,17 @@ def build_final_report(
     basis_value = b13.analytical_basis.value
     peer_req = peer_block(b4, ctx.box9, basis_value)
     risk_req = risk_block(b13)
-    for sec, req in ((S.INDUSTRY_COMPETITION, peer_req), (S.RISKS, risk_req)):
-        draft = ctx.drafts[sec]
-        if req.status != SectionStatus.COMPLETE and draft.status in (None, SectionStatus.COMPLETE):
-            draft.status = SectionStatus.PARTIAL
-            draft.reason = "; ".join(x for x in (
-                draft.reason, f"{req.block} {req.status.value}: {', '.join(req.reasons)}") if x)
-    statuses = {s: _status(ctx, s, families) for s in SectionId}
+    gaps = _material_gaps(ctx, risk_view, (
+        (S.INDUSTRY_COMPETITION, peer_req), (S.RISKS, risk_req),
+        (S.FORECASTS, forecast_block(ctx.box10)), (S.VALUATION, valuation_block(ctx.box11)),
+        (S.MANAGEMENT_GOVERNANCE, governance_block(b13))))
+    statuses = {s: _status(ctx, s, families, gaps.get(s, ())) for s in SectionId}
     status_zero = _section_zero(ctx, families, statuses, risk_view)
-    statuses[S.DUE_DILIGENCE_STATUS] = _status(ctx, S.DUE_DILIGENCE_STATUS, families)
+    statuses[S.DUE_DILIGENCE_STATUS] = _status(ctx, S.DUE_DILIGENCE_STATUS, families,
+                                               gaps.get(S.DUE_DILIGENCE_STATUS, ()))
     summary = _summary(ctx, risk_view, monitor, orders, value_view, status_zero)
-    statuses[S.EXECUTIVE_SUMMARY] = _status(ctx, S.EXECUTIVE_SUMMARY, families)
+    statuses[S.EXECUTIVE_SUMMARY] = _status(ctx, S.EXECUTIVE_SUMMARY, families,
+                                            gaps.get(S.EXECUTIVE_SUMMARY, ()))
     status_zero = status_zero.model_copy(update={"sections_by_status": tuple(
         (st, sum(1 for x in statuses.values() if x[0] == st)) for st in SectionStatus)})
     appendices = _appendices(ctx)
@@ -622,8 +627,44 @@ def _families(ctx: Ctx, supplied: dict[Layer, Any], orders: OrderBookView,
     return out
 
 
-def _status(ctx: Ctx, section: SectionId, families: dict[InputFamily, FamilyCheck]) -> tuple[
-        SectionStatus, str, SectionCompleteness]:
+#: Box 12 coverage categories a section's material evidence depends on: an incomplete
+#: category (blocked / failed / partial window) means the section never reviewed everything
+SECTION_COVERAGE: dict[SectionId, tuple[str, ...]] = {
+    S.CORPORATE_EVENTS: ("MATERIAL_ANNOUNCEMENTS",),
+}
+
+
+def _material_gaps(ctx: Ctx, risk_view: RiskPresentation,
+                   blocks: tuple[tuple[SectionId, CompletenessBlock], ...]) -> dict[
+        SectionId, tuple[str, ...]]:
+    """THE section completeness contract beyond input families. A section is COMPLETE only
+    when (a) its material-requirement ledger block is complete, (b) every applicable Box 13
+    company-risk rule it reports was evaluated and (c) every Box 12 coverage category its
+    evidence depends on was fully reviewed. Each gap is a named reason code."""
+    out: dict[SectionId, list[str]] = {}
+    for sec, req in blocks:
+        if req.status not in (SectionStatus.COMPLETE, SectionStatus.NOT_APPLICABLE):
+            out.setdefault(sec, []).extend((f"{req.block}_{req.status.value}", *req.reasons))
+    if risk_view.coverage is not None:
+        for rule in risk_view.coverage.rules:
+            if rule.outcome != "NOT_EVALUATED":
+                continue
+            for sec in CATEGORY_SECTIONS.get(rule.category, ()):
+                out.setdefault(sec, []).append(f"RULE_NOT_EVALUATED_{rule.code}")
+    b12 = ctx.box12
+    for sec, categories in SECTION_COVERAGE.items():
+        for category in categories:
+            item = next((i for i in b12.coverage.items if i.category.value == category),
+                        None) if b12 is not None else None
+            if item is None or item.status.value == "SOURCE_UNAVAILABLE" or not (
+                    item.required_sources_complete and item.processing_succeeded
+                    and item.coverage_window_complete):
+                out.setdefault(sec, []).append(f"{category}_COVERAGE_INCOMPLETE")
+    return {s: tuple(dict.fromkeys(g)) for s, g in out.items()}
+
+
+def _status(ctx: Ctx, section: SectionId, families: dict[InputFamily, FamilyCheck],
+            gaps: tuple[str, ...] = ()) -> tuple[SectionStatus, str, SectionCompleteness]:
     draft = ctx.drafts[section]
     required = REQUIRED[section]
     if draft.status is None and draft.inapplicable and not draft.has_content:
@@ -641,18 +682,23 @@ def _status(ctx: Ctx, section: SectionId, families: dict[InputFamily, FamilyChec
         families[f].status == FamilyStatus.MISSING or f in draft.missing))
     available = tuple(f for f in required if f not in na and f not in missing)
     completeness = SectionCompleteness(required=required, available=available, missing=missing,
-                                       not_applicable=na)
+                                       not_applicable=na, material_gaps=gaps)
     if not available:
         return SectionStatus.UNAVAILABLE, "required inputs missing: " + ", ".join(
             f.value for f in missing), completeness
     if draft.status == SectionStatus.UNAVAILABLE:
         return SectionStatus.UNAVAILABLE, draft.reason or "UNAVAILABLE", completeness
-    if missing or draft.status == SectionStatus.PARTIAL:
+    if missing or gaps or draft.status == SectionStatus.PARTIAL:
+        shown = ", ".join(gaps[:6]) + (f" and {len(gaps) - 6} more" if len(gaps) > 6 else "")
         reason = "; ".join(x for x in (
             ("missing: " + ", ".join(f.value for f in missing)) if missing else "",
-            draft.reason or "") if x)
+            draft.reason or "", f"material evidence incomplete: {shown}" if gaps else "")
+            if x)
         return SectionStatus.PARTIAL, reason, completeness
-    return SectionStatus.COMPLETE, "every required input family available", completeness
+    return SectionStatus.COMPLETE, (
+        f"the {len(available)} input famil{'y' if len(available) == 1 else 'ies'} this section "
+        f"requires ({', '.join(f.value for f in available)}) and its material checks are "
+        "complete"), completeness
 
 
 def _section_zero(ctx: Ctx, families: dict[InputFamily, FamilyCheck],

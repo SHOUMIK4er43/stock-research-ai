@@ -226,7 +226,9 @@ def test_s_hudco_exact_regression(hudco):
     overall, blocks = ledger(report)
     assert overall == ST.PARTIAL
     assert blocks == {
-        "HISTORICAL_FINANCIALS": (ST.COMPLETE, ()),
+        # RC1 (TECHM): Cash Flow & Balance Sheet is PARTIAL - its RISING_COST_OF_BORROWINGS
+        # rule could not be evaluated - so the statements requirement over it is PARTIAL too
+        "HISTORICAL_FINANCIALS": (ST.PARTIAL, ("CASH_FLOW_BALANCE_SHEET_PARTIAL",)),
         "FINANCIAL_ANALYTICS": (ST.COMPLETE, ()),  # general-financial: PAT growth, ROE, ROA
         "BUSINESS_ANALYSIS": (ST.PARTIAL, ("SEGMENT_DATA_MISSING",)),
         "PEER_ANALYSIS": (ST.UNAVAILABLE, ("NO_ELIGIBLE_PEERS",)),
@@ -253,7 +255,10 @@ def test_t_infy_industrial_requirements_only():
     fa = next(b for b in rc.blocks if b.block == "FINANCIAL_ANALYTICS")
     assert fa.status == ST.COMPLETE and "7 of 7" in (fa.detail or "")  # no lender metric
     fc = next(b for b in rc.blocks if b.block == "FORECAST")
-    assert fc.status == ST.COMPLETE  # REVENUE / EBITDA / PAT; CAPEX / FCF optional
+    # REVENUE / EBITDA / PAT are forecast (CAPEX / FCF optional), but Box 10 itself is
+    # PARTIAL: RC1 (TECHM) showed a cover 'Forecast: Complete' over a PARTIAL Box 10
+    assert "3 of 3" in (fc.detail or "")
+    assert (fc.status, fc.reasons) == (ST.PARTIAL, ("BOX10_PARTIAL",))
     val = next(b for b in rc.blocks if b.block == "VALUATION")
     assert val.status == ST.UNAVAILABLE and "MULTIPLE_MISSING" in val.reasons
     assert "PB" not in (val.detail or "")  # P/B (lender) never required of INFY

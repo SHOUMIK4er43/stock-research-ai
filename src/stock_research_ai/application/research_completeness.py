@@ -186,11 +186,15 @@ def forecast_block(box10: Any) -> CompletenessBlock:
                  and v.status == "AVAILABLE"}
     missing = [line for line in required if line not in available]
     reasons = [f"{line}_NOT_FORECAST" for line in missing]
+    status = ST.UNAVAILABLE if box10.status.value == "UNAVAILABLE" \
+        else _coverage(len(required) - len(missing), len(required))
     if box10.status.value == "UNAVAILABLE":
         reasons += sorted({i.code for i in box10.issues})[:8]
-    return _block("FORECAST", title, True,
-                  ST.UNAVAILABLE if box10.status.value == "UNAVAILABLE"
-                  else _coverage(len(required) - len(missing), len(required)), reasons,
+    elif box10.status.value != "COMPLETE" and status == ST.COMPLETE:
+        # the core lines exist, but Box 10 itself is not complete: never COMPLETE over it
+        status = ST.PARTIAL
+        reasons.append(f"BOX10_{box10.status.value}")
+    return _block("FORECAST", title, True, status, reasons,
                   f"{model}: {len(required) - len(missing)} of {len(required)} core lines "
                   f"forecast for FY{first}" + (f"; missing: {', '.join(missing)}"
                                                 if missing else ""))

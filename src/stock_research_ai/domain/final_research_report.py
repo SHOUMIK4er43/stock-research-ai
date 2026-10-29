@@ -479,6 +479,9 @@ class SectionCompleteness(BaseModel):
     available: tuple[InputFamily, ...]
     missing: tuple[InputFamily, ...]
     not_applicable: tuple[InputFamily, ...]
+    #: the section's material-evidence contract: every gap that keeps it from COMPLETE even
+    #: though its input families exist (a rule not evaluated, a ledger block partial ...)
+    material_gaps: tuple[Code, ...] = ()
 
 
 class ReportSection(BaseModel):
@@ -989,6 +992,16 @@ _FACTUAL = (ClaimType.FACT, ClaimType.CALCULATION)
 # --- research completeness (analytical truth, apart from execution / rendering) ---------------
 
 
+#: the section whose status a material requirement gates (COMPLETE never sits over it)
+REQUIREMENT_SECTIONS: dict[str, SectionId] = {
+    "PEER_ANALYSIS": SectionId.INDUSTRY_COMPETITION,
+    "FORECAST": SectionId.FORECASTS,
+    "VALUATION": SectionId.VALUATION,
+    "RISK_ANALYSIS": SectionId.RISKS,
+    "GOVERNANCE": SectionId.MANAGEMENT_GOVERNANCE,
+}
+
+
 class CompletenessBlock(BaseModel):
     """One research requirement of the company's business model, with its evidence status.
 
@@ -1108,6 +1121,19 @@ class FinalResearchReportDataset(BaseModel):
             if (self.research_completeness.overall != SectionStatus.COMPLETE
                     and by_section[SectionId.EXECUTIVE_SUMMARY] == SectionStatus.COMPLETE):
                 fail("The executive summary is never more complete than the research")
+            # ... and a section is never COMPLETE over its own incomplete requirement
+            for block in self.research_completeness.blocks:
+                gated = REQUIREMENT_SECTIONS.get(block.block)
+                if gated is not None and block.status in (
+                        SectionStatus.PARTIAL, SectionStatus.UNAVAILABLE) and (
+                        by_section[gated] == SectionStatus.COMPLETE):
+                    fail(f"Section {gated.value} is COMPLETE over requirement {block.block} "
+                         f"{block.status.value}")
+        for s in self.sections:
+            if s.status == SectionStatus.COMPLETE and (
+                    s.completeness.missing or s.completeness.material_gaps):
+                fail(f"Section {s.section_id.value} is COMPLETE with missing inputs or "
+                     "material-evidence gaps")
         claims = {c.claim_id: c for c in self.claims}
         if len(claims) != len(self.claims):
             fail("Claim IDs are unique")

@@ -287,7 +287,15 @@ class _Builder:
     def status_block(self, s: ReportSection) -> Paragraph:
         tone: Tone = "NOTICE" if s.status in (SectionStatus.UNAVAILABLE,
                                                SectionStatus.PARTIAL) else "NEUTRAL"
-        # section 0 reports research status; its own status is only whether its inputs exist
+        # section 0 reports THE research status (the one shown in the contents, the cover
+        # and the side panel); its own status only says its overview inputs exist
+        rc = self.r.research_completeness
+        if s.section_id == S.DUE_DILIGENCE_STATUS and rc is not None:
+            return Paragraph(f"{STATUS_LABELS[rc.overall.value]} — the material-requirement "
+                             "ledger below states what is complete, partial and unavailable "
+                             f"(status overview inputs: {STATUS_LABELS[s.status.value]})",
+                             "NOTICE" if rc.overall != SectionStatus.COMPLETE else "NEUTRAL",
+                             label="Research completeness")
         label = ("Status overview inputs" if s.section_id == S.DUE_DILIGENCE_STATUS
                  else "Section status")
         return Paragraph(f"{STATUS_LABELS[s.status.value]} — {s.status_reason}", tone,
@@ -813,6 +821,7 @@ class _Builder:
 
 #: readable text for structured reason codes (the code itself is always kept)
 REASON_TEXT = {
+    "BOX10_PARTIAL": "core lines are forecast, but the Box 10 forecast itself is partial",
     "MULTIPLE_MISSING": "no valuation multiple was supplied (none is assumed)",
     "ATTRIBUTION_UNKNOWN": "profit attributable to ordinary shareholders is not established",
     "CASH_UNAVAILABLE": "cash and debt inputs for the equity bridge are unavailable",

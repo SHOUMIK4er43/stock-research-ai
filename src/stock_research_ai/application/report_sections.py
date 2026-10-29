@@ -58,10 +58,12 @@ from stock_research_ai.domain.final_research_report import (
     ReconciliationEntry,
     ReportIssue,
     ReportLimits,
+    RiskCoverage,
     RiskEntry,
     RiskKind,
     RiskPresentation,
     RowKind,
+    RuleCoverage,
     Scenario,
     ScenarioCase,
     SectionId,
@@ -2619,7 +2621,59 @@ def risks(ctx: Ctx) -> RiskPresentation:
     return RiskPresentation(risk_register=tuple(ctx.risk_entries), red=tuple(red),
                             yellow=tuple(yellow), positive_controls=d13.positive_controls,
                             data_limitations=tuple(limitations),
-                            open_diligence=tuple(diligence))
+                            open_diligence=tuple(diligence), coverage=risk_coverage(ctx))
+
+
+_NOT_APPLICABLE_STATUSES = (SignalStatus.NOT_APPLICABLE, SignalStatus.UNSUPPORTED_SECTOR_RULE)
+
+
+def _reason_text(s: RiskSignal) -> str:
+    """Box 13's explanation, or - when it is only the reason code - the code in words."""
+    code = s.reason or s.status.value
+    if s.explanation.strip() in ("", code):
+        return human(code).capitalize()
+    return s.explanation
+
+
+def risk_coverage(ctx: Ctx) -> RiskCoverage:
+    """THE coverage of the company-risk rules, from the Box 13 register only: GREEN means
+    the rule ran and found no adverse evidence; NOT EVALUATED means it could not run (its
+    missing evidence is named) and is never read as 'no risk'."""
+    rules: list[RuleCoverage] = []
+    for e in ctx.risk_entries:
+        if e.kind != RiskKind.COMPANY_RISK:
+            continue
+        s = ctx.box13.signal(e.risk_id)
+        outcome: Literal["RED", "YELLOW", "GREEN", "INFORMATIONAL", "NOT_EVALUATED",
+                         "NOT_APPLICABLE"]
+        if s.status == SignalStatus.EVALUATED and s.severity is not None:
+            outcome = s.severity.value
+        elif s.status in (SignalStatus.EVALUATED, SignalStatus.INFORMATIONAL):
+            outcome = "INFORMATIONAL"
+        elif s.status in _NOT_APPLICABLE_STATUSES:
+            outcome = "NOT_APPLICABLE"
+        else:
+            outcome = "NOT_EVALUATED"
+        missing = outcome == "NOT_EVALUATED"
+        rules.append(RuleCoverage(
+            risk_id=e.risk_id, code=e.code, title=s.title, category=e.category,
+            outcome=outcome, reason=(s.reason or s.status.value) if missing else s.reason,
+            reason_text=_reason_text(s) if missing or outcome == "NOT_APPLICABLE" else None))
+    n = Counter(r.outcome for r in rules)
+    evaluated = n["RED"] + n["YELLOW"] + n["GREEN"] + n["INFORMATIONAL"]
+    applicable = evaluated + n["NOT_EVALUATED"]
+    headline = (f"Risk rules evaluated: {evaluated} of {applicable} applicable "
+                f"(RED {n['RED']}, YELLOW {n['YELLOW']}, GREEN {n['GREEN']}"
+                + (f", informational {n['INFORMATIONAL']}" if n["INFORMATIONAL"] else "") + ")")
+    if n["NOT_EVALUATED"]:
+        headline += (f"; {n['NOT_EVALUATED']} not evaluated because their evidence is "
+                     "unavailable - not a finding of no risk")
+    if n["NOT_APPLICABLE"]:
+        headline += f"; {n['NOT_APPLICABLE']} not applicable to this company"
+    return RiskCoverage(applicable=applicable, evaluated=evaluated, red=n["RED"],
+                        yellow=n["YELLOW"], green=n["GREEN"], informational=n["INFORMATIONAL"],
+                        not_evaluated=n["NOT_EVALUATED"], not_applicable=n["NOT_APPLICABLE"],
+                        rules=tuple(rules), headline=headline + ".")
 
 
 def reconciliation(ctx: Ctx) -> list[ReconciliationEntry]:

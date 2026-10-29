@@ -172,6 +172,21 @@ function completenessLines(value) {
     .map(([label, text]) => ({ label, text }));
 }
 
+const RISK_COUNT_KEYS = Object.freeze(["EVALUATED", "APPLICABLE", "GREEN", "YELLOW", "RED",
+  "NOT_EVALUATED", "NOT_APPLICABLE"]);
+
+/** Box 14's risk-coverage counts: known keys with non-negative integers only, else null. */
+function riskCounts(value) {
+  if (!Array.isArray(value)) return null;
+  const out = {};
+  for (const row of value) {
+    if (!Array.isArray(row) || row.length !== 2) continue;
+    const [key, n] = row;
+    if (RISK_COUNT_KEYS.includes(key) && Number.isInteger(n) && n >= 0) out[key] = n;
+  }
+  return RISK_COUNT_KEYS.every(k => k in out) ? out : null;
+}
+
 /** A validated panel view (GET /v1/final-reports/{id}/view), or null. */
 export function parsePanel(payload) {
   if (!payload || typeof payload !== "object") return null;
@@ -208,6 +223,11 @@ export function parsePanel(payload) {
     conflicts: items(payload.input_conflicts),
     limitations: items(payload.data_limitations),
     diligence: items(payload.open_diligence),
+    // the canonical risk coverage (null on reports composed before it existed)
+    riskCoverage: typeof payload.risk_coverage === "string" ? payload.risk_coverage.slice(0, 600) : null,
+    riskCounts: riskCounts(payload.risk_counts),
+    evaluatedClear: items(payload.evaluated_clear),
+    notEvaluated: items(payload.not_evaluated),
   };
 }
 
@@ -277,15 +297,40 @@ export function renderDetailedResearch(doc, panel) {
   ] });
 }
 
-/** The Negatives / Risks view: company risks apart from data limitations. */
+/** "Risk rules evaluated: N / M" with every count, ahead of any RED / YELLOW list. */
+export function riskCoverageLine(panel) {
+  const c = panel.riskCounts;
+  if (!c) return "Risk coverage: not stated (report predates the coverage count)";
+  return `Risk rules evaluated: ${c.EVALUATED} / ${c.APPLICABLE} · GREEN ${c.GREEN} · ` +
+    `YELLOW ${c.YELLOW} · RED ${c.RED} · NOT EVALUATED ${c.NOT_EVALUATED} · ` +
+    `NOT APPLICABLE ${c.NOT_APPLICABLE}`;
+}
+
+function coverageBlock(doc, panel) {
+  return el(doc, "section", { className: "final-report-block risk-coverage", children: [
+    el(doc, "h3", { text: riskCoverageLine(panel) }),
+    panel.riskCoverage ? el(doc, "p", { text: panel.riskCoverage }) : null,
+  ] });
+}
+
+/** The Negatives / Risks view: coverage first, company risks apart from data limitations. */
 export function renderRisks(doc, panel) {
+  // grades are only listed with their denominator: "no RED" never stands alone
+  const none = level => panel.riskCounts
+    ? `No ${level} company risk among the ${panel.riskCounts.EVALUATED} rules evaluated.`
+    : `No ${level} company risk.`;
   return el(doc, "article", { className: "final-report-risks", children: [
     el(doc, "h2", { text: `${panel.companyName} — Negatives / Risks` }),
     el(doc, "p", { className: "final-report-basis",
       text: `Basis: ${panel.analyticalBasis || "not stated"}` }),
     el(doc, "p", { className: "muted", text: `As of ${panel.asOf}. Company risks as graded upstream; data limitations are listed separately and are not company risks.` }),
-    block(doc, "RED company risks", panel.red, "risk-red", "No RED company risk."),
-    block(doc, "YELLOW company risks", panel.yellow, "risk-yellow", "No YELLOW company risk."),
+    coverageBlock(doc, panel),
+    block(doc, "RED company risks", panel.red, "risk-red", none("RED")),
+    block(doc, "YELLOW company risks", panel.yellow, "risk-yellow", none("YELLOW")),
+    block(doc, "Rules NOT EVALUATED (evidence unavailable — not a finding of no risk)",
+      panel.notEvaluated, "risk-not-evaluated", "Every applicable rule was evaluated."),
+    block(doc, "Rules evaluated — no adverse evidence found", panel.evaluatedClear,
+      "risk-clear", "No rule graded GREEN."),
     block(doc, "Positive controls", panel.positive, "risk-positive", "None."),
     el(doc, "h2", { text: "Data limitations (not company risks)" }),
     block(doc, "Input conflicts", panel.conflicts, "limitation-conflict", "No input conflict."),

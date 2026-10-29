@@ -719,6 +719,60 @@ class DiligenceEntry(BaseModel):
     status: Literal["OPEN"] = "OPEN"
 
 
+RuleOutcome = Literal["RED", "YELLOW", "GREEN", "INFORMATIONAL", "NOT_EVALUATED",
+                      "NOT_APPLICABLE"]
+
+
+class RuleCoverage(BaseModel):
+    """One company-risk rule as the reader needs it: what was tested and what came out -
+    a grade, an evaluation without a grade, NOT EVALUATED (with the missing evidence) or
+    not applicable. NOT EVALUATED is never 'no risk'."""
+
+    model_config = _model()
+    risk_id: UUID
+    code: Code
+    title: Label  # 'Promoter pledge'
+    category: Code
+    outcome: RuleOutcome
+    reason: Code | None = None  # the upstream reason code (PLEDGE_DATA_NOT_SUPPLIED ...)
+    reason_text: Label | None = None  # 'promoter pledge data not available'
+
+
+class RiskCoverage(BaseModel):
+    """THE risk-coverage count of a report (company-risk rules only; positive controls are
+    reported apart). Every surface - cover, executive summary, Section 17, the side panel -
+    shows these numbers and this headline, never its own count."""
+
+    model_config = _model()
+    applicable: NonNegativeInt  # evaluated + not evaluated
+    evaluated: NonNegativeInt  # red + yellow + green + informational
+    red: NonNegativeInt
+    yellow: NonNegativeInt
+    green: NonNegativeInt
+    informational: NonNegativeInt = 0
+    not_evaluated: NonNegativeInt
+    not_applicable: NonNegativeInt
+    rules: tuple[RuleCoverage, ...] = Field(max_length=MAX_ENTRIES)
+    headline: Label
+
+    @model_validator(mode="after")
+    def counted(self) -> Self:
+        by: dict[str, int] = {}
+        for r in self.rules:
+            by[r.outcome] = by.get(r.outcome, 0) + 1
+        if (self.red, self.yellow, self.green, self.informational, self.not_evaluated,
+                self.not_applicable) != tuple(by.get(k, 0) for k in (
+                    "RED", "YELLOW", "GREEN", "INFORMATIONAL", "NOT_EVALUATED",
+                    "NOT_APPLICABLE")):
+            raise ValueError("risk coverage counts are the counts of its rules")
+        if self.evaluated != self.red + self.yellow + self.green + self.informational or (
+                self.applicable != self.evaluated + self.not_evaluated):
+            raise ValueError("evaluated / applicable follow the rule outcomes")
+        if any(r.outcome == "NOT_EVALUATED" and not r.reason for r in self.rules):
+            raise ValueError("a rule that was not evaluated names the missing evidence")
+        return self
+
+
 class RiskPresentation(BaseModel):
     """Company risk and data limitation never share a list."""
 
@@ -729,6 +783,8 @@ class RiskPresentation(BaseModel):
     positive_controls: tuple[UUID, ...]
     data_limitations: tuple[LimitationEntry, ...] = Field(max_length=MAX_ENTRIES)
     open_diligence: tuple[DiligenceEntry, ...] = Field(max_length=MAX_ENTRIES)
+    #: the canonical coverage (None only on reports composed before it existed)
+    coverage: RiskCoverage | None = None
 
 
 class ViewDirection(StrEnum):
@@ -1194,6 +1250,20 @@ class FinalResearchReportDataset(BaseModel):
         for i in self.risks.positive_controls:
             if i not in by_risk or by_risk[i].kind != RiskKind.POSITIVE_CONTROL:
                 fail("The positive-control list holds positive controls only")
+        cov = self.risks.coverage
+        if cov is not None:
+            company = {r.risk_id for r in self.risks.risk_register
+                       if r.kind == RiskKind.COMPANY_RISK}
+            if {r.risk_id for r in cov.rules} != company or len(cov.rules) != len(company):
+                fail("Risk coverage lists every company-risk rule exactly once")
+            for rule in cov.rules:
+                entry = by_risk[rule.risk_id]
+                graded = rule.outcome in ("RED", "YELLOW", "GREEN")
+                if graded != (entry.status == "EVALUATED" and entry.severity is not None) or (
+                        graded and rule.outcome != entry.severity):
+                    fail("A rule's coverage outcome is its Box 13 grade")
+            if (cov.red, cov.yellow) != (len(self.risks.red), len(self.risks.yellow)):
+                fail("Risk coverage counts the RED / YELLOW lists")
         for d in self.risks.data_limitations:
             known((d.claim_id,), "A data limitation")
             if claims[d.claim_id].claim_type != ClaimType.DATA_LIMITATION:

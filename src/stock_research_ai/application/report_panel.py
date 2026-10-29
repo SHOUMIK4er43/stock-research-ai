@@ -92,6 +92,12 @@ class FinalReportPanel(BaseModel):
     research_completeness: tuple[tuple[str, str], ...] = ()
     #: a readable note when the basis is not the default consolidated choice (e.g. stale)
     basis_note: str | None = None
+    #: THE risk coverage (Box 14): the headline, its counts, the rules that ran clean and
+    #: the rules NOT EVALUATED (by name, with their missing evidence); None on older reports
+    risk_coverage: str | None = None
+    risk_counts: tuple[tuple[str, int], ...] = ()
+    evaluated_clear: PanelList = PanelList(items=(), total=0)
+    not_evaluated: PanelList = PanelList(items=(), total=0)
 
 
 def _list(items: Iterable[PanelItem]) -> PanelList:
@@ -155,6 +161,22 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
                              detail=entry.layer) for entry in report.risks.data_limitations]
     diligence = [PanelItem(label=entry.importance, statement=statement(entry.claim_id),
                            detail=entry.needed_source) for entry in report.risks.open_diligence]
+    cov = report.risks.coverage
+    counts: tuple[tuple[str, int], ...] = ()
+    clear: list[PanelItem] = []
+    unevaluated: list[PanelItem] = []
+    if cov is not None:
+        counts = (("EVALUATED", cov.evaluated), ("APPLICABLE", cov.applicable),
+                  ("GREEN", cov.green), ("YELLOW", cov.yellow), ("RED", cov.red),
+                  ("NOT_EVALUATED", cov.not_evaluated), ("NOT_APPLICABLE", cov.not_applicable))
+        clear = [PanelItem(label=r.title, severity="GREEN",
+                           statement="Evaluated - no adverse evidence found",
+                           detail=f"{_label(r.category)} · {r.code}")
+                 for r in cov.rules if r.outcome == "GREEN"]
+        unevaluated = [PanelItem(label=r.title, statement="Not evaluated - "
+                                 + (r.reason_text or _label(r.reason or "")),
+                                 detail=f"{_label(r.category)} · {r.reason}")
+                       for r in cov.rules if r.outcome == "NOT_EVALUATED"]
     m = report.metadata
     return FinalReportPanel(
         artifact_id=manifest.artifact_id, report_id=report.report_id,
@@ -173,7 +195,9 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         business_class=m.business_class, industry=m.industry.value,
         research_status=rc.overall.value if (rc := report.research_completeness) else None,
         research_completeness=tuple(summary_lines(rc)) if rc else (),
-        basis_note=basis_note(m.basis_selection))
+        basis_note=basis_note(m.basis_selection),
+        risk_coverage=cov.headline if cov else None, risk_counts=counts,
+        evaluated_clear=_list(clear), not_evaluated=_list(unevaluated))
 
 
 __all__ = ["FinalReportPanel", "PanelItem", "PanelList", "PanelSection", "build_panel"]

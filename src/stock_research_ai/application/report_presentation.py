@@ -331,6 +331,9 @@ class _Builder:
              f"{dd.forecast_status} (inputs complete: "
              f"{'yes' if dd.forecast_inputs_complete else 'no'})"),
             ("Open diligence items", str(len(dd.open_diligence_item_ids))),
+            *((("Risk rules evaluated", f"{cov.evaluated} / {cov.applicable} (NOT EVALUATED "
+                                        f"{cov.not_evaluated})"),)
+              if (cov := self.r.risks.coverage) else ()),
             ("Input families available", f"{dd.families_available} of {dd.families_checked}"),
             ("Missing input families", ", ".join(missing) or "None"),
             ("Sections by status", f"{by_status} (of {dd.sections_total})"),
@@ -409,9 +412,37 @@ class _Builder:
             detail.append("mitigating: " + ", ".join(codes))
         return _with_label(view, f"{view.type_label} · {'; '.join(detail)}", e.severity)
 
+    def risk_coverage(self) -> list[Block]:
+        """The canonical coverage first: how many rules ran, what they found, and - by name,
+        with the missing evidence - every rule that could not run."""
+        cov = self.r.risks.coverage
+        if cov is None:
+            return []
+        out: list[Block] = [KeyValues(
+            f"Risk coverage — Risk rules evaluated: {cov.evaluated} / {cov.applicable}",
+            "NOTICE", (
+                ("RED", str(cov.red)), ("YELLOW", str(cov.yellow)), ("GREEN", str(cov.green)),
+            *((("Informational (no grade)", str(cov.informational)),)
+              if cov.informational else ()),
+            ("NOT EVALUATED", str(cov.not_evaluated)),
+            ("NOT APPLICABLE", str(cov.not_applicable))))]
+        out.append(Paragraph(cov.headline, "NOTICE", label="Coverage"))
+        clear = tuple((r.title, f"GREEN - no adverse evidence found ({r.code})")
+                      for r in cov.rules if r.outcome == "GREEN")
+        if clear:
+            out.append(KeyValues("Rules evaluated with no adverse evidence found", "POSITIVE",
+                                 clear))
+        missing = tuple((r.title, f"NOT EVALUATED - {r.reason_text or r.reason} "
+                                  f"(rule {r.code})")
+                        for r in cov.rules if r.outcome == "NOT_EVALUATED")
+        if missing:
+            out.append(KeyValues("Rules NOT EVALUATED (evidence unavailable - not a finding "
+                                 "of no risk)", "LIMITATION", missing))
+        return out
+
     def risks_section(self, s: ReportSection, shown: set[UUID]) -> list[Block]:
         rp = self.r.risks
-        out: list[Block] = []
+        out: list[Block] = self.risk_coverage()
         groups: tuple[tuple[str, Tone, tuple[UUID, ...], str], ...] = (
                 ("RED company risks", "RED", rp.red, "No RED company risk graded upstream."),
                 ("YELLOW company risks", "YELLOW", rp.yellow,

@@ -150,6 +150,30 @@ test("getFinalReportFile returns the binary body and maps errors", async () => {
     e => e instanceof ApiError && e.status === 404 && e.code === "FINAL_REPORT_FILE_UNAVAILABLE");
 });
 
+test("the risks view leads with coverage and never shows 'no RED' without its denominator", () => {
+  const list = (items) => ({ items, total: items.length });
+  const panel = parsePanel(panelPayload({
+    red: list([]), yellow: list([]),
+    risk_coverage: "Risk rules evaluated: 11 of 25 applicable (RED 0, YELLOW 0, GREEN 11); 14 not evaluated because their evidence is unavailable - not a finding of no risk.",
+    risk_counts: [["EVALUATED", 11], ["APPLICABLE", 25], ["GREEN", 11], ["YELLOW", 0], ["RED", 0],
+      ["NOT_EVALUATED", 14], ["NOT_APPLICABLE", 3]],
+    evaluated_clear: list([{ label: "Weak interest cover", severity: "GREEN", statement: "Evaluated - no adverse evidence found", detail: "Leverage · WEAK_INTEREST_COVER" }]),
+    not_evaluated: { items: [{ label: "Promoter pledge", statement: "Not evaluated - promoter pledge data not available", detail: "Governance · PLEDGE_DATA_NOT_SUPPLIED" }], total: 14 },
+  }));
+  const html = renderRisks(createFakeDocument(), panel).serialize();
+  assert.match(html, /Risk rules evaluated: 11 \/ 25 · GREEN 11 · YELLOW 0 · RED 0 · NOT EVALUATED 14 · NOT APPLICABLE 3/);
+  assert.ok(html.indexOf("Risk rules evaluated") < html.indexOf("RED company risks"));
+  assert.match(html, /No RED company risk among the 11 rules evaluated\./);
+  assert.match(html, /Rules NOT EVALUATED[^<]*\(14\)/);
+  assert.match(html, /Promoter pledge/);
+  assert.match(html, /Weak interest cover/);
+  // an older report without coverage says so instead of implying a clean result
+  const old = renderRisks(createFakeDocument(), parsePanel(panelPayload())).serialize();
+  assert.match(old, /Risk coverage: not stated/);
+  // malformed counts are never shown
+  assert.equal(parsePanel(panelPayload({ risk_counts: [["RED", -1]] })).riskCounts, null);
+});
+
 test("the risks view keeps company risks apart from data limitations and escapes text", () => {
   const doc = createFakeDocument();
   const node = renderRisks(doc, parsePanel(panelPayload()));

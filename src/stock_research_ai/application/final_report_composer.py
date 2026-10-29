@@ -795,7 +795,12 @@ def _summary(ctx: Ctx, risk_view: RiskPresentation, monitor: list[Any], orders: 
     point(SummaryKind.VALUATION_RANGE, vals, "no Box 11 method produced a per-share value")
     red = [ctx.signal_claims[i] for i in risk_view.red]
     yellow = [ctx.signal_claims[i] for i in risk_view.yellow]
-    point(SummaryKind.MAJOR_RISKS, red + yellow[:5], "no YELLOW / RED company risk")
+    # the reason is THE coverage headline: never '0 RED' without how many rules ran
+    coverage = risk_view.coverage.headline if risk_view.coverage else \
+        "no YELLOW / RED company risk"
+    point(SummaryKind.MAJOR_RISKS, red + yellow[:5], coverage)
+    if risk_view.coverage and points[-1].status == "AVAILABLE":
+        points[-1] = points[-1].model_copy(update={"reason": coverage})
     points.append(SummaryPoint(
         kind=SummaryKind.MONITORING, claim_ids=(), status="AVAILABLE" if monitor else
         "UNAVAILABLE", reason=None if monitor else "no monitoring item",

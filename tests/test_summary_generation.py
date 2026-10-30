@@ -77,7 +77,8 @@ async def generate(value: SummaryInput, model: FakeModel) -> SummaryResult:
 
 #: the observations a calculated ratio claim cites (numerator and denominator)
 RATIO_INPUTS = {"operating_margin": {"operating_profit", "sales", "revenue"},
-                "cash_conversion": {"cash_operating", "net_profit"}}
+                "cash_conversion": {"cash_operating", "net_profit"},
+                "derived_price_earnings": {"current_price", "eps"}}
 
 def selection(value: SummaryInput, *claim_ids: str) -> str:
     return json.dumps({"claim_ids": list(claim_ids)})
@@ -436,7 +437,8 @@ async def test_real_fixture_summary_claims_trace_to_normalized_source_evidence(
         for index, observation_id in enumerate(claim.source_observation_ids):
             observation = observations[observation_id]
             assert observation.metric_id in allowed
-            assert observation.reporting_scope == claim.reporting_scope
+            assert observation.reporting_scope == claim.reporting_scope or (
+                observation.metric_id == "current_price")  # a market price has no basis
             assert observation.value == claim.values[index]
             assert observation.period.fiscal_label == claim.periods[index]
             assert observation.provenance.raw_artifact_id == claim.source_artifact_ids[index]

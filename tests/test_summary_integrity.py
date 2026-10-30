@@ -102,3 +102,17 @@ def test_detailed_research_explains_the_undated_snapshot_it_does_not_use():
     texts = [c.statement for c in report.claims if c.claim_id in valuation.limitation_claim_ids
              or c.claim_id in valuation.claim_ids]
     assert any("aggregator snapshot without an observation date" in t for t in texts)
+
+
+async def test_a_derived_pe_is_shown_beside_the_reported_one_never_as_it(infy):
+    value, claims, result = infy
+    derived = [c for c in claims if c.metric_id == "derived_price_earnings"]
+    reported = [c for c in claims if c.metric_id == "price_earnings"]
+    if not derived:
+        pytest.skip("fixture has no price / TTM EPS pair")
+    (d,) = derived
+    price, eps = d.values
+    assert f"{(price / eps).quantize(Decimal('0.01'), ROUND_HALF_EVEN)}×" in d.text
+    assert "not the source-reported P/E" in d.label
+    assert result.summary_text.count(d.text) == 1
+    assert all("Screener-reported" in c.label for c in reported)

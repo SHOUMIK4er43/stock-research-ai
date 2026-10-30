@@ -372,7 +372,28 @@ def _ratio_claims(summary_input: SummaryInput, periods: _Periods) -> list[Summar
                                   .split(" (")[0].lower(), style))
             if claim is not None:
                 out.append(claim)
+    out.extend(_derived_pe(summary_input, periods))
     return out
+
+
+def _derived_pe(summary_input: SummaryInput, periods: _Periods) -> list[SummaryGroundingClaim]:
+    """Price / TTM EPS, both cited, beside the source's own P/E: a source-reported multiple
+    and a derived one are never presented as the same number (they can differ by price
+    date or EPS definition)."""
+    price = next((m for m in summary_input.snapshot if m.metric_id == "current_price"), None)
+    eps = _row_of(summary_input, "annual", ("eps",))
+    if price is None or eps is None or eps.ttm is None or eps.ttm.value is None or (
+            price.unit != eps.unit) or eps.ttm.value <= 0:
+        return []
+    label = "Derived P/E (current price / TTM EPS; not the source-reported P/E)"
+    claim = _claim(kind="ratio", block="snapshot", metric_id="derived_price_earnings",
+                   source_label=label, unit=price.unit,
+                   scope=eps.reporting_scope,  # a price has no basis: the earnings' basis
+                   values=(price.observation, eps.ttm),
+                   names=(f"{periods.name('snapshot', price.observation)} / "
+                          f"{periods.name('annual', eps.ttm)}",),
+                   ratio=(label, "price", "TTM EPS", "times"))
+    return [claim] if claim is not None else []
 
 
 def build_summary_claims(summary_input: SummaryInput) -> tuple[SummaryGroundingClaim, ...]:
@@ -569,7 +590,7 @@ def _render_summary(
                  tuple(c for c in included if c.kind == "trend"
                        and c.block in {"annual", "quarterly"})),
                 ("Profitability and cash conversion",
-                 tuple(c for c in included if c.kind == "ratio")),
+                 tuple(c for c in included if c.kind == "ratio" and c.block != "snapshot")),
                 ("Latest reported figures",
                  tuple(c for c in included if c.block in {"annual", "quarterly"}
                        and c.kind == "observation")),

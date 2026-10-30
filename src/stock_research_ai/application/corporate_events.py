@@ -144,6 +144,10 @@ _GROUPED = re.compile(r"\d+(?:,\d+)*(?:\.\d+)?")
 #: Text extraction also splits paise off a grouped amount: 'Rs. 72,73,45,018. 74/-'.
 _SPLIT_PAISE = re.compile(r"[ \t]{1,2}(\d{2})(?=[ \t]{0,2}/)")  # only before the '/-' terminator
 MAX_AMOUNT_DIGITS = 20
+#: A per-unit amount ('face value of Rs 10/- each', 'Rs. 9 per equity share') prices one
+#: share; it is never the value of the event that mentions it.
+_PER_UNIT_AFTER = re.compile(r"[ \t]*(?:each\b|per\b|/[ \t]*(?:share|unit)\b|a share\b)", _I)
+_PER_UNIT_BEFORE = re.compile(r"\b(?:face|nominal|par)\s+value\s*(?:of\s*)?(?:@\s*)?$", _I)
 _TAX_INCLUSIVE = re.compile(r"incl(?:\.|uding|usive)?\s*(?:of\s*)?(?:GST|taxes)", _I)
 _TAX_EXCLUSIVE = re.compile(r"excl(?:\.|uding|usive)?\s*(?:of\s*)?(?:GST|taxes)|plus GST|"
                             r"\+\s*GST|without GST", _I)
@@ -239,6 +243,9 @@ def scan_amounts(segment: str) -> tuple[list[StatedMoney], int]:
         digits = number_text.replace(",", "")
         if len(digits) > MAX_AMOUNT_DIGITS:
             continue
+        if _PER_UNIT_AFTER.match(text, unit.end()) or _PER_UNIT_BEFORE.search(
+                text[max(0, marker.start() - 40):marker.start()]):
+            continue  # a price per share, not an amount of the event
         crore = _to_crore(Decimal(digits), unit.group("unit"))
         if crore is None:
             continue

@@ -18,6 +18,7 @@ from uuid import UUID, uuid5
 
 from pydantic import BaseModel
 
+from stock_research_ai.application.period_names import day_name
 from stock_research_ai.domain.business_intelligence import (
     BusinessIntelligenceDataset,
     SourceLocation,
@@ -136,6 +137,44 @@ def _day(value: datetime | date | None) -> date | None:
 # --- source register -------------------------------------------------------------------------
 
 
+_LOCATOR = re.compile(r"^[0-9a-f]{8,}(?:/|$)|/p\d+/|/block\d+|/s\d+$|^[a-z_]+:[\w-]+$",
+                      re.I)
+_SHP = re.compile(r"/SHP_[\d_]*?_(\d{2})(\d{2})(\d{4})\d{6}_WEB\.xml$", re.I)
+
+
+def _opaque(title: str) -> bool:
+    """An internal locator ('8248031f1164/p7/block92/s23') or a bare URL is not a title."""
+    t = title.strip()
+    return not t or t.startswith(("http://", "https://")) or bool(_LOCATOR.search(t)) or (
+        " " not in t and "/" in t)
+
+
+RATING_AGENCY_HOSTS = ("careratings", "crisil", "icra", "indiaratings", "acuite",
+                       "brickworkratings", "infomerics")
+
+
+def url_title(url: str | None) -> str | None:
+    """A reader's title for a source known only by its URL (the URL stays its location)."""
+    if not url or not url.startswith("http"):
+        return None
+    shp = _SHP.search(url)
+    if shp:
+        day, month, year = (int(x) for x in shp.groups())
+        try:
+            filed = f", filed {day_name(date(year, month, day))}"
+        except ValueError:
+            filed = ""
+        return f"NSE shareholding pattern filing (XBRL){filed}"
+    if "/corporate/xbrl/" in url:
+        return "NSE XBRL filing"
+    if "AnnPdfOpen" in url or "/xml-data/corpfiling/" in url:
+        return "BSE announcement attachment (PDF)"
+    host = url.split("://", 1)[1].split("/", 1)[0]
+    if any(a in host for a in RATING_AGENCY_HOSTS):
+        return f"Credit rating document ({host})"
+    return f"Document at {host}"
+
+
 @dataclass
 class _Source:
     key: str
@@ -144,6 +183,7 @@ class _Source:
     url: str | None
     authority: set[str] = field(default_factory=set)
     document_ids: set[UUID] = field(default_factory=set)
+    weak_title: bool = False  # derived from the URL / a reference, not stated by a layer
     shas: set[str] = field(default_factory=set)
     document_date: date | None = None
     retrieval_date: date | None = None
@@ -214,12 +254,18 @@ class Book:
             if len(self._sources) >= self.limits.max_sources:
                 raise ReportCompositionError("RESOURCE_LIMIT_EXCEEDED", "more than "
                                              f"{self.limits.max_sources} distinct sources")
+            readable = title or (reference if reference and not _opaque(reference) else None)
             entry = _Source(key=key, source_type=source_type,
-                            title=(title or reference or key)[:1000],
-                            url=key if key.startswith("http") else None)
+                            title=(readable or url_title(key) or reference or key)[:1000],
+                            url=key if key.startswith("http") else None,
+                            weak_title=readable is None)
             self._sources[key] = entry
-        elif _TYPE_RANK[source_type] < _TYPE_RANK[entry.source_type]:
-            entry.source_type = source_type  # a filed document outranks a dataset mention
+        else:
+            if title and not _opaque(title) and (entry.weak_title or _opaque(entry.title)):
+                # a stated readable title replaces a locator, a bare URL or a URL-derived guess
+                entry.title, entry.weak_title = title[:1000], False
+            if _TYPE_RANK[source_type] < _TYPE_RANK[entry.source_type]:
+                entry.source_type = source_type  # a filed document outranks a dataset mention
         entry.authority.add(f"{layer.value}:{authority}"[:1000])
         entry.layers.add(layer)
         if document_id is not None:
@@ -497,6 +543,7 @@ class Resolver:
                 self.box7_obs[g.observation_id] = g.source
             for k in box7.operating_kpi_observations:
                 self.box7_obs[k.kpi_observation_id] = k.source
+        self.box8_events = {e.document_id: e for e in box8.events} if box8 else {}
         self.forecast_values = {v.value_id: v for v in (*box10.actuals, *box10.year_to_date_actuals,
                                                         *box10.values)} \
             if box10 else {}
@@ -610,12 +657,16 @@ class Resolver:
                                 sha=loc.artifact_sha256)
 
     def box8(self, p: Box8Provenance, call_date: date | None = None) -> UUID:
+        event = self.box8_events.get(p.document_id)
+        kind = p.document_type.value.replace("_", " ").title()
+        title = kind
+        if event is not None and event.title:  # 'Q2 FY27 Earnings Conference Call (15-Oct-2026)'
+            when = event.call_date or call_date
+            title = f"{event.title}" + (f" ({when.strftime('%d-%b-%Y')})" if when else "")
         return self.book.source(Layer.BOX8, _doc_type(p.document_type.value, p.authority.value),
                                 f"{p.document_type.value}/{p.authority.value}",
                                 url=p.source_url, document_id=p.document_id,
-                                sha=p.artifact_sha256,
-                                title=p.document_type.value.replace("_", " ").title(),
-                                document_date=call_date)
+                                sha=p.artifact_sha256, title=title, document_date=call_date)
 
     # --- Box 10 / Box 11 lineage: forecast values back to the Box 4 values they rest on
     def lineage(self, value_id: UUID, depth: int = 0) -> frozenset[UUID]:

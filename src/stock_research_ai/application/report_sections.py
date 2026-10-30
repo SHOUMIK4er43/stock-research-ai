@@ -892,10 +892,13 @@ def industry(ctx: Ctx) -> None:
     rows: list[TableRow] = []
     pages = {c.peer_company_key: (c.table_ref.company_url or c.table_ref.source_url)
              for c in b9.candidates if c.table_ref is not None}
+    names = {c.peer_company_key: c.peer_company_name for c in b9.candidates}
     for b in sorted(b9.financial_benchmarks, key=lambda x: (x.metric_code, x.period_end)):
         peer_sources = [ctx.book.source(Layer.BOX9, SourceType.PROVIDER_RECORD, "PEER_DATA",
                                         url=(p.source.source_url if p.source else None) or
-                                        pages.get(p.company_key), reference=p.company_key)
+                                        pages.get(p.company_key), reference=p.company_key,
+                                        title=f"Screener page of peer {names[p.company_key]}"
+                                        if p.company_key in names else None)
                         for p in b.peers if p.status.value == "COMPARABLE" and (
                             (p.source is not None and p.source.source_url)
                             or pages.get(p.company_key))]

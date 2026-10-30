@@ -341,6 +341,37 @@ NSE_COMPANY_ENDPOINTS: tuple[tuple[PayloadKind, str], ...] = (
 )
 
 
+SHAREHOLDING_XBRL_FILINGS = 3  # the latest quarters a pledge reading and its trend need
+
+
+def shareholding_xbrl_urls(payload: RawPayload) -> list[str]:
+    """The XBRL URLs of the latest shareholding filings in an NSE feed payload (newest first,
+    at most SHAREHOLDING_XBRL_FILINGS); nothing on any parse problem."""
+    if payload.status != FetchStatus.OK or payload.content is None:
+        return []
+    try:
+        body = json.loads(payload.content)
+    except (ValueError, RecursionError):
+        return []
+    rows = body.get("data") if isinstance(body, dict) else body
+    if not isinstance(rows, list):
+        return []
+    dated: list[tuple[date, str]] = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("xbrl"), str):
+            continue
+        try:
+            day = datetime.strptime(str(row.get("date")), "%d-%b-%Y").date()
+        except ValueError:
+            continue
+        dated.append((day, row["xbrl"]))
+    urls: list[str] = []
+    for _day, url in sorted(dated, reverse=True):
+        if url not in urls:
+            urls.append(url)
+    return urls[:SHAREHOLDING_XBRL_FILINGS]
+
+
 class NseClient:
     def __init__(self, fetcher: ExchangeFetcher) -> None:
         self._fetcher = fetcher
@@ -361,6 +392,12 @@ class NseClient:
             payloads.append(
                 await self._fetcher.fetch(kind, f"{NSE_API}/{path.format(s=encoded)}")
             )
+            if kind == PayloadKind.NSE_SHAREHOLDING:
+                # the latest filings' own XBRL: the feed does not carry the promoter pledge /
+                # encumbrance declarations (allowlisted archives host, bounded count)
+                for url in shareholding_xbrl_urls(payloads[-1]):
+                    payloads.append(
+                        await self._fetcher.fetch(PayloadKind.NSE_SHAREHOLDING_XBRL, url))
         return tuple(payloads)
 
 

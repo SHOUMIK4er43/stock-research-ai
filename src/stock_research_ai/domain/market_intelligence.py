@@ -143,6 +143,9 @@ class PayloadKind(StrEnum):
     NSE_ANNOUNCEMENTS = "NSE_ANNOUNCEMENTS"
     NSE_CORPORATE_ACTIONS = "NSE_CORPORATE_ACTIONS"
     NSE_SHAREHOLDING = "NSE_SHAREHOLDING"
+    #: a shareholding-pattern filing's own XBRL (archives host), for the declarations the feed
+    #: does not carry (promoter pledge / non-disposal undertaking / other encumbrance)
+    NSE_SHAREHOLDING_XBRL = "NSE_SHAREHOLDING_XBRL"
     NSE_ANNUAL_REPORTS = "NSE_ANNUAL_REPORTS"
     NSE_INSIDER_TRADING = "NSE_INSIDER_TRADING"
     NSE_FINANCIAL_RESULTS = "NSE_FINANCIAL_RESULTS"
@@ -1115,6 +1118,11 @@ class ShareholdingFiling(BaseModel):
     )
     xbrl_url: Url | None = None
     sources: tuple[EventSourceRef, ...] = Field(min_length=1)
+    #: the filing's own declarations (its XBRL), None when not parsed: whether any promoter
+    #: shares are encumbered by pledge / a non-disposal undertaking / otherwise
+    promoter_pledged: bool | None = None
+    promoter_ndu: bool | None = None
+    promoter_other_encumbrance: bool | None = None
 
 
 class InsiderTrade(BaseModel):

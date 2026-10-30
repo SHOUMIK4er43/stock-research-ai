@@ -269,15 +269,54 @@ def ownership_series(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> list[
     return out
 
 
-def promoter_pledge(ctx: Ctx) -> tuple[Ev, Ev | None]:
+def filed_pledge(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple[Ev, Ev | None]:
+    """The latest shareholding filing's own declarations (its XBRL, bound to the company and
+    period by Box 12): no promoter shares encumbered by pledge, NDU or otherwise is a 0 %
+    pledge reading; an encumbrance it declares without a quantity is NOT EVALUATED, never 0."""
+    declared = [f for f in (box12.shareholding if box12 else ())
+                if f.promoter_pledged is not None and f.period_end <= ctx.request.as_of]
+    if not declared:
+        return unavailable(NA, "PLEDGE_DATA_NOT_SUPPLIED", explanation="promoter pledge "
+                           "data (shareholding pattern / pledge disclosures) not supplied"), None
+    latest = max(declared, key=lambda f: (f.period_end, f.submitted_on or date.min))
+    assert box12 is not None
+    trace = Trace()
+    flags = (latest.promoter_pledged, latest.promoter_ndu, latest.promoter_other_encumbrance)
+    ctx.record(trace, f"promoter encumbrance declared {latest.period_end}",
+               D(1) if any(flags) else D(0), "CODE", Layer.BOX12, latest.filing_id,
+               latest.xbrl_url, period_end=latest.period_end,
+               detail="pledge / non-disposal undertaking / other encumbrance: "
+               + " / ".join("yes" if f else "no" for f in flags))
+    if any(flags):
+        return unavailable(NA, "PLEDGE_QUANTITY_NOT_PARSED", trace=trace, explanation=(
+            f"the shareholding filing for {latest.period_end} declares promoter shares "
+            "encumbered; the encumbered quantity is not parsed")), None
+    if not 0 <= (ctx.request.as_of - latest.period_end).days <= 120:
+        return unavailable(NA, "PLEDGE_DATA_STALE", trace=trace,
+                           explanation="a no-pledge declaration from a stale filing cannot "
+                           "establish current absence of promoter pledge"), None
+    value = D(0)
+    ev = Ev(S.EVALUATED, NA, grade(value, RULES["PROMOTER_PLEDGE"].thresholds), value,
+            period_label=str(latest.period_end), period_end=latest.period_end, trace=trace,
+            calculation="pledged share of promoter holding 0 % (filing declares none)",
+            explanation=f"the shareholding filing for {latest.period_end} declares no promoter "
+            "shares pledged, under a non-disposal undertaking or otherwise encumbered")
+    positive = Ev(S.EVALUATED, NA, SV.GREEN, value, period_label=str(latest.period_end),
+                  period_end=latest.period_end, trace=trace,
+                  explanation="no promoter shares pledged in the latest quarter (filing "
+                  "declaration)")
+    return ev, positive
+
+
+def promoter_pledge(ctx: Ctx, box12: MarketIntelligenceDataset | None = None
+                    ) -> tuple[Ev, Ev | None]:
     pledges = sorted(ctx.request.pledges, key=lambda p: p.period_end)  # one per quarter
     disputed = {c.first.period_end: c for c in conflicted(ctx, "pledges")}
     window_days = sorted({p.period_end for p in pledges} | set(disputed))[-3:]
     if any(d in disputed for d in window_days):
         return conflict_ev(ctx, NA, [disputed[d] for d in window_days if d in disputed]), None
-    if not pledges:
-        return unavailable(NA, "PLEDGE_DATA_NOT_SUPPLIED", explanation="promoter pledge "
-                           "data (shareholding pattern / pledge disclosures) not supplied"), None
+    if not pledges:  # no cited input: the company's own latest filing declaration
+        return filed_pledge(ctx, box12)
     latest = pledges[-1]
     trace = Trace()
     window = pledges[-3:]
@@ -1275,7 +1314,7 @@ def governance_catalogue(
 def build_ownership(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple[Ownership,
                                                                                  list[UUID]]:
     ids: list[UUID] = []
-    pledge, no_pledge = promoter_pledge(ctx)
+    pledge, no_pledge = promoter_pledge(ctx, box12)
     ids.append(ctx.emit("PROMOTER_PLEDGE", pledge))
     if no_pledge is not None:
         ids.append(ctx.emit("NO_PLEDGE", no_pledge))

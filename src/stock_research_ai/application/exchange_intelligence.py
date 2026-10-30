@@ -1024,6 +1024,45 @@ def nse_shareholding(
     return out
 
 
+_SHP_FACT = r"<in-bse-shp:{tag}\b[^>]*>\s*([^<]{{0,200}}?)\s*<"
+SHP_DECLARATIONS = {
+    "promoter_pledged": "WhetherAnySharesHeldByPromotersAreEncumberedUnderPledged",
+    "promoter_ndu": "WhetherAnySharesHeldByPromotersAreEncumberedUnderNonDisposalUndertaking",
+    "promoter_other_encumbrance":
+        "WhetherAnySharesHeldByPromotersAreEncumberedOtherThanByWayOfPledgeOrNDU",
+}
+
+
+def _shp_fact(text: str, tag: str) -> str | None:
+    m = re.search(_SHP_FACT.format(tag=tag), text)
+    return m.group(1) if m else None
+
+
+def shp_declarations(payload: RawPayload, pid: UUID, identity: CompanyIdentity,
+                     issues: list[Issue]) -> tuple[date, dict[str, bool]] | None:
+    """A shareholding-pattern XBRL's promoter encumbrance declarations, bound to the company
+    (its verified ISIN, else NSE symbol) and to the filing's own report date. Text matching
+    only - no XML parser, no entity or schema is ever resolved. None (with an issue) when
+    the filing is another company's, undated, or does not state all three declarations."""
+    if payload.status != FetchStatus.OK or payload.content is None:
+        return None
+    text = payload.content.decode("utf-8", errors="replace")  # size-bounded by RawPayload
+    isin, symbol = _shp_fact(text, "ISIN"), _shp_fact(text, "Symbol")
+    bound = (identity.isin is not None and isin == identity.isin) or (
+        identity.isin is None and identity.nse_symbol is not None and symbol == identity.nse_symbol)
+    if not bound:
+        issues.append(issue("SHAREHOLDING_XBRL_UNBOUND", "Shareholding XBRL is not the verified "
+                            "company's (ISIN / symbol mismatch); ignored", payload=pid))
+        return None
+    day = parse_day(_shp_fact(text, "DateOfReport"))
+    values = {field: _shp_fact(text, tag) for field, tag in SHP_DECLARATIONS.items()}
+    if day is None or any(v not in ("true", "false") for v in values.values()):
+        issues.append(issue("SHAREHOLDING_XBRL_INCOMPLETE", "Shareholding XBRL without a report "
+                            "date or a promoter encumbrance declaration; ignored", payload=pid))
+        return None
+    return day, {field: v == "true" for field, v in values.items()}
+
+
 def nse_insider_trades(
     payload: RawPayload, pid: UUID, identity: CompanyIdentity, issues: list[Issue], budget: Budget
 ) -> list[InsiderTrade]:

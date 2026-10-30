@@ -44,6 +44,8 @@ from stock_research_ai.application.exchange_intelligence import (
     payload_id,
     payload_record,
     resolve_identity,
+    shp_declarations,
+    source_ref,
     uid,
 )
 from stock_research_ai.application.market_data import (
@@ -322,6 +324,25 @@ def build_market_intelligence(
             found_sh = nse_shareholding(payload, pid, identity, issues, budget)
             decoded[pid] = len(found_sh)
             shareholding += found_sh
+        by_xbrl = {f.xbrl_url: i for i, f in enumerate(shareholding) if f.xbrl_url}
+        for payload, pid in by_kind(ordered, PayloadKind.NSE_SHAREHOLDING_XBRL):
+            found_decl = shp_declarations(payload, pid, identity, issues)
+            decoded[pid] = 1 if found_decl else 0
+            at = by_xbrl.get(payload.url)
+            if found_decl is None or at is None:
+                continue
+            day, declared = found_decl
+            filing = shareholding[at]
+            if filing.period_end != day:
+                issues.append(issue("SHAREHOLDING_XBRL_PERIOD_MISMATCH", "Shareholding XBRL "
+                                    "reports another period than its filing; ignored",
+                                    payload=pid))
+                continue
+            shareholding[at] = filing.model_copy(update={
+                **declared,
+                "unparsed_categories": tuple(c for c in filing.unparsed_categories
+                                             if c != "PROMOTER_PLEDGE"),
+                "sources": (*filing.sources, source_ref(payload, pid, "xbrl"))})
         for payload, pid in by_kind(ordered, PayloadKind.NSE_INSIDER_TRADING):
             found_it = nse_insider_trades(payload, pid, identity, issues, budget)
             decoded[pid] = len(found_it)

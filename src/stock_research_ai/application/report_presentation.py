@@ -68,6 +68,8 @@ from stock_research_ai.domain.report_rendering import (
 S = SectionId
 
 ORDER_INVARIANT = "L1 ≠ LOA ≠ CONTRACT ≠ REVENUE"
+#: appendix rows the human-readable formats show (the JSON export keeps all of them)
+DISPLAY_APPENDIX_ROWS = 150
 
 _ROW_TAGS = {
     RowKind.FORECAST: "FORECAST",
@@ -119,6 +121,18 @@ def safe_link(url: str | None) -> str | None:
 
 def _label(code: str) -> str:
     return code.replace("_", " ").strip().capitalize()
+
+
+def _ref_ranges(refs: Sequence[str]) -> str:
+    """'S48-S52, S60' from S-references (consecutive numbers collapse into a range)."""
+    nums = sorted(int(r[1:]) for r in refs if r[1:].isdigit())
+    parts: list[str] = []
+    for n in nums:
+        if parts and n == int(parts[-1].split("-")[-1][1:]) + 1:
+            parts[-1] = f"{parts[-1].split('-')[0]}-S{n}"
+        else:
+            parts.append(f"S{n}")
+    return ", ".join(parts)
 
 
 class _Builder:
@@ -274,8 +288,14 @@ class _Builder:
                     cells = [replace(c, note=None) if c.kind == kind else c for c in cells]
             rtags = (_ROW_TAGS[row.kind],) if row.kind in _ROW_TAGS else ()
             rows.append(Row(label, rtags, tuple(cells)))
-        self.cells += sum(len(r.cells) + 1 for r in rows)
         notices: list[str] = []
+        if t.appendix and len(rows) > DISPLAY_APPENDIX_ROWS:
+            # a readable document: the first rows of an exhaustive appendix (newest first where
+            # the table is ordered so); every row and its provenance stay in the JSON export
+            notices.append(f"Showing the first {DISPLAY_APPENDIX_ROWS} of {len(rows)} rows; the "
+                           "JSON export holds every row with its sources.")
+            rows = rows[:DISPLAY_APPENDIX_ROWS]
+        self.cells += sum(len(r.cells) + 1 for r in rows)
         if t.truncated:
             notices.append("Appendix truncated: Box 14 kept only part of the upstream rows "
                            "(see the appendix limitation).")
@@ -772,17 +792,53 @@ class _Builder:
                 [(i.code, (i.severity, i.detail or "None")) for i in self.r.issues]))
         return out
 
+    def appendix_only_sources(self) -> set[UUID]:
+        """Sources cited only by exhaustive appendix rows (e.g. every attachment of a 1,700-row
+        event ledger): listed compactly, in full in the JSON export."""
+        appendix: set[UUID] = set()
+        body: set[UUID] = set()
+        for t in self.r.tables:
+            ids = {c.claim_id for row in t.rows for c in row.cells if c.claim_id} | {
+                row.claim_id for row in t.rows if row.claim_id}
+            (appendix if t.appendix else body).update(ids)
+        for s in self.r.sections:
+            body.update((*s.claim_ids, *s.limitation_claim_ids))
+        cited_body = {i for c in self.r.claims if c.claim_id in body for i in c.source_ids}
+        cited_appendix = {i for c in self.r.claims if c.claim_id in appendix - body
+                          for i in c.source_ids}
+        return cited_appendix - cited_body
+
     def source_register(self) -> list[Block]:
         rows: list[Row] = []
+        compact = self.appendix_only_sources()
+        grouped: dict[tuple[str, str], list[ReportSource]] = {}
         for src in self.r.sources:
+            if src.source_id in compact:
+                grouped.setdefault((src.title, src.source_type.value), []).append(src)
+                continue
             texts = self._source_cells(src)
             cells = [Cell(texts[0], "UPSTREAM_TEXT")]
             cells += [Cell(t, "TEXT", link=self._link(src) if i == 4 else None)
                       for i, t in enumerate(texts[1:])]
             rows.append(Row(self.refs[src.source_id], (), tuple(cells)))
+        for (title, kind), group in grouped.items():
+            refs = _ref_ranges([self.refs[s.source_id] for s in group])
+            claims = sum(s.claim_count for s in group)
+            rows.append(Row(refs, (), (
+                Cell(f"{title} — {len(group)} record{'s' if len(group) != 1 else ''} cited "
+                     "only by appendix tables",
+                     "UPSTREAM_TEXT"), Cell(kind, "TEXT"),
+                Cell(", ".join(sorted({a for s in group for a in s.authority}))[:300], "TEXT"),
+                Cell(", ".join(sorted({s.status for s in group})), "TEXT"),
+                Cell("per record in the JSON export", "TEXT"),
+                Cell("URLs in the JSON export", "TEXT"),
+                Cell(", ".join(sorted({x.value for s in group for x in s.layers})), "TEXT"),
+                Cell(str(claims), "TEXT"))))
         self.cells += sum(len(r.cells) + 1 for r in rows)
         return [Paragraph(f"{len(self.r.sources)} deduplicated sources (each document or "
-                          "record listed once; claims cite them as S1, S2, ...).", "NEUTRAL"),
+                          "record listed once; claims cite them as S1, S2, ...)"
+                          + (f"; {len(compact)} cited only by appendix tables are grouped by "
+                             "title" if compact else "") + ".", "NEUTRAL"),
                 Table("source-register", "Source register", ("Deduplicated by Box 14",),
                       tuple(Column(c) for c in ("Ref", "Title", "Type", "Authority", "Status",
                                                 "Dates", "Location", "Layers", "Claims")),

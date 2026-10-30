@@ -343,7 +343,12 @@ def test_source_register_is_complete_and_deduplicated(report, rendered):
     doc = rendered["doc"]
     reg = next(b for s in doc.sections for b in s.blocks
                if isinstance(b, rr.Table) and b.table_id == "source-register")
-    assert [r.label for r in reg.rows] == [f"S{i}" for i in range(1, len(report.sources) + 1)]
+    listed: list[int] = []  # individual refs, and ranges for appendix-only groups (RC1)
+    for r in reg.rows:
+        for part in r.label.split(", "):
+            lo, _, hi = part.partition("-")
+            listed += range(int(lo[1:]), int((hi or lo)[1:]) + 1)
+    assert sorted(listed) == list(range(1, len(report.sources) + 1))
     for src in report.sources:
         assert htmllib.escape(src.title) in rendered["html"]
 

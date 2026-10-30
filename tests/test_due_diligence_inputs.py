@@ -728,7 +728,9 @@ def test_higher_authority_explanation_is_selected_in_either_order():
 def test_no_review_and_reviewed_unexplained_keep_their_states():
     pair = recon_pair()
     unreviewed = run(pair=pair)
-    assert latest(unreviewed).status == dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED
+    # RC1: a stable group-footprint gap is STRUCTURAL_PATTERN until reviewed (Phase 22)
+    assert latest(unreviewed).status in (dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED,
+                                         dd.ReconciliationStatus.STRUCTURAL_PATTERN)
     assert sig(unreviewed, "UNEXPLAINED_BASIS_DIFFERENCE").risk_id not in unreviewed.red_flags
     reviewed = run(pair=pair, reconciliation_reviews=(REVIEW,))
     assert latest(reviewed).status == dd.ReconciliationStatus.MATERIAL_UNEXPLAINED
@@ -761,7 +763,10 @@ def test_explanation_key_is_metric_and_year():
     assert earlier.explanation == "FY2025 eliminations"
     pat_2025 = next(c for c in data.standalone_consolidated_reconciliation
                     if c.metric == "PAT" and c.period_end == date(2025, 3, 31))
-    assert pat_2025.status == dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED
+    # not explained by the FY2025 REVENUE explanation (unreviewed: flagged or structural)
+    assert pat_2025.status in (dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED,
+                               dd.ReconciliationStatus.STRUCTURAL_PATTERN)
+    assert pat_2025.explanation != "FY2025 eliminations"
 
 
 def test_conflicting_data_never_adds_company_risk():

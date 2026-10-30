@@ -826,7 +826,9 @@ def test_material_difference_is_unexplained_only_after_a_recorded_review():
     first = run(rows)
     latest = next(c for c in first.standalone_consolidated_reconciliation
                   if c.metric == "REVENUE" and c.period_end == date(2026, 3, 31))
-    assert latest.status == dd.ReconciliationStatus.MATERIAL_NOT_REVIEWED
+    # RC1 (TECHM): a stable consolidated > standalone gap is the group's footprint, not a
+    # finding - STRUCTURAL_PATTERN until a review is recorded, never a diligence question
+    assert latest.status == dd.ReconciliationStatus.STRUCTURAL_PATTERN
     assert sig(first, "UNEXPLAINED_BASIS_DIFFERENCE").status == ST.UNAVAILABLE
     review = dd.ReconciliationReview(fiscal_year=2026, sources_checked=("note 45",), source=SRC)
     reviewed = run(rows, reconciliation_reviews=(review,))

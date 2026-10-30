@@ -1149,6 +1149,9 @@ class ReconciliationStatus(StrEnum):
     MATERIAL_EXPLAINED = "MATERIAL_EXPLAINED"
     MATERIAL_UNEXPLAINED = "MATERIAL_UNEXPLAINED"  # only after a recorded source review
     MATERIAL_NOT_REVIEWED = "MATERIAL_NOT_REVIEWED"  # material, sources not yet checked
+    #: material but structurally expected for a group and stable: consolidated >= standalone,
+    #: same sign, its share within 10 pp of an adjacent year's - both bases kept, not flagged
+    STRUCTURAL_PATTERN = "STRUCTURAL_PATTERN"
     IMMATERIAL = "IMMATERIAL"
     NOT_COMPARABLE = "NOT_COMPARABLE"
     UNAVAILABLE = "UNAVAILABLE"

@@ -442,6 +442,7 @@ def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
                             Layer.BOX4, basis)
         out.extend(_explicit_comparisons(ctx, end, explanations, reviewed, extra) if k == 0
                    else [])
+    out, extra = _structural(out, extra)
     p0 = ctx.periods.fy(latest)
     if not ctx.request.reconciliation_reviews or p0.fiscal_year not in reviewed:
         ev = Ev(S.UNAVAILABLE, SignalBasis.NOT_APPLICABLE, reason="SOURCES_NOT_REVIEWED",
@@ -467,6 +468,51 @@ def _compare(ctx: Ctx) -> tuple[list[BasisComparison], list[tuple[str, str, str,
                 " (standalone / consolidated explanation)")
     rid = ctx.emit("UNEXPLAINED_BASIS_DIFFERENCE", ev)
     return out, extra, rid
+
+
+#: size measures a group's consolidation is expected to enlarge (never to shrink or flip)
+STRUCTURAL_SIZE = {"REVENUE", "PAT", "TOTAL_EQUITY", "NET_WORTH", "CASH", "GROSS_DEBT"}
+STRUCTURAL_DRIFT_PP = D(10)
+
+
+def _structural(out: list[BasisComparison], extra: list[Item]) -> tuple[
+        list[BasisComparison], list[Item]]:
+    """A material difference that is structurally expected and stable is not a finding: the
+    consolidated value is at least the standalone one with the same sign, and its share
+    moved by at most STRUCTURAL_DRIFT_PP against an adjacent year. A reversal, a sign
+    change, or a material shift stays MATERIAL_NOT_REVIEWED with its diligence question."""
+    def expected(c: BasisComparison) -> bool:
+        cv, sv = c.consolidated_value, c.standalone_value
+        return (c.metric in STRUCTURAL_SIZE and c.status == ReconciliationStatus.
+                MATERIAL_NOT_REVIEWED and cv is not None and sv is not None
+                and c.percentage_difference is not None and cv >= sv
+                and (cv > 0) == (sv > 0) and sv != 0)
+
+    by = {(c.metric, c.period_end): c for c in out}
+    settled: dict[UUID, BasisComparison] = {}
+    for c in out:
+        if not expected(c):
+            continue
+        assert c.percentage_difference is not None
+        for k in (-12, 12):
+            n = by.get((c.metric, shift(c.period_end, k)))
+            if n is not None and n.percentage_difference is not None and (
+                    expected(n) or n.status == ReconciliationStatus.EXPECTED_GROUP_DIFFERENCE) \
+                    and abs(c.percentage_difference - n.percentage_difference) <= \
+                    STRUCTURAL_DRIFT_PP:
+                settled[c.comparison_id] = c.model_copy(update={
+                    "status": ReconciliationStatus.STRUCTURAL_PATTERN,
+                    "reason": "CONSOLIDATED_EXCEEDS_STANDALONE_STABLE",
+                    "explanation": f"consolidated exceeds standalone by {c.percentage_difference}"
+                    f" % (adjacent year {n.percentage_difference} %): the stable pattern of a "
+                    "group with subsidiaries; not a finding, both bases kept"})
+                break
+    if not settled:
+        return out, extra
+    questions = {f"Why does {c.metric} differ between standalone and consolidated in "
+                 f"{c.period}?" for c in settled.values()}
+    return ([settled.get(c.comparison_id, c) for c in out],
+            [e for e in extra if e[0] not in questions])
 
 
 def _basis_value(ctx: Ctx, source: Any, period: FinancialPeriod, basis: ReportingBasis) -> Got:

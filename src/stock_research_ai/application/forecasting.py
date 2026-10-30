@@ -365,6 +365,11 @@ def _ytd_ratio(ytd: str, driver: str) -> Fn:
     return lambda v: v[ytd] + (v["REVENUE"] - v["YTD_REVENUE"]) * v[driver] / HUNDRED
 
 
+def _ytd_roa(remaining: int) -> Fn:
+    return lambda v: v["YTD_PAT"] + v["ROA"] / HUNDRED * (
+        v["PRIOR_TOTAL_ASSETS"] + v["TOTAL_ASSETS"]) / 2 * remaining / 12
+
+
 def _ytd_rate(remaining: int) -> Fn:
     return lambda v: v["YTD_FINANCE_COST"] + v["OPENING_GROSS_DEBT"] * v[
         "INTEREST_RATE_ON_DEBT"] / HUNDRED * remaining / 12
@@ -402,6 +407,15 @@ for _remaining in (3, 6, 9):
         f"x {_remaining} / 12 (the remaining months)",
         ("YTD_FINANCE_COST", "OPENING_GROSS_DEBT", "INTEREST_RATE_ON_DEBT"),
         _ytd_rate(_remaining),
+    )
+for _remaining in (3, 6, 9):
+    _formula(
+        f"PAT/2/ROA_YTD_REMAINING_{_remaining}M",
+        L.PAT,
+        f"reported year-to-date PAT + ROA / 100 x average(prior, current total assets) x "
+        f"{_remaining} / 12 (the remaining months; lender model)",
+        ("YTD_PAT", "PRIOR_TOTAL_ASSETS", "TOTAL_ASSETS", "ROA"),
+        _ytd_roa(_remaining),
     )
 _formula(
     "PBT/2/YTD_PLUS_REMAINDER",
@@ -1396,7 +1410,8 @@ class YearToDate:
 
     base: YearToDateBase
     actuals: dict[ForecastLine, ForecastValue]  # summed quarters (+ built TAX and EBIT)
-    prior_remainder_revenue: ForecastValue  # latest FY revenue less its same months
+    #: latest FY revenue less its same months (models whose YTD includes revenue)
+    prior_remainder_revenue: ForecastValue | None
     trajectory: dict[Driver, Candidate]  # the year-to-date's own growth and ratios
 
     @property
@@ -1405,7 +1420,7 @@ class YearToDate:
 
     def anchors(self) -> tuple[ForecastValue, ...]:
         return (*sorted(self.actuals.values(), key=lambda v: v.line.value),
-                self.prior_remainder_revenue)
+                *((self.prior_remainder_revenue,) if self.prior_remainder_revenue else ()))
 
 
 def _sum_anchor(plan_hash: str, basis: ReportingBasis, currency: Currency, line: ForecastLine,
@@ -1432,18 +1447,22 @@ def _ytd_period(history: History, months: int, end: date, fiscal_year: int,
 
 
 def _year_to_date(plan_hash: str, basis: ReportingBasis, currency: Currency, history: History,
-                  latest_end: date, route: OperatingRoute,
-                  issues: Issues) -> YearToDate | None:
+                  latest_end: date, route: OperatingRoute, issues: Issues,
+                  model: ForecastModel | None = ForecastModel.NON_FINANCIAL
+                  ) -> YearToDate | None:
     """The reported quarters of the fiscal year after `latest_end`, contiguous from its first
-    quarter, with every modelled P&L line in every quarter and the prior-year revenue of the
-    same quarters; None (flagged) when any of that is missing - never a partial sum."""
-    if route == OperatingRoute.UNAVAILABLE:
-        return None
+    quarter, with every line the model forecasts from them in every quarter; None (flagged)
+    when any of that is missing - never a partial sum. The lines follow the forecast model:
+    the industrial P&L route; revenue alone for a revenue-only model (bank, unresolved); PAT
+    for the lender model (its balance-sheet lines have no quarterly anchor)."""
+    lender = model == ForecastModel.NON_BANK_FINANCIAL
+    pnl = not lender and route != OperatingRoute.UNAVAILABLE
     quarter = history.periods.quarter
+    key_metrics = YTD_METRICS[L.PAT] if lender else REVENUE
     ends: list[date] = []
     for k in (1, 2, 3):  # a fourth quarter is the next fiscal year itself
         end = shift(latest_end, 3 * k)
-        if not isinstance(history.frame.get(REVENUE, quarter(end)), Fact):
+        if not isinstance(history.frame.get(key_metrics, quarter(end)), Fact):
             break
         ends.append(end)
     if not ends:
@@ -1454,9 +1473,14 @@ def _year_to_date(plan_hash: str, basis: ReportingBasis, currency: Currency, his
     prior_ends = [shift(e, -12) for e in ends]
     prior_period = _ytd_period(history, months, prior_ends[-1], fiscal_year - 1, "(reported)")
     op_line = L.OPERATING_PROFIT if route == OperatingRoute.OPERATING_PROFIT else L.EBITDA
-    lines = [L.REVENUE, op_line, L.DEPRECIATION_AMORTIZATION, L.FINANCE_COST, L.PBT, L.PAT]
-    if route == OperatingRoute.OPERATING_PROFIT:
-        lines.append(L.OTHER_INCOME)
+    if lender:
+        lines = [L.PAT]
+    elif not pnl:
+        lines = [L.REVENUE]
+    else:
+        lines = [L.REVENUE, op_line, L.DEPRECIATION_AMORTIZATION, L.FINANCE_COST, L.PBT, L.PAT]
+        if route == OperatingRoute.OPERATING_PROFIT:
+            lines.append(L.OTHER_INCOME)
     facts: dict[ForecastLine, list[Fact]] = {}
     gaps: list[str] = []
     for line in lines:
@@ -1466,30 +1490,20 @@ def _year_to_date(plan_hash: str, basis: ReportingBasis, currency: Currency, his
                 facts.setdefault(line, []).append(got)
             else:
                 gaps.append(got.what)
-    prior = [history.frame.get(REVENUE, quarter(e)) for e in prior_ends]
-    gaps += [g.what for g in prior if isinstance(g, Missing)]
-    annual = history.flow(REVENUE, latest_end)
-    if isinstance(annual, Missing):
-        gaps.append(annual.what)
+    prior: list[Fact | Missing] = []
+    annual: Fact | Missing | None = None
+    if L.REVENUE in lines:
+        prior = [history.frame.get(REVENUE, quarter(e)) for e in prior_ends]
+        gaps += [g.what for g in prior if isinstance(g, Missing)]
+        annual = history.flow(REVENUE, latest_end)
+        if isinstance(annual, Missing):
+            gaps.append(annual.what)
     if gaps:
         issues.add("YTD_ACTUALS_INCOMPLETE", Severity.WARNING,
                    f"{period.label}: the first forecast year is forecast in full because the "
                    f"reported months are incomplete ({'; '.join(gaps[:4])})")
         return None
     prior_facts = [g for g in prior if isinstance(g, Fact)]
-    assert isinstance(annual, Fact)
-    taxes: list[Fact] = []
-    implied = False
-    for i, end in enumerate(ends):
-        got = history.frame.get(TAX, quarter(end))
-        if isinstance(got, Fact):
-            taxes.append(got)
-            continue
-        q_pbt, q_pat = facts[L.PBT][i], facts[L.PAT][i]
-        implied = True
-        taxes.append(Fact(value=q_pbt.value - q_pat.value, inputs=q_pbt.inputs + q_pat.inputs,
-                          confidence=weakest([q_pbt.confidence, q_pat.confidence]),
-                          warnings=q_pbt.warnings + q_pat.warnings))
 
     def anchor(line: ForecastLine, parts: Sequence[Fact], formula: str,
                value: Decimal | None = None, warnings: tuple[str, ...] = ()) -> ForecastValue:
@@ -1497,71 +1511,95 @@ def _year_to_date(plan_hash: str, basis: ReportingBasis, currency: Currency, his
                            warnings)
 
     actuals = {line: anchor(line, facts[line], f"ACTUAL_YTD/1/{line.value}") for line in lines}
-    actuals[L.TAX] = anchor(L.TAX, taxes, "ACTUAL_YTD/1/TAX",
-                            warnings=("IMPLIED_TAX",) if implied else ())
-    da = actuals[L.DEPRECIATION_AMORTIZATION].value
-    ebit = (actuals[op_line].value or D0) - (da or D0) + (
-        actuals[L.OTHER_INCOME].value or D0 if L.OTHER_INCOME in actuals else D0)
-    actuals[L.EBIT] = anchor(L.EBIT, [f for line in (op_line, L.OTHER_INCOME,
-                                                     L.DEPRECIATION_AMORTIZATION)
-                                      for f in facts.get(line, ())], "ACTUAL_YTD/1/EBIT", ebit)
-    prior_sum = sum((f.value for f in prior_facts), D0)
-    remainder_period = FinancialPeriod(
-        period_type=PeriodType.OTHER,
-        label=f"FY{fiscal_year - 1} less {prior_period.label.split(' (')[0]} (reported)",
-        period_start=prior_ends[-1] + timedelta(days=1), period_end=latest_end,
-        duration_months=12 - months, fiscal_year=fiscal_year - 1)
-    remainder_value = annual.value - prior_sum
-    if remainder_value <= 0 or prior_sum <= 0:
-        issues.add("YTD_ACTUALS_INCOMPLETE", Severity.WARNING,
-                   f"{period.label}: prior-year revenue of the same / remaining months is not "
-                   "positive; the first forecast year is forecast in full")
-        return None
-    remainder = _sum_anchor(plan_hash, basis, currency, L.REVENUE, remainder_period,
-                            "ACTUAL_PRIOR_YEAR_REMAINDER/1/REVENUE", [annual, *prior_facts],
-                            remainder_value)
-    ytd_revenue = actuals[L.REVENUE].value
-    assert ytd_revenue is not None
-    key = period.key()
+    taxes: list[Fact] = []
+    if pnl:
+        implied = False
+        for i, end in enumerate(ends):
+            got = history.frame.get(TAX, quarter(end))
+            if isinstance(got, Fact):
+                taxes.append(got)
+                continue
+            q_pbt, q_pat = facts[L.PBT][i], facts[L.PAT][i]
+            implied = True
+            taxes.append(Fact(value=q_pbt.value - q_pat.value,
+                              inputs=q_pbt.inputs + q_pat.inputs,
+                              confidence=weakest([q_pbt.confidence, q_pat.confidence]),
+                              warnings=q_pbt.warnings + q_pat.warnings))
+        actuals[L.TAX] = anchor(L.TAX, taxes, "ACTUAL_YTD/1/TAX",
+                                warnings=("IMPLIED_TAX",) if implied else ())
+        da = actuals[L.DEPRECIATION_AMORTIZATION].value
+        ebit = (actuals[op_line].value or D0) - (da or D0) + (
+            actuals[L.OTHER_INCOME].value or D0 if L.OTHER_INCOME in actuals else D0)
+        actuals[L.EBIT] = anchor(L.EBIT, [f for line in (op_line, L.OTHER_INCOME,
+                                                         L.DEPRECIATION_AMORTIZATION)
+                                          for f in facts.get(line, ())], "ACTUAL_YTD/1/EBIT",
+                                 ebit)
+    remainder: ForecastValue | None = None
     trajectory: dict[Driver, Candidate] = {}
+    if L.REVENUE in lines:
+        assert isinstance(annual, Fact)
+        prior_sum = sum((f.value for f in prior_facts), D0)
+        remainder_period = FinancialPeriod(
+            period_type=PeriodType.OTHER,
+            label=f"FY{fiscal_year - 1} less {prior_period.label.split(' (')[0]} (reported)",
+            period_start=prior_ends[-1] + timedelta(days=1), period_end=latest_end,
+            duration_months=12 - months, fiscal_year=fiscal_year - 1)
+        remainder_value = annual.value - prior_sum
+        if remainder_value <= 0 or prior_sum <= 0:
+            issues.add("YTD_ACTUALS_INCOMPLETE", Severity.WARNING,
+                       f"{period.label}: prior-year revenue of the same / remaining months is "
+                       "not positive; the first forecast year is forecast in full")
+            return None
+        remainder = _sum_anchor(plan_hash, basis, currency, L.REVENUE, remainder_period,
+                                "ACTUAL_PRIOR_YEAR_REMAINDER/1/REVENUE", [annual, *prior_facts],
+                                remainder_value)
+        ytd_revenue = actuals[L.REVENUE].value
+        assert ytd_revenue is not None
+        key = period.key()
 
-    def observe(driver: Driver, value: Decimal, observations: tuple[Observation, ...]) -> None:
-        q = quantize(value)
-        problem = driver_bounds_error(driver, q)
-        if problem:
-            issues.add("YTD_TRAJECTORY_OUT_OF_BOUNDS", Severity.INFO, problem,
-                       subject=driver.value)
-            return
-        trajectory[driver] = Candidate(
-            q, DM.YEAR_TO_DATE_TRAJECTORY, SRC.HISTORICAL, observations,
-            HistoryCompleteness.SINGLE_POINT, weakest([o.confidence for o in observations]),
-            ("REPORTED_YEAR_TO_DATE",))
+        def observe(driver: Driver, value: Decimal, observations: tuple[Observation, ...]
+                    ) -> None:
+            q = quantize(value)
+            problem = driver_bounds_error(driver, q)
+            if problem:
+                issues.add("YTD_TRAJECTORY_OUT_OF_BOUNDS", Severity.INFO, problem,
+                           subject=driver.value)
+                return
+            trajectory[driver] = Candidate(
+                q, DM.YEAR_TO_DATE_TRAJECTORY, SRC.HISTORICAL, observations,
+                HistoryCompleteness.SINGLE_POINT, weakest([o.confidence for o in observations]),
+                ("REPORTED_YEAR_TO_DATE",))
 
-    def obs(label: str, value: Decimal, parts: Sequence[Fact]) -> Observation:
-        return Observation(label, value, tuple(i for f in parts for i in f.inputs),
-                           weakest([f.confidence for f in parts]),
-                           tuple(w for f in parts for w in f.warnings))
+        def obs(label: str, value: Decimal, parts: Sequence[Fact]) -> Observation:
+            return Observation(label, value, tuple(i for f in parts for i in f.inputs),
+                               weakest([f.confidence for f in parts]),
+                               tuple(w for f in parts for w in f.warnings))
 
-    with localcontext() as ctx:
-        ctx.prec = PRECISION
-        observe(D.REVENUE_GROWTH, (ytd_revenue / prior_sum - 1) * HUNDRED, (
-            obs(prior_period.key(), prior_sum, prior_facts),
-            obs(key, ytd_revenue, facts[L.REVENUE])))
-        margin = D.OPERATING_MARGIN if op_line == L.OPERATING_PROFIT else D.EBITDA_MARGIN
-        for driver, line in ((margin, op_line), (D.OTHER_INCOME_TO_REVENUE, L.OTHER_INCOME),
-                             (D.DA_TO_REVENUE, L.DEPRECIATION_AMORTIZATION),
-                             (D.FINANCE_COST_TO_REVENUE, L.FINANCE_COST)):
-            if line in actuals and ytd_revenue > 0:
-                part = actuals[line].value or D0
-                observe(driver, part * HUNDRED / ytd_revenue, (
-                    obs(key, part * HUNDRED / ytd_revenue, [*facts[line], *facts[L.REVENUE]]),))
-        pbt, tax = actuals[L.PBT].value or D0, actuals[L.TAX].value or D0
-        if pbt > 0 and D0 <= tax * HUNDRED / pbt <= HUNDRED:
-            observe(D.TAX_RATE, tax * HUNDRED / pbt, (
-                obs(key, tax * HUNDRED / pbt, [*taxes, *facts[L.PBT]]),))
+        with localcontext() as ctx:
+            ctx.prec = PRECISION
+            observe(D.REVENUE_GROWTH, (ytd_revenue / prior_sum - 1) * HUNDRED, (
+                obs(prior_period.key(), prior_sum, prior_facts),
+                obs(key, ytd_revenue, facts[L.REVENUE])))
+            if pnl:
+                margin = D.OPERATING_MARGIN if op_line == L.OPERATING_PROFIT else \
+                    D.EBITDA_MARGIN
+                for driver, line in ((margin, op_line),
+                                     (D.OTHER_INCOME_TO_REVENUE, L.OTHER_INCOME),
+                                     (D.DA_TO_REVENUE, L.DEPRECIATION_AMORTIZATION),
+                                     (D.FINANCE_COST_TO_REVENUE, L.FINANCE_COST)):
+                    if line in actuals and ytd_revenue > 0:
+                        part = actuals[line].value or D0
+                        observe(driver, part * HUNDRED / ytd_revenue, (
+                            obs(key, part * HUNDRED / ytd_revenue,
+                                [*facts[line], *facts[L.REVENUE]]),))
+                pbt, tax = actuals[L.PBT].value or D0, actuals[L.TAX].value or D0
+                if pbt > 0 and D0 <= tax * HUNDRED / pbt <= HUNDRED:
+                    observe(D.TAX_RATE, tax * HUNDRED / pbt, (
+                        obs(key, tax * HUNDRED / pbt, [*taxes, *facts[L.PBT]]),))
+    what = ", ".join(line.value.lower() for line in lines)
     issues.add("YEAR_TO_DATE_USED", Severity.INFO,
-               f"FY{fiscal_year}E = {period.label} + a forecast of the remaining "
-               f"{12 - months} months (prior-year base: {remainder_period.label})")
+               f"FY{fiscal_year}E {what} = {period.label} + a forecast of the remaining "
+               f"{12 - months} months")
     return YearToDate(
         base=YearToDateBase(fiscal_year=fiscal_year, months=months, period=period,
                             prior_period=prior_period,
@@ -1624,9 +1662,17 @@ def project(
             assets = emit(L.TOTAL_ASSETS, "TOTAL_ASSETS/1", [
                 ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)),
                 ("ASSET_GROWTH", a(D.ASSET_GROWTH))])
-            pat = emit(L.PAT, "PAT/1/ROA_ON_AVERAGE_ASSETS", [
-                ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)), ("TOTAL_ASSETS", assets),
-                ("ROA", a(D.ROA))])
+            lender_ytd = plan.ytd if plan.ytd is not None and period == plan.years[0] \
+                else None
+            if lender_ytd is not None:  # reported PAT + the remaining months only
+                pat = emit(L.PAT, f"PAT/2/ROA_YTD_REMAINING_{lender_ytd.remaining_months}M", [
+                    ("YTD_PAT", lender_ytd.actuals.get(L.PAT)),
+                    ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)), ("TOTAL_ASSETS", assets),
+                    ("ROA", a(D.ROA))])
+            else:
+                pat = emit(L.PAT, "PAT/1/ROA_ON_AVERAGE_ASSETS", [
+                    ("PRIOR_TOTAL_ASSETS", prior.get(L.TOTAL_ASSETS)), ("TOTAL_ASSETS", assets),
+                    ("ROA", a(D.ROA))])
             equity = emit(L.COMMON_EQUITY, "COMMON_EQUITY/1/EQUITY_CHANGE_TO_PAT", [
                 ("PRIOR_COMMON_EQUITY", prior.get(L.COMMON_EQUITY)), ("PAT", pat),
                 ("EQUITY_CHANGE_TO_PAT", a(D.EQUITY_CHANGE_TO_PAT))])
@@ -2114,6 +2160,8 @@ def build_forecast(
     if lender and fatal is None and latest is not None:
         _derive_lender(history, Deriver(history, chain.ends, req.history_years, issues),
                        candidates)
+        ytd = _year_to_date(box4_hash, basis, currency, history, chain.ends[-1], route, issues,
+                            model)
         issues.add("FORECAST_MODEL", Severity.INFO,
                    "NON_BANK_FINANCIAL: balance-sheet lender model (no revenue, EBITDA, "
                    "working-capital, capex or gross-debt driver)")
@@ -2142,9 +2190,11 @@ def build_forecast(
                     Severity.ERROR,
                     "neither operating profit nor reported EBITDA for the latest fiscal year",
                 )
+        # the reported months of the first forecast year, whatever the route (revenue alone
+        # when no operating route applies)
+        ytd = _year_to_date(box4_hash, basis, currency, history, chain.ends[-1], route, issues,
+                            model)
         if route != OperatingRoute.UNAVAILABLE:
-            ytd = _year_to_date(box4_hash, basis, currency, history, chain.ends[-1], route,
-                                issues)
             _derive_operating(history, derive, route, candidates, issues, revenue)
             _pbt_bridge(history, route, chain.ends[-1], issues)
             finance_method = _derive_finance(history, derive, candidates, revenue)

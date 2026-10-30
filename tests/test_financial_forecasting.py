@@ -309,10 +309,18 @@ def test_r_hudco_exact_lender_forecast(hudco):
                    Driver.BORROWINGS_SHARE_OF_FUNDING):
         assert assumption(f, driver).completeness.value == "SPARSE"
     assert assumption(f, Driver.EQUITY_CHANGE_TO_PAT).completeness.value == "SINGLE_POINT"
+    # RC1 Phase 8 (user-approved 2026-10-30): FY2027E PAT = the reported Q1 FY2027 PAT
+    # (Screener consolidated quarter to 30-Jun-2026: 851 crore) + ROA x average assets x 9/12;
+    # it was 4,467.642928, the full year re-forecast over the reported quarter. Anchors and the
+    # filing-checked drivers above are unchanged.
+    assert f.base.year_to_date is not None and f.base.year_to_date.months == 3
+    pat = value(f, L.PAT)
+    assert pat.formula_id == "PAT/2/ROA_YTD_REMAINING_9M"
+    assert pat.inputs[0].role == "YTD_PAT" and pat.inputs[0].value == D(851)
     base = {line: quantize(value(f, line).value) for line in LENDER_LINES}
-    assert base == {L.TOTAL_ASSETS: D("201190.618226"), L.PAT: D("4467.642928"),
-                    L.COMMON_EQUITY: D("23375.737331"), L.NON_EQUITY_FUNDING: D("177814.880894"),
-                    L.TOTAL_BORROWINGS: D("172403.984738"), L.FINANCE_COST: D("11477.846174"),
+    assert base == {L.TOTAL_ASSETS: D("201190.618226"), L.PAT: D("4201.732196"),
+                    L.COMMON_EQUITY: D("23206.593320"), L.NON_EQUITY_FUNDING: D("177984.024906"),
+                    L.TOTAL_BORROWINGS: D("172567.981707"), L.FINANCE_COST: D("11483.839317"),
                     L.TOTAL_INCOME: D("16884.632244")}
     verify_forecast_integrity(f, data)  # Box 10's own arithmetic, rebuilt from Box 4
     valuation = build_valuation(f, box4=data, generated_at=NOW)  # U

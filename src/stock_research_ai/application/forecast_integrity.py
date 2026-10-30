@@ -341,6 +341,13 @@ def _check_formula_choice(v: ForecastValue, ix: Index) -> None:
     ytd = ix.forecast.base.year_to_date
     ytd_year = ytd is not None and fy == ix.first
     second = "/2/" in (v.formula_id or "")
+    if ytd_year and _lender(ix.forecast):  # the lender model: only PAT has reported months
+        assert ytd is not None
+        expected_lender = (f"PAT/2/ROA_YTD_REMAINING_{12 - ytd.months}M" if v.line == L.PAT
+                           else LENDER_FORMULAS.get(v.line))
+        if v.formula_id != expected_lender:
+            raise ForecastIntegrityError(f"{_where(v)}: not the formula Box 10 applies here")
+        return
     if ytd_year and (v.line in YTD_FORMULA_LINES or (
             v.line == L.EBITDA and route == OperatingRoute.REPORTED_EBITDA)):
         assert ytd is not None
@@ -483,7 +490,7 @@ def _check_year_to_date(forecast: ForecastDataset,
     base = forecast.base
     rebuilt = _year_to_date(forecast.source_box4.canonical_sha256, base.reporting_basis,
                             base.currency, History(box4, base.reporting_basis, base.currency),
-                            end, base.operating_route, Issues())
+                            end, base.operating_route, Issues(), base.forecast_model)
     if rebuilt is None or rebuilt.base != ytd or rebuilt.anchors() != anchors:
         raise ForecastIntegrityError("the year-to-date anchors differ from Box 4")
 

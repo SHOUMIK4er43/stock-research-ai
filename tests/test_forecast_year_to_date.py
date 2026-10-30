@@ -170,3 +170,32 @@ def test_the_trajectory_fades_toward_history_instead_of_snapping_back():
         assert margins[2].value == round(MARGIN_Q + 2 * step, 6)
     # the finance-cost ratio is only assumed when the projection uses it
     assert not any(a.driver == D.FINANCE_COST_TO_REVENUE for a in f.assumptions)
+
+
+def test_a_revenue_only_model_also_uses_the_reported_months():
+    """A bank (revenue-only model): FY revenue = reported quarters + the remaining months."""
+    rows = company(GROWING) + quarter_rows(PRIOR_Q) + quarter_rows(
+        dict(list(CURRENT_Q.items())[:2]), MARGIN_Q)
+    data = make(rows, Industry.BANK, 3)
+    f = build_forecast(data, generated_at=NOW)
+    assert f.base.year_to_date is not None and f.base.year_to_date.months == 6
+    revenue = f.value(L.REVENUE, S.BASE, 2027)
+    assert revenue.formula_id == "REVENUE/2/YTD_PLUS_REMAINDER"
+    assert {v.line for v in f.year_to_date_actuals} == {L.REVENUE}
+    verify_forecast_integrity(f, data)
+
+
+def test_the_lender_model_adds_the_reported_pat_and_forecasts_the_rest():
+    from test_financial_forecasting import lender_rows
+
+    rows = lender_rows() + [V(M.PAT, quarter(date(2026, 6, 30)), dec("120"))]
+    data = make(rows, Industry.NBFC, 3)
+    f = build_forecast(data, generated_at=NOW)
+    pat = f.value(L.PAT, S.BASE, 2027)
+    assert pat.formula_id == "PAT/2/ROA_YTD_REMAINING_9M"
+    ytd, prior_assets, assets, roa = (i.value for i in pat.inputs)
+    with localcontext() as ctx:
+        ctx.prec = P
+        assert pat.value == ytd + roa / 100 * (prior_assets + assets) / 2 * 9 / 12
+    assert ytd == dec("120")
+    verify_forecast_integrity(f, data)

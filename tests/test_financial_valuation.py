@@ -270,8 +270,11 @@ def test_s_hudco_exact_lender_valuation(hudco):
     assert {r.method for r in v.results} == {VM.PB, VM.PE}  # no DCF, no EV multiple
     # P/B prices ORDINARY equity (Box 10 COMMON_EQUITY from 20,533.90, perpetual 1,442 excluded);
     # before: 24,541.971223 / 25,085.116740 / 24,041.972372 (₹122.59 / 125.31 / 120.10)
-    expected = {S.BASE: ("23375.737331", "116.767757"), S.BULL: ("23977.252672", "119.772480"),
-                S.BEAR: ("22822.005468", "114.001726")}
+    # RC1 Phase 8 (user-approved 2026-10-30): FY2027E ordinary equity now accrues the reported
+    # Q1 FY2027 PAT (851 crore) + 9 months forecast; was 23,375.737331 / 23,977.252672 /
+    # 22,822.005468 (Rs 116.77 / 119.77 / 114.00)
+    expected = {S.BASE: ("23206.593320", "115.922840"), S.BULL: ("23657.729826", "118.176382"),
+                S.BEAR: ("22791.294423", "113.848316")}
     for scenario, (equity, per_share) in expected.items():
         r = result(v, VM.PB, scenario)
         assert r.status.value == "COMPLETE"

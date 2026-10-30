@@ -12,6 +12,7 @@ appendix) reaches the document.
 """
 
 import hashlib
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from urllib.parse import urlsplit
@@ -131,6 +132,7 @@ class _Builder:
         self.risks = {e.risk_id: e for e in report.risks.risk_register}
         self.risk_by_claim = {e.claim_id: e for e in report.risks.risk_register}
         self.omitted_charts = 0
+        self.suppressed_tables: set[UUID] = set()
         self.limitation_ref = {d.claim_id: d.ref for d in report.risks.data_limitations
                                if d.ref is not None}
         self.svg: dict[UUID, str] = {}
@@ -316,7 +318,7 @@ class _Builder:
         if rest:
             out.append(self.claim_list("Findings", "NEUTRAL", rest, shown=shown))
         for tid in (s.table_ids if tables is None else tables):
-            if tid in self.tables:
+            if tid in self.tables and tid not in self.suppressed_tables:
                 out.append(self.table(self.tables[tid]))
         # a chart is shown only with its Box 6 image: no placeholder for an undrawn chart
         out.extend(c for c in (self.chart(i) for i in s.chart_ids if i in self.chart_refs)
@@ -612,9 +614,18 @@ class _Builder:
                 + "; ".join(reason_text(r) for r in block.reasons) + ". No valuation multiple "
                 "or assumption is ever invented: methods need explicitly supplied inputs.",
                 "LIMITATION", label="Valuation availability"))
+        none_ran = bool(v.methods) and all(m.status == "UNAVAILABLE" for m in v.methods)
         out.append(Paragraph(
-            "Each Box 11 method and scenario is shown separately. Blended value: none. "
-            "Price objective: none. Recommendation: none.", "NOTICE", label="Valuation policy"))
+            ("No method produced a value, so none is shown. " if none_ran else
+             "Each Box 11 method and scenario is shown separately. ")
+            + "Blended value: none. Price objective: none. Recommendation: none.", "NOTICE",
+            label="Valuation policy"))
+        if none_ran:
+            out.extend(self.valuation_unavailable(s, shown))
+            if v.market_context_claim_ids:
+                out.append(self.claim_list("Market context (not a valuation)", "NEUTRAL",
+                                           v.market_context_claim_ids, shown=shown))
+            return out
         rows = []
         for m in v.methods:
             results = [self.claims[i] for i in m.result_claim_ids if i in self.claims]
@@ -635,6 +646,54 @@ class _Builder:
             out.append(self.claim_list("Market context (not a valuation)", "NEUTRAL",
                                        v.market_context_claim_ids, shown=shown))
         return out
+
+    def valuation_unavailable(self, s: ReportSection, shown: set[UUID]) -> list[Block]:
+        """No method produced a value: ONE concise statement of what was attempted, what
+        blocked each method (identical scenarios collapsed), which equity-bridge inputs exist,
+        and that no value was produced - not a page of identical unavailable rows."""
+        v = self.r.valuation
+        scenarios = sorted({m.scenario.value for m in v.methods})
+        blocked: dict[str, dict[tuple[str, str], list[str]]] = {}
+        for m in v.methods:
+            # the same reason in every scenario is one reason ('no PE multiple for BASE')
+            missing = re.sub(rf"\b{m.scenario.value}\b", "the scenario",
+                             "; ".join(m.missing_inputs) or "not stated")
+            key = (m.reason or "UNAVAILABLE", missing)
+            blocked.setdefault(m.method, {}).setdefault(key, []).append(m.scenario.value)
+            ids = (*m.assumption_claim_ids, *m.result_claim_ids, *m.limitation_claim_ids)
+            self.rendered.update(ids)  # summarised here: identical per scenario
+            shown.update(ids)
+        rows: list[tuple[str, str]] = []
+        for method, reasons in blocked.items():
+            for (reason, why), in_scenarios in reasons.items():
+                where = ("every scenario" if sorted(in_scenarios) == scenarios
+                         else ", ".join(in_scenarios))
+                rows.append((method, f"{reason_text(reason)} — {why} ({where})"))
+        bridge: dict[str, str] = {}
+        for m in v.methods:
+            for i in m.result_claim_ids:
+                c = self.claims.get(i)
+                if c is not None and c.topic in BRIDGE_TOPICS and c.topic not in bridge:
+                    bridge[c.topic] = (display_value(c.value, c.unit) if c.value is not None
+                                       else UNAVAILABLE_TEXT)
+        if "VALUATION_NET_DEBT" not in bridge:  # say which input it waits for
+            absent = [label for topic, label in (("VALUATION_GROSS_DEBT", "gross debt"),
+                                                  ("VALUATION_CASH", "cash"))
+                      if topic not in bridge]
+            bridge["VALUATION_NET_DEBT"] = (
+                f"{UNAVAILABLE_TEXT} — {' and '.join(absent)} "
+                f"{'is' if len(absent) == 1 else 'are'} unavailable" if absent else
+                "not computed: no method reached the equity bridge")
+        inputs = tuple((label, bridge.get(topic, UNAVAILABLE_TEXT))
+                       for topic, label in BRIDGE_TOPICS.items())
+        self.suppressed_tables.update(s.table_ids)  # its rows would all read 'unavailable'
+        return [
+            KeyValues(f"No valuation produced — {len(blocked)} methods attempted for "
+                      f"{', '.join(scenarios)}; value produced: none", "LIMITATION",
+                      tuple(rows)),
+            KeyValues("Equity-bridge inputs (what exists, what is missing)", "NEUTRAL",
+                      inputs),
+        ]
 
     def what_changes(self, s: ReportSection, shown: set[UUID]) -> list[Block]:
         if not self.r.what_changes_the_view:
@@ -854,11 +913,19 @@ class _Builder:
 
 
 #: readable text for structured reason codes (the code itself is always kept)
+#: the equity-bridge outputs Box 11 states for every method (first scenario shown)
+BRIDGE_TOPICS = {"VALUATION_GROSS_DEBT": "Gross debt", "VALUATION_CASH": "Cash",
+                 "VALUATION_NET_DEBT": "Net debt", "VALUATION_MINORITY_INTEREST":
+                 "Non-controlling interest", "VALUATION_SHARE_COUNT": "Share count"}
+
 REASON_TEXT = {
     "BOX10_PARTIAL": "core lines are forecast, but the Box 10 forecast itself is partial",
     "MULTIPLE_MISSING": "no valuation multiple was supplied (none is assumed)",
     "ATTRIBUTION_UNKNOWN": "profit attributable to ordinary shareholders is not established",
-    "CASH_UNAVAILABLE": "cash and debt inputs for the equity bridge are unavailable",
+    "CASH_UNAVAILABLE": "cash for the equity bridge is unavailable (net debt cannot be "
+                        "formed without it)",
+    "DEBT_UNAVAILABLE": "gross debt for the equity bridge is unavailable",
+    "MINORITY_INTEREST_UNAVAILABLE": "the non-controlling-interest balance is not reported",
     "INPUT_MISSING": "a required input is not reported",
     "NO_APPLICABLE_METHOD": "no valuation method applies to this business model",
     "LAYER_NOT_SUPPLIED": "the upstream layer was not supplied",

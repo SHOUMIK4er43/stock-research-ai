@@ -673,6 +673,7 @@ _BS_CONTEXT: dict[tuple[str, str], CanonicalMetric] = {
     ("current assets", "other current assets"): M.OTHER_CURRENT_ASSETS,
     ("non-current assets", "other non-current assets"): M.OTHER_NON_CURRENT_ASSETS,
     ("equity", "non-controlling interests"): M.MINORITY_INTEREST,
+    ("equity", "non-controlling interest"): M.MINORITY_INTEREST,
     ("non-current liabilities", "lease liabilities"): M.NON_CURRENT_LEASE_LIABILITIES,
     ("current liabilities", "lease liabilities"): M.CURRENT_LEASE_LIABILITIES,
 }

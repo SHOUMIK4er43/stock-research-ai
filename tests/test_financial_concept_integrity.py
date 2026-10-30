@@ -94,3 +94,18 @@ def test_report_names_provider_borrowings_as_including_leases():
     assert debt and not [c for c in debt if "excluding leases" in c.statement]
     provider = [c for c in debt if any(f.endswith("/PROVIDER_BORROWINGS") for f in c.formula_ids)]
     assert provider and all("include lease liabilities" in c.statement for c in provider)
+
+
+def test_a_singular_non_controlling_interest_balance_maps_under_equity():
+    """TECHM FY26 prints 'Non controlling Interest' (singular) under Equity: 461.6 crore,
+    total equity 300,770 less owners' 296,154 INR mn. Unmapped, it blocked every DCF."""
+    from stock_research_ai.application.financial_parsing import map_filing_label
+    from stock_research_ai.domain.financial_canonical import CanonicalMetric, StatementType
+
+    bs = StatementType.BALANCE_SHEET
+    for label in ("Non controlling Interest", "Non-controlling interests"):
+        assert map_filing_label(bs, label, ["equity"], False) == (
+            CanonicalMetric.MINORITY_INTEREST)
+    # outside the equity caption it is never guessed into the balance
+    assert map_filing_label(bs, "Non controlling Interest", ["current liabilities"],
+                            False) is None

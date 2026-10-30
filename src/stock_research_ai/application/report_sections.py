@@ -32,6 +32,7 @@ from stock_research_ai.application.report_claims import (
     text,
     up,
 )
+from stock_research_ai.application.transcript_kpis import stated_kpis
 from stock_research_ai.domain.business_intelligence import BusinessIntelligenceDataset
 from stock_research_ai.domain.document_intelligence import EvidenceBundle
 from stock_research_ai.domain.due_diligence import (
@@ -103,7 +104,7 @@ from stock_research_ai.domain.fundamental_valuation import ValuationDataset
 from stock_research_ai.domain.industry_intelligence import IndustryIntelligenceDataset
 from stock_research_ai.domain.management_intelligence import ManagementIntelligenceDataset
 from stock_research_ai.domain.market_intelligence import MarketIntelligenceDataset
-from stock_research_ai.domain.report_rendering import display_number
+from stock_research_ai.domain.report_rendering import display_number, unit_label
 
 M = CanonicalMetric
 S = SectionId
@@ -1509,6 +1510,39 @@ def outcome_sources(ctx: Ctx, outcome_ids: Iterable[UUID]) -> list[UUID]:
     return list(dict.fromkeys(out))
 
 
+def stated_kpi_table(ctx: Ctx, sec: SectionId, b8: ManagementIntelligenceDataset) -> None:
+    """Operating KPIs management stated on its calls (transcript_kpis): each a cited
+    MANAGEMENT STATEMENT with its unit and the period the sentence states - never reconciled
+    to, or substituted for, a filed figure."""
+    events = {e.event_id: e for e in b8.events}
+    rows: list[TableRow] = []
+    for k in stated_kpis(b8):
+        s, e = k.statement, events.get(k.statement.event_id)
+        when = e.call_date if e else None
+        call = f"{e.title or 'call'}{', ' + day_name(when) if when else ''}" if e else "call"
+        period = k.period_text or "period not stated in the sentence"
+        cid = ctx.book.claim(
+            None, CT.MANAGEMENT_STATEMENT, f"STATED_{k.metric}"[:80],
+            f"Management stated {k.label}: {amount(k.value, k.unit)} ({period}; {call}).",
+            basis=NA, upstream=(up(Layer.BOX8, "STATEMENT", s.statement_id),),
+            sources=(ctx.res.box8(s.provenance, when),), evidence_ids=s.provenance.evidence_ids,
+            source_text=s.quote, value=k.value, unit=k.unit, period=k.period_text,
+            confidence=None)
+        ctx.add(sec, cid)
+        unit = unit_label(k.unit) or k.unit
+        rows.append(row(str(uuid5(NS, f"stated-kpi|{s.statement_id}|{k.metric}")),
+                        f"{k.label} ({unit})",
+                        RowKind.MANAGEMENT_STATEMENT, [
+                            cell("VALUE", ctx.book, cid, note="NOT_STATED"),
+                            text("PERIOD", period), text("CALL", call)], claim_id=cid))
+    if rows:
+        ctx_table(ctx, sec, "STATED_KPIS", "KPIs stated by management on calls (management "
+                  "statements; not reconciled to filings)", NA, [
+                      col("VALUE", "Stated value"), col("PERIOD", "Period (as stated)",
+                                                        ColumnKind.TEXT),
+                      col("CALL", "Call", ColumnKind.TEXT)], rows)
+
+
 def concalls(ctx: Ctx) -> list[GuidanceTrackerEntry]:
     sec = S.CONCALL_GUIDANCE
     b8 = ctx.box8
@@ -1553,6 +1587,7 @@ def concalls(ctx: Ctx) -> list[GuidanceTrackerEntry]:
     ctx_table(ctx, sec, "MANAGEMENT_EVENTS", "Management events (calls / meets)", NA,
               [col("DATE", "Date", ColumnKind.TEXT), col("PERIOD", "Period", ColumnKind.TEXT)],
               rows)
+    stated_kpi_table(ctx, sec, b8)
     all_rows = [row(str(s.statement_id), ", ".join(t.value for t in s.statement_types[:3])
                     or "STATEMENT", RowKind.MANAGEMENT_STATEMENT, [text("QUOTE", s.quote)],
                     claim_id=statement_claim(ctx, s))

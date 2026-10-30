@@ -16,6 +16,11 @@ from uuid import UUID, uuid5
 
 from stock_research_ai.application.diligence_inputs import FAMILIES, fid
 from stock_research_ai.application.disclosed_risks import disclosed_risks
+from stock_research_ai.application.financial_metrics import (
+    PROFIT_CONCEPTS,
+    covers_discontinued,
+    discontinued_years,
+)
 from stock_research_ai.application.period_names import day_name, period_name
 from stock_research_ai.application.red_flags import NS as NS13
 from stock_research_ai.application.red_flags import RULES
@@ -170,6 +175,13 @@ def limitation_text(code: str, detail: str | None = None) -> str:
 def human(code: str) -> str:
     return code.replace("_", " ").lower()
 
+
+#: said of a profit / EPS figure, or a calculation on one, for a period overlapping a fiscal
+#: year whose filing reports discontinued operations
+DISCONTINUED_NOTE = (" The company's filing reports discontinued operations for a fiscal year "
+                     "this period covers, so this profit includes them (continuing-operations "
+                     "profit is not separately extracted): it is not a measure of the "
+                     "continuing business.")
 
 @dataclass
 class Draft:
@@ -336,10 +348,13 @@ class Ctx:
     def fact(self, v: CanonicalFinancialValue, section: SectionId | None = None) -> UUID:
         sources, ups, evidence = self.res.canonical(v.canonical_value_id)
         unit = unit_of(v)
+        flagged = v.metric in PROFIT_CONCEPTS and covers_discontinued(
+            v.period, discontinued_years(self.box4, v.reporting_basis))
         cid = self.book.claim(
             None, CT.FACT, v.metric.value,
             f"{self.concept(v)} reported {amount(v.value, unit)} {self.when(v.period)} "
-            f"({v.reporting_basis.value.lower()}).",
+            f"({v.reporting_basis.value.lower()}).{DISCONTINUED_NOTE if flagged else ''}",
+            limitations=("DISCONTINUED_OPERATIONS_INCLUDED",) if flagged else (),
             basis=basis_of(v.reporting_basis), upstream=ups, sources=sources, value=v.value,
             metric=v.metric.value, unit=unit, currency=v.currency,
             period=self.period_name(v.period), period_end=v.period.period_end,
@@ -363,11 +378,14 @@ class Ctx:
         flagged = m.code == "EBITDA" and "EBITDA_BELOW_OPERATING_PROFIT" in m.warnings
         why = (" It is below operating profit because other income, which can net exceptional "
                "items, is negative." if flagged else "")
+        discontinued = "DISCONTINUED_OPERATIONS_INCLUDED" in m.warnings
+        why += DISCONTINUED_NOTE if discontinued else ""
         cid = self.book.claim(
             None, CT.CALCULATION, m.code,
             f"{label}: {amount(m.value, unit)} {self.when(m.period)} "
             f"({m.reporting_basis.value.lower()}; Box 5 {m.formula_id}).{why}",
-            limitations=("EBITDA_BELOW_OPERATING_PROFIT",) if flagged else (),
+            limitations=(("EBITDA_BELOW_OPERATING_PROFIT",) if flagged else ()) + (
+                ("DISCONTINUED_OPERATIONS_INCLUDED",) if discontinued else ()),
             basis=basis_of(m.reporting_basis), upstream=ups, sources=sources, value=m.value,
             metric=m.code, unit=unit, currency=m.currency, period=self.period_name(m.period),
             period_end=m.period.period_end, evidence_ids=evidence,

@@ -15,6 +15,7 @@ zero.
 """
 
 import calendar
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -165,6 +166,33 @@ def compare_periods(
     return None
 
 
+#: a filed line naming discontinued operations ('Profit/(Loss) for the year from Discontinued
+#: Operations'): a fiscal year where a filing reports one with a non-zero amount has a reported
+#: profit that includes them - continuing-operations profit is not separately extracted
+DISCONTINUED_LINE = re.compile(r"\bdiscontinued\s+operations?\b", re.I)
+PROFIT_CONCEPTS = frozenset({M.PAT, M.PAT_ATTRIBUTABLE_TO_OWNERS, M.MINORITY_INTEREST,
+                             M.BASIC_EPS, M.DILUTED_EPS, M.EPS})
+FLOW_MONTHS = {PeriodType.FY: 12, PeriodType.QUARTER: 3, PeriodType.HALF_YEAR: 6,
+               PeriodType.NINE_MONTH: 9, PeriodType.TTM: 12}
+
+
+def discontinued_years(data: CanonicalFinancialDataset, basis: ReportingBasis) -> set[date]:
+    """Fiscal-year ends for which a filing on this basis reports discontinued operations."""
+    return {o.period.period_end for o in data.observations
+            if o.reporting_basis == basis and o.source.source_type == SourceType.FILING
+            and o.period.period_type == PeriodType.FY and o.period.period_end is not None
+            and o.parsed.value not in (None, 0) and DISCONTINUED_LINE.search(o.raw_label)}
+
+
+def covers_discontinued(period: FinancialPeriod, years: set[date]) -> bool:
+    """A flow period overlapping a fiscal year whose filing reports discontinued operations."""
+    months = period.duration_months or FLOW_MONTHS.get(period.period_type)
+    end = period.period_end
+    if end is None or months is None:
+        return False
+    return any(shift(end, -months) < year and shift(year, -12) < end for year in years)
+
+
 def quantize(value: Decimal) -> Decimal:
     return value.quantize(DERIVED_QUANTUM, rounding=ROUND_HALF_EVEN)
 
@@ -280,6 +308,7 @@ class Frame:
             if o.reporting_basis == basis and o.source.source_type == SourceType.FILING
             and o.metric in FILING_EQUITY_LINES and o.parsed.value is not None
         } - listed
+        self.discontinued = discontinued_years(data, basis)
 
     def periods(self, period_type: PeriodType) -> list[date]:
         ends = {
@@ -378,6 +407,8 @@ class Frame:
         ):
             warnings.append("INPUT_AGGREGATOR_ONLY")  # not confirmed by a primary source
             confidence = weakest([confidence, Confidence.MEDIUM])
+        if value.metric in PROFIT_CONCEPTS and covers_discontinued(value.period, self.discontinued):
+            warnings.append("DISCONTINUED_OPERATIONS_INCLUDED")
         return Fact(
             value=value.value,
             inputs=(

@@ -785,9 +785,10 @@ def segments(ctx: Ctx, b7: BusinessIntelligenceDataset) -> None:
             continue
         ctx.add(sec, ctx.book.claim(
             None, CT.CALCULATION, f"SEGMENT_{a.code}"[:80],
-            f"{a.subject_name}: {human(a.code)} {amount(a.value, 'PERCENT')} ({a.period.label}).",
+            f"{a.subject_name}: {human(a.code)} {amount(a.value, 'PERCENT')} "
+            f"({ctx.period_name(a.period)}).",
             basis=ctx.analytical, upstream=(up(Layer.BOX7, "SEGMENT_ANALYTIC", a.analytic_id),),
-            sources=sources, value=a.value, unit="PERCENT", period=a.period.label,
+            sources=sources, value=a.value, unit="PERCENT", period=ctx.period_name(a.period),
             period_end=a.period.period_end, calculation_ids=(a.analytic_id,),
             formula_ids=(a.formula_id,)))
     ctx_table(ctx, sec, "SEGMENTS", "Segment analysis", ctx.analytical,
@@ -814,11 +815,13 @@ def geographies(ctx: Ctx, b7: BusinessIntelligenceDataset) -> None:
         cid = ctx.book.claim(
             None, CT.FACT, "GEOGRAPHY_REVENUE",
             f"Revenue attributed to {v.geography_name} ({v.attribution.value.lower()}): "
-            f"{amount(v.value, f'{v.currency.value} {v.scale.value}')} ({v.period.label}).",
+            f"{amount(v.value, f'{v.currency.value} {v.scale.value}')} "
+            f"({ctx.period_name(v.period)}).",
             basis=basis_of(v.reporting_basis), value=v.value,
             upstream=(up(Layer.BOX7, "GEOGRAPHY_VALUE", v.canonical_value_id),),
             sources=(ctx.res.location(loc),), unit=f"{v.currency.value} {v.scale.value}",
-            period=v.period.label, period_end=v.period.period_end, confidence=v.confidence)
+            period=ctx.period_name(v.period), period_end=v.period.period_end,
+            confidence=v.confidence)
         rows.append(row(v.geography_key, v.geography_name, RowKind.HISTORICAL,
                         [cell("REVENUE", ctx.book, cid)]))
     ctx_table(ctx, sec, "GEOGRAPHY", f"Revenue by geography (FY ending {latest})",
@@ -832,12 +835,14 @@ def segment_value(ctx: Ctx, v: Any) -> UUID | None:
         return None
     return ctx.book.claim(
         None, CT.FACT, f"SEGMENT_{v.metric.value}"[:80],
-        f"Segment {v.segment_name}: {human(v.metric.value)} {number(v.value)} "
-        f"{v.currency.value} {v.scale.value} ({v.period.label}).",
+        f"Segment {v.segment_name}: {human(v.metric.value)} "
+        f"{amount(v.value, f'{v.currency.value} {v.scale.value}')} "
+        f"({ctx.period_name(v.period)}).",
         basis=basis_of(v.reporting_basis), value=v.value,
         upstream=(up(Layer.BOX7, "SEGMENT_VALUE", v.canonical_value_id),),
         sources=(ctx.res.location(loc),), unit=f"{v.currency.value} {v.scale.value}",
-        period=v.period.label, period_end=v.period.period_end, confidence=v.confidence)
+        period=ctx.period_name(v.period), period_end=v.period.period_end,
+        confidence=v.confidence)
 
 
 def ctx_table(ctx: Ctx, section: SectionId, code: str, title: str, basis: ClaimBasis,
@@ -1329,7 +1334,7 @@ def forensics(ctx: Ctx) -> None:
         ctx.add(sec, ctx.book.claim(
             None, CT.CALCULATION, f"BOX5_CHECK_{check.code}"[:80],
             f"Box 5 earnings-quality check {check.code}: {check.status} "
-            f"(observed {number(check.observed)}; {check.period or 'no period'}).",
+            f"(observed {display_number(check.observed)}; {check.period or 'no period'}).",
             basis=basis_of(chk.reporting_basis), upstream=(up(Layer.BOX5, "EARNINGS_CHECK",
                                                               check.check_id),),
             sources=check_sources, value=check.observed, period=check.period,
@@ -2142,8 +2147,8 @@ def shareholding(ctx: Ctx) -> None:
                         cid = ctx.book.claim(
                             None, CT.CALCULATION, f"HOLDING_CHANGE_{key}_{s.category}"[:80],
                             f"{human(str(s.category)).capitalize()} holding change "
-                            f"({key.lower()}): {number(change)} percentage points to "
-                            f"{last.period_end} (Box 13).", basis=NA,
+                            f"({key.lower()}): {amount(change, 'PERCENTAGE_POINTS')} to "
+                            f"{day_name(last.period_end)} (Box 13).", basis=NA,
                             upstream=tuple(up(Layer.BOX12 if p.layer.value == "BOX12"
                                               else Layer.BOX13, "SHAREHOLDING_FILING"
                                               if p.layer.value == "BOX12" else "REQUEST_INPUT",

@@ -84,6 +84,7 @@ from stock_research_ai.application.governance_risk import (
 from stock_research_ai.application.industry_intelligence import canonical_industry_json
 from stock_research_ai.application.management_intelligence import canonical_management_json
 from stock_research_ai.application.order_book_risk import build_order_book
+from stock_research_ai.application.period_names import day_name
 from stock_research_ai.application.red_flags import (
     NS,
     RULES,
@@ -503,16 +504,29 @@ def _structural(out: list[BasisComparison], extra: list[Item]) -> tuple[
                 settled[c.comparison_id] = c.model_copy(update={
                     "status": ReconciliationStatus.STRUCTURAL_PATTERN,
                     "reason": "CONSOLIDATED_EXCEEDS_STANDALONE_STABLE",
-                    "explanation": f"consolidated exceeds standalone by {c.percentage_difference}"
-                    f" % (adjacent year {n.percentage_difference} %): the stable pattern of a "
+                    "explanation": f"consolidated exceeds standalone by "
+                    f"{shown(c.percentage_difference)} % (adjacent year "
+                    f"{shown(n.percentage_difference)} %): the stable pattern of a "
                     "group with subsidiaries; not a finding, both bases kept"})
                 break
     if not settled:
         return out, extra
-    questions = {f"Why does {c.metric} differ between standalone and consolidated in "
-                 f"{c.period}?" for c in settled.values()}
+    questions = {basis_question(c.metric, c.period, c.period_end) for c in settled.values()}
     return ([settled.get(c.comparison_id, c) for c in out],
             [e for e in extra if e[0] not in questions])
+
+
+def shown(pct: Decimal | None) -> str:
+    """A percentage in reader text: two decimals (the comparison keeps every digit)."""
+    return "unavailable" if pct is None else str(pct.quantize(Decimal("0.01")))
+
+
+def basis_question(code: str, label: str, end: date | None) -> str:
+    """The diligence question for a material basis difference: 'in FY2026', or 'as at
+    31-Mar-2026' for a balance date - never 'in As at 2026-03-31'."""
+    where = f"as at {day_name(end)}" if end and label.lower().startswith("as at") else \
+        f"in {label}"
+    return f"Why does {code} differ between standalone and consolidated {where}?"
 
 
 def _basis_value(ctx: Ctx, source: Any, period: FinancialPeriod, basis: ReportingBasis) -> Got:
@@ -588,9 +602,9 @@ def _comparison(ctx: Ctx, code: str, period: FinancialPeriod, cons: Got, stand: 
         if explanation is not None and explanation.kind == "GROUP_STRUCTURE":
             status = ReconciliationStatus.EXPECTED_GROUP_DIFFERENCE
     if status == ReconciliationStatus.MATERIAL_NOT_REVIEWED:
-        extra.append((f"Why does {code} differ between standalone and consolidated in "
-                      f"{period.label}?", f"{pct} % difference, explaining sources not yet "
-                      "checked", "Consolidation notes: subsidiaries, JVs, eliminations", ()))
+        extra.append((basis_question(code, period.label, period.period_end),
+                      f"{shown(pct)} % difference, explaining sources not yet checked",
+                      "Consolidation notes: subsidiaries, JVs, eliminations", ()))
     return BasisComparison(
         **common, absolute_difference=diff, percentage_difference=pct,
         explanation=explanation.explanation if explanation else None,

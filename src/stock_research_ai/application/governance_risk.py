@@ -484,7 +484,8 @@ def promoter_selling(ctx: Ctx, box12: MarketIntelligenceDataset | None) -> tuple
     if abs(raw) < D("0.5") and quarters >= 5:
         stable = Ev(S.EVALUATED, NA, SV.GREEN, abs(raw), period_end=latest.period_end,
                     period_label=f"{prior.period_end} to {latest.period_end}", trace=trace,
-                    explanation=f"promoter holding moved {raw} pp over 4 quarters")
+                    explanation=f"promoter holding moved {raw.quantize(D('0.01'))} pp over 4 "
+                    "quarters")
     return ev, stable
 
 

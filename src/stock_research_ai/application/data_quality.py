@@ -13,6 +13,7 @@ from uuid import UUID, uuid5
 
 from stock_research_ai.application.diligence_inputs import fid
 from stock_research_ai.application.governance_risk import holding_points, years_before
+from stock_research_ai.application.period_names import period_name
 from stock_research_ai.application.red_flags import NS, RULES, Ctx
 from stock_research_ai.domain.document_intelligence import EvidenceBundle, ExtractionStatus
 from stock_research_ai.domain.due_diligence import (
@@ -113,7 +114,8 @@ def source_disagreements(
         add(key, DisagreementEntry(
             entry_id=uuid5(NS, f"{ctx.dd_key}|disagreement|{r.record_id}"),
             group=DisagreementGroup.FINANCIAL, origin=Layer.BOX4, subject=r.metric.value,
-            period=r.period.label, basis=r.reporting_basis.value, values=tuple(values),
+            period=period_name(r.period, box4.fiscal_year_end_month),
+            basis=r.reporting_basis.value, values=tuple(values),
             status="RESOLVED" if resolved and selected else "OPEN",
             canonical_source=(f"{selected.source.source_type.value} ({selected.authority.value})"
                               if resolved and selected else None),

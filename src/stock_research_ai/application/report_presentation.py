@@ -263,7 +263,10 @@ class _Builder:
                 if cell is None:
                     cells.append(Cell(NO_CELL_TEXT, "NO_CELL", forecast=forecast))
                 elif cell.status == CellStatus.AVAILABLE and cell.value is not None:
-                    cells.append(Cell(cell_number(cell.value, row.unit), "NUMBER",
+                    # the cell shows its own claim's unit ('Change QoQ (pp)' in a % row)
+                    owner = self.claims.get(cell.claim_id) if cell.claim_id else None
+                    unit = owner.unit if owner is not None and owner.unit else row.unit
+                    cells.append(Cell(cell_number(cell.value, unit), "NUMBER",
                                       forecast=forecast))
                 elif cell.status == CellStatus.TEXT and cell.text is not None:
                     kind: CellKind = ("UPSTREAM_TEXT" if cell.text_origin == "UPSTREAM"

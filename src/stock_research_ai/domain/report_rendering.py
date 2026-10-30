@@ -151,13 +151,16 @@ EXACT_PLACES = 6  # readers see at most six decimals; the JSON export keeps ever
 
 
 def display_exact(value: Decimal) -> str:
-    """The Box 14 value, grouped for reading: every digit up to six decimals, then '…' for
-    the further digits Box 10 / Box 11 arithmetic carries (kept in the JSON export)."""
+    """The Box 14 value, grouped for reading: every significant digit up to six decimals,
+    then '…' for the further digits Box 10 / Box 11 arithmetic carries (kept in the JSON
+    export)."""
     if value.is_nan() or value.is_infinite():
         return str(value)
     raw = f"{abs(value):f}"
     whole, _, frac = raw.partition(".")
     cut = len(frac) > EXACT_PLACES
+    if not cut:
+        frac = frac.rstrip("0")  # '0.000000' is 0: trailing zeros are not precision
     text = _group(f"{whole}.{frac[:EXACT_PLACES]}" if frac else whole) + ("…" if cut else "")
     return f"-{text}" if value < 0 else text
 

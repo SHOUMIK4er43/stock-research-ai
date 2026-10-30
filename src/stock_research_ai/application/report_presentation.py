@@ -479,6 +479,25 @@ class _Builder:
                                  "of no risk)", "LIMITATION", missing))
         return out
 
+    def management_disclosed(self, shown: set[UUID]) -> list[Block]:
+        """Management's own risk disclosures, by category: verbatim, cited, never graded."""
+        by: dict[str, list[UUID]] = {}
+        labels: dict[str, str] = {}
+        for m in self.r.risks.management_disclosed:
+            by.setdefault(m.category, []).append(m.claim_id)
+            labels[m.category] = m.label
+        if not by:
+            return []
+        out: list[Block] = [Paragraph(
+            "Risks and headwinds management itself discussed on its calls. They are management "
+            "statements, quoted with their source - not graded, not a registered rule's finding, "
+            "and no severity is assigned.", "NOTICE",
+            label="MANAGEMENT-DISCLOSED RISK / HEADWIND")]
+        for code, ids in by.items():
+            out.append(self.claim_list(f"Management-disclosed: {labels[code]}", "NOTICE", ids,
+                                       shown=shown))
+        return out
+
     def risks_section(self, s: ReportSection, shown: set[UUID]) -> list[Block]:
         rp = self.r.risks
         out: list[Block] = self.risk_coverage()
@@ -500,6 +519,7 @@ class _Builder:
                         shown.add(i)
             shown.update(e.claim_id for e in entries)
             out.append(ClaimList(title, tone, tuple(views), empty_text=empty))
+        out.extend(self.management_disclosed(shown))
         lim_views: list[ClaimView] = []
         for d in rp.data_limitations:
             if d.claim_id in self.claims:

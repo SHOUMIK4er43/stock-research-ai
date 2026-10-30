@@ -790,6 +790,17 @@ class RiskCoverage(BaseModel):
         return self
 
 
+class DisclosedRiskEntry(BaseModel):
+    """A risk / headwind management itself disclosed (application.management_risks): a cited
+    MANAGEMENT STATEMENT, never graded and never a registered rule's finding."""
+
+    model_config = _model()
+    category: Code  # CURRENCY, CLIENT_CONCENTRATION ...
+    label: Label
+    claim_id: UUID
+    event_date: date | None = None
+
+
 class RiskPresentation(BaseModel):
     """Company risk and data limitation never share a list."""
 
@@ -802,6 +813,9 @@ class RiskPresentation(BaseModel):
     open_diligence: tuple[DiligenceEntry, ...] = Field(max_length=MAX_ENTRIES)
     #: the canonical coverage (None only on reports composed before it existed)
     coverage: RiskCoverage | None = None
+    #: management-disclosed risks / headwinds (verbatim, cited, ungraded)
+    management_disclosed: tuple[DisclosedRiskEntry, ...] = Field(default=(),
+                                                                 max_length=MAX_ENTRIES)
 
 
 class ViewDirection(StrEnum):
@@ -1304,6 +1318,10 @@ class FinalResearchReportDataset(BaseModel):
                     fail("A rule's coverage outcome is its Box 13 grade")
             if (cov.red, cov.yellow) != (len(self.risks.red), len(self.risks.yellow)):
                 fail("Risk coverage counts the RED / YELLOW lists")
+        for disclosed in self.risks.management_disclosed:
+            known((disclosed.claim_id,), "A management-disclosed risk")
+            if claims[disclosed.claim_id].claim_type != ClaimType.MANAGEMENT_STATEMENT:
+                fail("A management-disclosed risk is a management statement, never a grade")
         for d in self.risks.data_limitations:
             known((d.claim_id,), "A data limitation")
             if claims[d.claim_id].claim_type != ClaimType.DATA_LIMITATION:

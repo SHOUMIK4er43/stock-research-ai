@@ -228,6 +228,8 @@ export function parsePanel(payload) {
     riskCounts: riskCounts(payload.risk_counts),
     evaluatedClear: items(payload.evaluated_clear),
     notEvaluated: items(payload.not_evaluated),
+    // management's own risk disclosures: verbatim statements, never graded
+    managementRisks: items(payload.management_risks),
   };
 }
 
@@ -331,6 +333,9 @@ export function renderRisks(doc, panel) {
       panel.notEvaluated, "risk-not-evaluated", "Every applicable rule was evaluated."),
     block(doc, "Rules evaluated — no adverse evidence found", panel.evaluatedClear,
       "risk-clear", "No rule graded GREEN."),
+    block(doc, "Management-disclosed risks / headwinds (management statements — not graded)",
+      panel.managementRisks, "risk-management-disclosed",
+      "No management-disclosed risk found in the reviewed calls."),
     block(doc, "Positive controls", panel.positive, "risk-positive", "None."),
     el(doc, "h2", { text: "Data limitations (not company risks)" }),
     block(doc, "Input conflicts", panel.conflicts, "limitation-conflict", "No input conflict."),

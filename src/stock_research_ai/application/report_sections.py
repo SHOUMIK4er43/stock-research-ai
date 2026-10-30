@@ -15,6 +15,7 @@ from typing import Any, Literal, cast
 from uuid import UUID, uuid5
 
 from stock_research_ai.application.diligence_inputs import FAMILIES, fid
+from stock_research_ai.application.disclosed_risks import disclosed_risks
 from stock_research_ai.application.period_names import day_name, period_name
 from stock_research_ai.application.red_flags import NS as NS13
 from stock_research_ai.application.red_flags import RULES
@@ -49,6 +50,7 @@ from stock_research_ai.domain.final_research_report import (
     DiligenceEntry,
     DisagreementValueView,
     DisagreementView,
+    DisclosedRiskEntry,
     GuidanceTrackerEntry,
     InputFamily,
     InvestmentCase,
@@ -2699,7 +2701,20 @@ def risks(ctx: Ctx) -> RiskPresentation:
     return RiskPresentation(risk_register=tuple(ctx.risk_entries), red=tuple(red),
                             yellow=tuple(yellow), positive_controls=d13.positive_controls,
                             data_limitations=tuple(limitations),
-                            open_diligence=tuple(diligence), coverage=risk_coverage(ctx))
+                            open_diligence=tuple(diligence), coverage=risk_coverage(ctx),
+                            management_disclosed=tuple(management_disclosed(ctx, sec)))
+
+
+def management_disclosed(ctx: Ctx, sec: SectionId) -> list[DisclosedRiskEntry]:
+    """What management said may hurt the business, verbatim and cited - never graded."""
+    dates = {e.event_id: e.call_date for e in ctx.box8.events} if ctx.box8 else {}
+    out: list[DisclosedRiskEntry] = []
+    for d in disclosed_risks(ctx.box8):
+        cid = statement_claim(ctx, d.statement)
+        ctx.add(sec, cid)
+        out.append(DisclosedRiskEntry(category=d.category, label=d.label, claim_id=cid,
+                                      event_date=dates.get(d.statement.event_id)))
+    return out
 
 
 _NOT_APPLICABLE_STATUSES = (SignalStatus.NOT_APPLICABLE, SignalStatus.UNSUPPORTED_SECTOR_RULE)

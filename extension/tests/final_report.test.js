@@ -174,6 +174,18 @@ test("the risks view leads with coverage and never shows 'no RED' without its de
   assert.equal(parsePanel(panelPayload({ risk_counts: [["RED", -1]] })).riskCounts, null);
 });
 
+test("management-disclosed risks are listed as ungraded management statements", () => {
+  const list = (items) => ({ items, total: items.length });
+  const panel = parsePanel(panelPayload({ management_risks: list([{ label: "Currency / FX",
+    statement: "There's been a lot of headwinds as well on growth.", detail: "Management statement · 2026-10-15 · not graded" }]) }));
+  const html = renderRisks(createFakeDocument(), panel).serialize();
+  assert.match(html, /Management-disclosed risks \/ headwinds \(management statements — not graded\) \(1\)/);
+  assert.match(html, /Currency \/ FX/);
+  assert.ok(!/\[(RED|YELLOW)\] Currency/.test(html), "never graded");
+  const none = renderRisks(createFakeDocument(), parsePanel(panelPayload())).serialize();
+  assert.match(none, /No management-disclosed risk found in the reviewed calls\./);
+});
+
 test("the risks view keeps company risks apart from data limitations and escapes text", () => {
   const doc = createFakeDocument();
   const node = renderRisks(doc, parsePanel(panelPayload()));

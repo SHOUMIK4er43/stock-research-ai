@@ -98,6 +98,8 @@ class FinalReportPanel(BaseModel):
     risk_counts: tuple[tuple[str, int], ...] = ()
     evaluated_clear: PanelList = PanelList(items=(), total=0)
     not_evaluated: PanelList = PanelList(items=(), total=0)
+    #: management-disclosed risks / headwinds: verbatim management statements, ungraded
+    management_risks: PanelList = PanelList(items=(), total=0)
 
 
 def _list(items: Iterable[PanelItem]) -> PanelList:
@@ -177,6 +179,11 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
                                  + (r.reason_text or _label(r.reason or "")),
                                  detail=f"{_label(r.category)} · {r.reason}")
                        for r in cov.rules if r.outcome == "NOT_EVALUATED"]
+    disclosed = [PanelItem(label=d.label, statement=(claims[d.claim_id].source_text or
+                                                     statement(d.claim_id)),
+                           detail=f"Management statement · {d.event_date or 'date not stated'}"
+                           " · not graded")
+                 for d in report.risks.management_disclosed if d.claim_id in claims]
     m = report.metadata
     return FinalReportPanel(
         artifact_id=manifest.artifact_id, report_id=report.report_id,
@@ -197,7 +204,8 @@ def build_panel(report: FinalResearchReportDataset, manifest: ReportManifest) ->
         research_completeness=tuple(summary_lines(rc)) if rc else (),
         basis_note=basis_note(m.basis_selection),
         risk_coverage=cov.headline if cov else None, risk_counts=counts,
-        evaluated_clear=_list(clear), not_evaluated=_list(unevaluated))
+        evaluated_clear=_list(clear), not_evaluated=_list(unevaluated),
+        management_risks=_list(disclosed))
 
 
 __all__ = ["FinalReportPanel", "PanelItem", "PanelList", "PanelSection", "build_panel"]

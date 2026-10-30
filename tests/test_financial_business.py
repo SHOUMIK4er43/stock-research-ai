@@ -28,6 +28,7 @@ from stock_research_ai.application.report_presentation import build_presentation
 from stock_research_ai.application.summary import project_summary_input
 from stock_research_ai.application.summary_generation import build_summary_claims
 from stock_research_ai.domain.final_research_report import FinalReportRequest
+from stock_research_ai.domain.financial import ReportingScope
 from stock_research_ai.domain.financial_analytics import CalculationStatus as CS
 from stock_research_ai.domain.financial_business import (
     RESTRICTED_INDUSTRIES,
@@ -256,8 +257,13 @@ async def test_retained_classification_agrees_across_paths(tmp_path, fixture_dir
         assert "financing_profit" in {c.metric_id for c in claims}
     observations = {o.id: o for group in (source.top_metrics, source.profit_loss,
                     source.quarterly, source.balance_sheet, source.cashflow) for o in group}
+    # a market price has no reporting basis; every scoped input must match the claim's basis
     assert all(c.reporting_scope == observations[oid].reporting_scope
-               for c in claims for oid in c.source_observation_ids)
+               for c in claims for oid in c.source_observation_ids
+               if observations[oid].metric_id != "current_price")
+    assert all(observations[oid].reporting_scope is ReportingScope.UNKNOWN
+               for c in claims for oid in c.source_observation_ids
+               if observations[oid].metric_id == "current_price")
 
 
 @pytest.mark.parametrize("name", ["Holding Companies", "Capital Markets", "Mutual Funds",

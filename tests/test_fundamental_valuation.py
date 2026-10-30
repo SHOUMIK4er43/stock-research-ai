@@ -1394,3 +1394,18 @@ def test_full_precision_is_kept_no_intermediate_rounding():
     r = result(v, VM.DCF_FCFF_GORDON)
     assert close(r.enterprise_value, want["ev"])
     assert close(r.fair_value_per_share, per_share(want["ev"] - DEBT + CASH))
+
+
+def test_consolidated_minority_balance_is_read_from_box4():
+    """RC1 (TECHM): the consolidated balance sheet's NCI line (461.6 crore) is the bridge's
+    minority interest - it was ignored and every DCF stayed without an equity value."""
+    data = make(rows(basis=B.CONSOLIDATED, minority=10)
+                + [V(M.MINORITY_INTEREST, pit(2026), "461.6", basis=B.CONSOLIDATED)],
+                Industry.GENERAL)
+    f, box4 = forecast(basis=B.CONSOLIDATED, minority=10, data=data)
+    v = value(f, box4)
+    mi = named(v, "MINORITY_INTEREST", None)
+    assert (mi.value, mi.formula_id) == (Decimal("461.6"), "MINORITY_INTEREST/1/BOX4")
+    ev = result(v, VM.DCF_FCFF_GORDON).enterprise_value
+    assert ev is not None and close(result(v, VM.DCF_FCFF_GORDON).equity_value,
+                                    F(ev) - DEBT + CASH - F("461.6"))

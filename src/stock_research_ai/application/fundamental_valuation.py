@@ -374,6 +374,13 @@ _formula(
     lambda v, _: v["ACTUAL"],
 )
 _formula(
+    "MINORITY_INTEREST/1/BOX4",
+    "Box 4 non-controlling-interest balance at the valuation date (consolidated balance sheet)",
+    ("ACTUAL",),
+    U.MONEY,
+    lambda v, _: v["ACTUAL"],
+)
+_formula(
     "MINORITY_INTEREST/1/STANDALONE",
     "a standalone entity has no non-controlling interest (0 by definition, not by default)",
     (),
@@ -706,14 +713,24 @@ def _shared(
                 ],
                 warnings=tuple(dict.fromkeys(warn)),
             )
-    # non-controlling interest: Box 4 carries no balance-sheet NCI line
+    # non-controlling interest: explicit, else 0 on a standalone basis, else the consolidated
+    # balance sheet's NCI line at the valuation date (never assumed zero)
     mi_input = given(K.MINORITY_INTEREST)
+    nci = history.balance([CanonicalMetric.MINORITY_INTEREST], end) \
+        if history is not None and end is not None else None
     if mi_input is not None:
         minority = ledger.compute(
             "MINORITY_INTEREST", "MINORITY_INTEREST/1/EXPLICIT", [("STATED", stated(mi_input))]
         )
     elif base.reporting_basis == ReportingBasis.STANDALONE:
         minority = ledger.compute("MINORITY_INTEREST", "MINORITY_INTEREST/1/STANDALONE", [])
+    elif isinstance(nci, Fact) and nci.value >= 0:
+        item = nci.inputs[0]
+        minority = ledger.compute(
+            "MINORITY_INTEREST", "MINORITY_INTEREST/1/BOX4",
+            [("ACTUAL", Src(InputKind.BOX4_VALUE, item.canonical_value_id, item.value, None,
+                            (item,)))],
+            warnings=tuple(dict.fromkeys(nci.warnings)))
     else:
         minority = ledger.unavailable(
             "MINORITY_INTEREST",

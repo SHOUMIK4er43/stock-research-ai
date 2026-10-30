@@ -132,6 +132,9 @@ def _declared_issuer_names(text: str) -> set[tuple[str, ...]]:
         ("india", "ratings", "and", "research"), ("acuite", "ratings", "and", "research"),
         ("brickwork", "ratings", "india"), ("infomerics", "valuation", "and", "rating"),
     }
+    address_terms = {"plaza", "complex", "tower", "towers", "street", "road", "marg", "floor",
+                     "building", "bhawan", "bhavan", "nagar", "dalal", "bandra", "kurla",
+                     "mumbai", "delhi", "kolkata", "chennai", "bengaluru", "sector", "phase"}
     declared: set[tuple[str, ...]] = set()
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -157,6 +160,12 @@ def _declared_issuer_names(text: str) -> set[tuple[str, ...]]:
             continue
         normalized_name = tuple(name_tokens)
         if not normalized_name or normalized_name in known_non_issuer_entities:
+            continue
+        # a cover letter's two-column exchange address read as one line ('"Exchange Plaza",
+        # Bandra - Kurla Complex  BSE Limited') ends in an addressee, and an address is not
+        # a legal-entity heading
+        if any(normalized_name[-len(e):] == e for e in known_non_issuer_entities) or any(
+                token in address_terms for token in normalized_name):
             continue
         declared.add(normalized_name)
     return declared

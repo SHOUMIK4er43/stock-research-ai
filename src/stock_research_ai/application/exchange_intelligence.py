@@ -668,7 +668,15 @@ def _identity(
     )
 
 
-Admission = Literal["MATCH", "MISMATCH", "UNVERIFIED", "UNSTATED"]
+Admission = Literal["MATCH", "MISMATCH", "UNVERIFIED", "UNSTATED", "SUPERSEDED_ISIN"]
+
+
+def superseded_isin(given: str, verified: str) -> bool:
+    """An issuer's earlier equity ISIN: same country, issuer code and equity security type
+    (INE669C01028 vs INE669C01036 after a capital change) - only the serial differs. Alone it
+    proves nothing: it binds a row only together with the verified exchange symbol."""
+    return (len(given) == len(verified) == 12 and given[:7] == verified[:7]
+            and given[7:9] == verified[7:9] == "01" and given[9:11] != verified[9:11])
 
 
 def _key(value: object) -> str | None:
@@ -684,7 +692,8 @@ def row_identity(
     contradicts the identity (verified or declared). MISMATCH: some stated key contradicts.
     UNVERIFIED: the row's keys can only be compared with unverified declarations.
     UNSTATED: the row states no key."""
-    matched = unverified = False
+    matched = unverified = superseded = False
+    symbol_verified = _key(symbol) is not None and _key(symbol) == identity.nse_symbol
     for given, verified, declared in (
         (symbol, identity.nse_symbol, identity.declared_nse_symbol),
         (isin, identity.isin, identity.declared_isin),
@@ -695,12 +704,17 @@ def row_identity(
             continue
         if verified is not None:
             if value != verified:
+                if given is isin and symbol_verified and superseded_isin(value, verified):
+                    superseded = True  # the issuer's earlier equity ISIN, on its own symbol
+                    continue
                 return "MISMATCH"
             matched = True
         elif declared is not None and value != declared:
             return "MISMATCH"
         else:
             unverified = True
+    if superseded:
+        return "SUPERSEDED_ISIN" if matched else "UNVERIFIED"
     return "MATCH" if matched else "UNVERIFIED" if unverified else "UNSTATED"
 
 
@@ -732,7 +746,7 @@ def admit(
         status = scope_identity(identity, payload)
     if status != "MATCH":
         counts[status] = counts.get(status, 0) + 1
-    return status == "MATCH"
+    return status in ("MATCH", "SUPERSEDED_ISIN")
 
 
 # --- filing rows ----------------------------------------------------------------------------
@@ -835,6 +849,11 @@ def _row_issues(issues: list[Issue], pid: UUID, refused: dict[str, int], undated
         issues.append(issue("ROW_IDENTITY_MISMATCH",
                             f"{refused['MISMATCH']} rows belong to another security and were "
                             "dropped", payload=pid))
+    if refused.get("SUPERSEDED_ISIN"):
+        issues.append(issue("ROW_SUPERSEDED_ISIN",
+                            f"{refused['SUPERSEDED_ISIN']} rows carry the issuer's earlier equity "
+                            "ISIN; kept, bound by the verified exchange symbol and the issuer code",
+                            payload=pid, severity="INFO"))
     if refused.get("UNVERIFIED"):
         issues.append(issue("PROVIDER_IDENTITY_UNVERIFIED",
                             f"{refused['UNVERIFIED']} rows are keyed only by an identifier the "

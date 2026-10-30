@@ -198,6 +198,20 @@ def _period_kind(period: FinancialPeriod | None) -> KPIPeriodKind:
     }.get(period.period_type, KPIPeriodKind.FLOW_PERIOD)
 
 
+def columns_named_per_period(text: str) -> bool:
+    """A header naming the same columns once per period ('IT BPS Total IT BPS Total'): two
+    to four identical runs of at least two words, no numbers."""
+    words = text.casefold().split()
+    if not words or any(re.search(r"\d", w) for w in words):
+        return False
+    for runs in (2, 3, 4):
+        size, rest = divmod(len(words), runs)
+        if size >= 2 and not rest and all(
+                words[k * size:(k + 1) * size] == words[:size] for k in range(runs)):
+            return True
+    return False
+
+
 @dataclass
 class Collected:
     segments: list[SegmentObservation] = field(default_factory=list)
@@ -604,6 +618,17 @@ class Extractor:
             return
         if count == 1 and self.metric_rows(frame) >= 2:
             self.entity_metric_frame(ctx)
+            return
+        header = next((t for t in [*(line.text for line in frame.context),
+                                   *(r.group or "" for r in frame.rows)]
+                       if columns_named_per_period(t)), None)
+        if header is not None:
+            # 'IT BPS Total IT BPS Total': the segments are the columns and the rows are line
+            # items (revenue, direct expenses, results) - never segments of their own
+            for row in frame.rows:
+                if row.label:
+                    self.unmapped(ctx, ex, Domain.SEGMENT, row.label, row.tokens,
+                                  "SEGMENT_COLUMNS_NOT_RESOLVED", row.line)  # fmt: skip
             return
         periods = self.periods(ctx, StatementType.SEGMENT_RESULTS)
         metric: SegmentMetric | None = None

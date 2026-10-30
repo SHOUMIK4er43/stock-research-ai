@@ -87,6 +87,8 @@ SEGMENT_METRIC_HEADINGS: dict[str, SegmentMetric] = {
     "result": SegmentMetric.SEGMENT_RESULT,
     "results": SegmentMetric.SEGMENT_RESULT,
     "segment result": SegmentMetric.SEGMENT_RESULT,
+    "segmental result": SegmentMetric.SEGMENT_RESULT,
+    "segmental results": SegmentMetric.SEGMENT_RESULT,
     "segment profit": SegmentMetric.SEGMENT_RESULT,
     "segment profits": SegmentMetric.SEGMENT_RESULT,
     "segment profit/(loss)": SegmentMetric.SEGMENT_RESULT,

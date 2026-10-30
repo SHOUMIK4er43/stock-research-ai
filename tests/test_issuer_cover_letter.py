@@ -23,3 +23,10 @@ def test_an_addressee_or_address_line_is_not_an_issuer_heading():
 def test_another_companys_heading_still_conflicts():
     assert ("hindustan", "unilever") in _declared_issuer_names(
         LETTER + "\nHINDUSTAN UNILEVER LIMITED")
+
+
+def test_a_letter_reference_number_is_not_a_bse_scrip_code():
+    from stock_research_ai.application.document_intelligence import _BSE_HEADER
+
+    assert [m.group(1) for m in _BSE_HEADER.finditer("MSIL: COS: NSE&BSE: 2026/08_06")] == []
+    assert [m.group(1) for m in _BSE_HEADER.finditer("BSE Scrip Code: 532540.")] == ["532540"]

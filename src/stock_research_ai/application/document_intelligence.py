@@ -55,8 +55,9 @@ _NSE_HEADER = re.compile(
     r"|\bNSE\s*:\s*([A-Z0-9][A-Z0-9.&_-]{0,23})",
     re.I,
 )
+# a scrip code ends at its digits; '2026/08_06' after 'NSE&BSE:' is a letter's reference number
 _BSE_HEADER = re.compile(
-    r"\bBSE\s*(?:SCRIP\s*)?(?:CODE)?\s*[:\-]\s*(\d{4,8})", re.I
+    r"\bBSE\s*(?:SCRIP\s*)?(?:CODE)?\s*[:\-]\s*(\d{4,8})(?![\d/_]|[.\-]\d)", re.I
 )
 _ISIN_HEADER = re.compile(r"\bISIN\s*[:\-]\s*(INE[A-Z0-9]{9})\b", re.I)
 

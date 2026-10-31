@@ -177,11 +177,24 @@ FLOW_MONTHS = {PeriodType.FY: 12, PeriodType.QUARTER: 3, PeriodType.HALF_YEAR: 6
 
 
 def discontinued_years(data: CanonicalFinancialDataset, basis: ReportingBasis) -> set[date]:
-    """Fiscal-year ends for which a filing on this basis reports discontinued operations."""
-    return {o.period.period_end for o in data.observations
-            if o.reporting_basis == basis and o.source.source_type == SourceType.FILING
-            and o.period.period_type == PeriodType.FY and o.period.period_end is not None
-            and o.parsed.value not in (None, 0) and DISCONTINUED_LINE.search(o.raw_label)}
+    """Fiscal-year ends for which a filing on this basis reports discontinued operations. A
+    line whose column period was not established is dated by its own document: the fiscal
+    years that document's dated rows report (the year and its comparative) - never by guess."""
+    filed = [o for o in data.observations if o.source.source_type == SourceType.FILING]
+    years: dict[UUID | None, set[date]] = {}
+    for o in filed:
+        if o.period.period_type == PeriodType.FY and o.period.period_end is not None:
+            years.setdefault(o.source.document_id, set()).add(o.period.period_end)
+    out: set[date] = set()
+    for o in filed:
+        if o.reporting_basis != basis or o.parsed.value in (None, 0) or \
+                not DISCONTINUED_LINE.search(o.raw_label):
+            continue
+        if o.period.period_type == PeriodType.FY and o.period.period_end is not None:
+            out.add(o.period.period_end)
+        elif o.period.period_end is None and o.source.document_id is not None:
+            out |= years.get(o.source.document_id, set())
+    return out
 
 
 def covers_discontinued(period: FinancialPeriod, years: set[date]) -> bool:

@@ -431,8 +431,8 @@ async def test_real_fixture_summary_claims_trace_to_normalized_source_evidence(
             ReportingScope.CONSOLIDATED: "Consolidated",
             ReportingScope.UNKNOWN: "Scope unknown",
         }[claim.reporting_scope]
-        assert claim.text.endswith((f"({scope_name}).", f"{scope_name}).")) or (
-            f"({scope_name}, " in claim.text)
+        # every claim names its scope; a comparability qualification may follow it
+        assert f"{scope_name})." in claim.text or f"({scope_name}, " in claim.text
         allowed = RATIO_INPUTS.get(claim.metric_id, {claim.metric_id})
         for index, observation_id in enumerate(claim.source_observation_ids):
             observation = observations[observation_id]

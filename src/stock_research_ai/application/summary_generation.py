@@ -3,9 +3,11 @@
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
+from functools import partial
 from typing import Literal, Protocol
 from uuid import UUID
 
@@ -97,6 +99,12 @@ _MAX_DISPLAYED_CLAIMS = 36
 #: the metrics whose trajectory leads the Summary (first found per group)
 _REVENUE = ("sales", "revenue")
 _TRAJECTORY = (_REVENUE, ("operating_profit",), ("financing_profit",), ("net_profit",))
+#: reported-profit trends checked against the operating line of the SAME two periods: a
+#: change far from the operating change comes from items below it (other income, tax,
+#: exceptional items, discontinued operations), which a Screener page does not break down
+_PROFIT_TRENDS = ("net_profit", "eps")
+_OPERATING_LINE = ("operating_profit", "financing_profit")
+_COMPARABILITY_GAP_PP = Decimal(10)
 #: calculated ratios: (metric_id, label, numerator ids, numerator block, denominator ids,
 #: denominator block, kind) - both inputs of the SAME period, both cited
 _RATIOS: tuple[tuple[str, str, tuple[str, ...], str, tuple[str, ...], str, str], ...] = (
@@ -220,6 +228,7 @@ def _claim(
     values: tuple[SummaryValue, ...],
     names: tuple[str, ...] = (),
     ratio: tuple[str, str, str, str] | None = None,
+    note: str = "",
 ) -> SummaryGroundingClaim | None:
     if not values or any(
         value.status.value != "available"
@@ -274,6 +283,7 @@ def _claim(
             f"to {_format_value(second, unit)} in {shown[1]} "
             f"({_SCOPE_NAMES[scope.value]}{change})."
         )
+    text += note  # a qualification is part of the grounded text: never shown apart from it
     return SummaryGroundingClaim(
         claim_id=_claim_id(kind, block, metric_id, label, periods, observation_ids),
         kind=kind,
@@ -299,6 +309,7 @@ def _claims_for_values(
     scope: ReportingScope,
     values: tuple[SummaryValue, ...],
     periods: _Periods,
+    profit_note: Callable[[SummaryValue, SummaryValue], tuple[str, bool]] | None = None,
 ) -> list[SummaryGroundingClaim]:
     claims = [
         claim
@@ -335,10 +346,70 @@ def _claims_for_values(
             scope=scope,
             values=(first, second),
             names=(periods.name(block, first), periods.name(block, second)),
+            note=profit_note(first, second)[0] if profit_note is not None
+            and metric_id in _PROFIT_TRENDS else "",
         )
         if trend is not None:
             claims.append(trend)
     return claims
+
+
+def _profit_note(summary_input: SummaryInput, block: str, scope: ReportingScope,
+                 first: SummaryValue, second: SummaryValue) -> tuple[str, bool]:
+    """(qualification, material) for a reported-profit change between two periods.
+
+    The Summary reads no filings, so it cannot say WHY reported profit moved; it can say
+    whether the operating line moved alike. A gap above the threshold is qualified, an
+    unavailable or non-positive comparison is marked unchecked, a comparable change is left
+    as it is. The reported value is never replaced."""
+    row = _row_of(summary_input, block, _OPERATING_LINE)
+    by_end = ({v.period_end: v.value for v in row.values
+               if v.period_end is not None and v.value is not None}
+              if row is not None and row.reporting_scope == scope else {})
+    a = by_end.get(first.period_end) if first.period_end is not None else None
+    b = by_end.get(second.period_end) if second.period_end is not None else None
+    p, q = first.value, second.value
+    if row is None or a is None or b is None or p is None or q is None or min(a, b, p, q) <= 0:
+        return (" Comparability not checked: the operating line (operating or financing "
+                "profit) is not available and positive for both periods, so this change may "
+                "include non-operating or one-off items (this Summary reads no filings).", False)
+    operating = (b / a - 1) * 100
+    if abs((q / p - 1) * 100 - operating) <= _COMPARABILITY_GAP_PP:
+        return "", False
+    name = _display_label(row.metric_id, row.label).lower()
+    return (f" Over the same periods {name} changed "
+            f"{operating.quantize(Decimal('0.1'), ROUND_HALF_EVEN):+}%: the difference comes "
+            "from items below it (other income, finance cost, depreciation, tax, exceptional "
+            "items or discontinued operations), so this is reported profit, not a measure of "
+            "the continuing operating business; this Summary reads no filings - Detailed "
+            "Research does.", True)
+
+
+def _uncomparable_years(summary_input: SummaryInput,
+                        periods: _Periods) -> list[tuple[date, date, str]]:
+    """Fiscal-year pairs whose reported net profit moved far from the operating line:
+    (earlier end, later end, 'FY2025 to FY2026')."""
+    row = _row_of(summary_input, "annual", ("net_profit",))
+    if row is None:
+        return []
+    dated = [v for v in row.values if v.period_end is not None and v.value is not None]
+    out: list[tuple[date, date, str]] = []
+    for b in dated:
+        for a in dated:
+            if _year_apart(a, b) and _profit_note(summary_input, "annual", row.reporting_scope,
+                                                  a, b)[1]:
+                assert a.period_end is not None and b.period_end is not None
+                out.append((a.period_end, b.period_end, f"{periods.name('annual', a)} to "
+                            f"{periods.name('annual', b)}"))
+    return out
+
+
+def _years_note(pairs: list[tuple[date, date, str]], ends: tuple[date, ...], what: str) -> str:
+    """A ratio built on net profit of a year in such a pair says so."""
+    hit = next((label for a, b, label in pairs for e in ends
+                if a == e or b == e), None)
+    return (f" Net profit moved far from operating profit from {hit} (see the trajectory), "
+            f"so {what} can reflect non-operating or one-off items." if hit else "")
 
 
 def _row_of(summary_input: SummaryInput, block: str, ids: tuple[str, ...]) -> SummaryRow | None:
@@ -351,6 +422,7 @@ def _row_of(summary_input: SummaryInput, block: str, ids: tuple[str, ...]) -> Su
 def _ratio_claims(summary_input: SummaryInput, periods: _Periods) -> list[SummaryGroundingClaim]:
     """Calculated ratios of two cited figures of the SAME period (latest two comparable)."""
     out: list[SummaryGroundingClaim] = []
+    pairs = _uncomparable_years(summary_input, periods)
     for metric_id, label, num_ids, num_block, den_ids, den_block, style in _RATIOS:
         num, den = _row_of(summary_input, num_block, num_ids), _row_of(
             summary_input, den_block, den_ids)
@@ -369,14 +441,17 @@ def _ratio_claims(summary_input: SummaryInput, periods: _Periods) -> list[Summar
                            names=(periods.name(num_block, n),),
                            ratio=(label, _display_label(num.metric_id, num.label).split(" (")[0]
                                   .lower(), _display_label(den.metric_id, den.label)
-                                  .split(" (")[0].lower(), style))
+                                  .split(" (")[0].lower(), style),
+                           note=_years_note(pairs, (n.period_end,), "this ratio")
+                           if n.period_end is not None and "net_profit" in den_ids else "")
             if claim is not None:
                 out.append(claim)
-    out.extend(_derived_pe(summary_input, periods))
+    out.extend(_derived_pe(summary_input, periods, pairs))
     return out
 
 
-def _derived_pe(summary_input: SummaryInput, periods: _Periods) -> list[SummaryGroundingClaim]:
+def _derived_pe(summary_input: SummaryInput, periods: _Periods,
+                pairs: list[tuple[date, date, str]]) -> list[SummaryGroundingClaim]:
     """Price / TTM EPS, both cited, beside the source's own P/E: a source-reported multiple
     and a derived one are never presented as the same number (they can differ by price
     date or EPS definition)."""
@@ -386,14 +461,24 @@ def _derived_pe(summary_input: SummaryInput, periods: _Periods) -> list[SummaryG
             price.unit != eps.unit) or eps.ttm.value <= 0:
         return []
     label = "Derived P/E (current price / TTM EPS; not the source-reported P/E)"
+    end = eps.ttm.period_end or periods.ttm_end
+    # the twelve months to `end` overlap a fiscal year ending within them
+    years = tuple(e for _a, b, _l in pairs for e in (b,)
+                  if end is not None and _months_before(end, 12) < e <= end)
     claim = _claim(kind="ratio", block="snapshot", metric_id="derived_price_earnings",
                    source_label=label, unit=price.unit,
                    scope=eps.reporting_scope,  # a price has no basis: the earnings' basis
                    values=(price.observation, eps.ttm),
                    names=(f"{periods.name('snapshot', price.observation)} / "
                           f"{periods.name('annual', eps.ttm)}",),
-                   ratio=(label, "price", "TTM EPS", "times"))
+                   ratio=(label, "price", "TTM EPS", "times"),
+                   note=_years_note(pairs, years, "the TTM earnings and this multiple"))
     return [claim] if claim is not None else []
+
+
+def _months_before(day: date, months: int) -> date:
+    total = day.year * 12 + day.month - 1 - months
+    return date(total // 12, total % 12 + 1, 1)
 
 
 def build_summary_claims(summary_input: SummaryInput) -> tuple[SummaryGroundingClaim, ...]:
@@ -430,6 +515,8 @@ def build_summary_claims(summary_input: SummaryInput) -> tuple[SummaryGroundingC
                     row.reporting_scope,
                     tuple(values),
                     periods,
+                    partial(_profit_note, summary_input, block_name, row.reporting_scope)
+                    if block_name in ("annual", "quarterly") else None,
                 )
             )
     claims.extend(_ratio_claims(summary_input, periods))

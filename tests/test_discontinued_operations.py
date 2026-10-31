@@ -63,3 +63,25 @@ def test_overlap_with_the_flagged_fiscal_year():
     assert covers_discontinued(period(PeriodType.QUARTER, date(2025, 12, 31), 3), years)
     assert not covers_discontinued(period(PeriodType.QUARTER, date(2026, 6, 30), 3), years)
     assert not covers_discontinued(period(PeriodType.FY, FY25, 12), years)
+
+
+def test_an_undated_line_is_dated_only_by_its_own_document():
+    """HUL's standalone P&L columns were not dated (ambiguous header): its discontinued line
+    takes the fiscal years its own annual report's dated rows report, never a guess."""
+    from stock_research_ai.application.financial_metrics import discontinued_years
+
+    data = make(company())
+    template = next(o for o in data.observations if o.period.period_type == PeriodType.FY)
+    undated = FinancialPeriod(period_type=PeriodType.UNKNOWN, label="(column not dated)")
+    line = template.model_copy(update={
+        "observation_id": uuid4(), "metric": None, "raw_label": LABEL, "raw_value": "4,407",
+        "parsed": ParsedNumber(raw="4,407", status=NumberStatus.NUMBER, value=4407),
+        "normalized_value": None, "period": undated, "reporting_basis": B.STANDALONE})
+    dated = {o.period.period_end for o in data.observations
+             if o.period.period_type == PeriodType.FY}
+    with_doc = data.model_copy(update={"observations": (*data.observations, line)})
+    assert discontinued_years(with_doc, B.STANDALONE) == dated
+    other_doc = line.model_copy(update={"source": line.source.model_copy(
+        update={"document_id": uuid4()})})
+    alone = data.model_copy(update={"observations": (*data.observations, other_doc)})
+    assert discontinued_years(alone, B.STANDALONE) == set()  # nothing dates it: no flag

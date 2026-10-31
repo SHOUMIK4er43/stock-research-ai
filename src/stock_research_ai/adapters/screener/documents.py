@@ -3,7 +3,7 @@
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from stock_research_ai.adapters.screener.html import Node
+from stock_research_ai.adapters.screener.html import Node, owned
 from stock_research_ai.adapters.screener.metrics import ParseContext
 from stock_research_ai.domain.documents import DocumentReference, DocumentType
 from stock_research_ai.domain.extraction import Section
@@ -15,11 +15,13 @@ def parse_documents(
 ) -> tuple[DocumentReference, ...]:
     result: list[DocumentReference] = []
     heading = ""
-    for item in node.all():
+    for item in owned(node):
         if item.tag == "h3":
             heading = item.text.lower()
         if item.tag != "a" or "href" not in item.attrs:
             continue
+        # Every link examined, kept or not (evidence discovery reads them all).
+        context.charge(item.text, item.attrs["href"])
         link = item.link(final_url, "DOCUMENTS")
         if urlsplit(link.resolved_url).scheme not in {"http", "https"}:
             continue

@@ -64,7 +64,7 @@ async def paired(full_research_engine, tmp_path):
     )
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
         ) as client:
             yield client, token, job_manager, model, pairing_store
 
@@ -135,7 +135,7 @@ async def test_pair_via_http_succeeds_for_extension_origin(tmp_path, full_resear
     )
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
         ) as client:
             response = await client.post(
                 "/v1/pair",
@@ -533,7 +533,7 @@ async def test_service_boots_and_health_works_without_analyst_configured(
     )
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
         ) as client:
             assert (await client.get("/health")).status_code == 200
             assert (await client.get("/v1/version")).status_code == 200
@@ -666,7 +666,7 @@ async def test_completed_report_survives_restart_but_old_job_does_not(
     )
     async with app_a.router.lifespan_context(app_a):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app_a), base_url="http://test"
+            transport=httpx.ASGITransport(app=app_a), base_url="http://127.0.0.1"
         ) as client_a:
             launch = await client_a.post(
                 "/v1/research-jobs",
@@ -701,7 +701,7 @@ async def test_completed_report_survives_restart_but_old_job_does_not(
     )
     async with app_b.router.lifespan_context(app_b):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app_b), base_url="http://test"
+            transport=httpx.ASGITransport(app=app_b), base_url="http://127.0.0.1"
         ) as client_b:
             # The old job is genuinely lost - a fresh job manager never heard of it.
             stale = await client_b.get(f"/v1/research-jobs/{old_job_id}", headers=_auth(token))
@@ -748,7 +748,7 @@ async def test_persisted_report_retrieval_uses_integrity_checked_reconstruction(
     )
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
         ) as client:
             launch = await client.post(
                 "/v1/research-jobs",

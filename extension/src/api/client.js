@@ -17,12 +17,21 @@
  *   GET  /v1/reports/{report_id}
  *   GET  /v1/reports/{report_id}/artifacts/{artifact_kind}
  *   POST /v1/summaries
+ *   POST /v1/final-reports                                    (Detailed Research: generate)
+ *   GET  /v1/final-report-jobs/{job_id}
+ *   GET  /v1/final-reports?page={Screener page key}           (the acquired page's reports)
+ *   GET  /v1/final-reports/{artifact_id}/view
+ *   GET  /v1/final-reports/{artifact_id}/files/{format}
  */
 
 /** Closed ArtifactKind enum (Part 6B-A) - the client only ever sends one of these three
  * exact values, never a path or filename, so there is no way to request an arbitrary
  * file from the local service. */
 export const ARTIFACT_KINDS = Object.freeze(["INSTITUTIONAL_REPORT", "INVESTOR_BRIEF", "RESEARCH_JSON"]);
+
+/** Closed Box 15 final-report format enum - never a path or a filename. */
+export const FINAL_REPORT_FORMATS = Object.freeze(["PDF", "HTML", "MARKDOWN", "JSON"]);
+const ARTIFACT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1"]);
 
@@ -154,6 +163,75 @@ export class ApiClient {
   /** SUMMARY_V1: one synchronous summary for the detected page ({portal, source_url}). */
   createSummary(token, request) {
     return this._request("/v1/summaries", { method: "POST", token, body: request });
+  }
+
+  /**
+   * Detailed Research reports whose ACQUIRED primary Screener page is this page. The key is
+   * the opaque Screener path segment - never sent or treated as an exchange symbol.
+   */
+  listFinalReportsForPage(token, pageKey) {
+    if (typeof pageKey !== "string" || !/^[A-Z0-9_-]{1,40}$/.test(pageKey)) {
+      return Promise.reject(new ApiError("INVALID_FINAL_REPORT_PAGE", "Unknown company page", 0));
+    }
+    return this._request(`/v1/final-reports?page=${encodeURIComponent(pageKey)}`, { token });
+  }
+
+  /** Start (or join) Detailed Research generation for this Screener page. */
+  createFinalReport(token, sourceUrl) {
+    return this._request("/v1/final-reports", { method: "POST", token, body: { source_url: sourceUrl } });
+  }
+
+  getFinalReportJob(token, jobId) {
+    if (typeof jobId !== "string" || !ARTIFACT_ID_PATTERN.test(jobId)) {
+      return Promise.reject(new ApiError("INVALID_FINAL_REPORT_JOB", "Unknown job", 0));
+    }
+    return this._request(`/v1/final-report-jobs/${jobId}`, { token });
+  }
+
+  getFinalReportView(token, artifactId) {
+    if (typeof artifactId !== "string" || !ARTIFACT_ID_PATTERN.test(artifactId)) {
+      return Promise.reject(new ApiError("INVALID_FINAL_REPORT_ID", "Unknown report", 0));
+    }
+    return this._request(`/v1/final-reports/${artifactId}/view`, { token });
+  }
+
+  /**
+   * One stored dossier file as a Blob (PDF is binary). Closed format enum and a UUID-shaped
+   * artifact id only; same loopback re-validation and Bearer handling as every call.
+   * @returns {Promise<{blob: Blob, contentType: string}>}
+   */
+  async getFinalReportFile(token, artifactId, format) {
+    if (!FINAL_REPORT_FORMATS.includes(format)) {
+      throw new ApiError("INVALID_FINAL_REPORT_FORMAT", "Unknown report format", 0);
+    }
+    if (typeof artifactId !== "string" || !ARTIFACT_ID_PATTERN.test(artifactId)) {
+      throw new ApiError("INVALID_FINAL_REPORT_ID", "Unknown report", 0);
+    }
+    const origin = validateServiceUrl(this._baseUrl).origin;
+    const path = `/v1/final-reports/${artifactId}/files/${format}`;
+    let response;
+    try {
+      const fetchImpl = this._fetch;
+      response = await fetchImpl(origin + path, {
+        method: "GET",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      throw new ApiError("NETWORK_ERROR", "The local service is not reachable", 0);
+    }
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      const { code, message } = normalizeDetail(payload && payload.detail);
+      throw new ApiError(code, message, response.status);
+    }
+    const blob = await response.blob();
+    const contentType = (response.headers && response.headers.get && response.headers.get("content-type")) || "";
+    return { blob, contentType };
   }
 
   getReport(token, reportId) {

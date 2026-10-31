@@ -28,3 +28,6 @@ build/
 /output/
 
 .env.save
+smoke-test.db
+smoke-test.db-shm
+smoke-test.db-wal

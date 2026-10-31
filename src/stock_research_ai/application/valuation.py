@@ -9,6 +9,7 @@ from stock_research_ai.application.numerics import root_growth
 from stock_research_ai.application.ports import SemanticResolver
 from stock_research_ai.domain.calculations import CalculationIssue, CalculationSnapshot
 from stock_research_ai.domain.extraction import CompanyExtractionResult
+from stock_research_ai.domain.financial_business import declaration_compatible
 from stock_research_ai.domain.market import MarketExtractionResult
 from stock_research_ai.domain.sector_kpis import SectorKPIEvaluation
 from stock_research_ai.domain.valuation import (
@@ -471,6 +472,13 @@ def evaluate(
                     else None
                 )
                 retained.extend(v for v in (price_item, denominator) if v is not None)
+                require(
+                    evidence.financial is None or declaration_compatible(
+                        evidence.financial.business_classification,
+                        request.classification.classification,
+                    ),
+                    "ACQUIRED_BUSINESS_MODEL_MISMATCH", "NOT_APPLICABLE",
+                )
                 valid_profile = {IT: "NON_FINANCIAL", BANK: "BANK"}.get(request.profile_id)
                 require(
                     request.profile_version == 1

@@ -28,6 +28,7 @@ def parse_peers(node: Node, context: ParseContext, final_url: str) -> PeerSnapsh
                     error=True,
                 )
                 continue
+            context.charge(links[0].text, links[0].attrs["href"])
             metrics: list[PeerMetric] = []
             for header, cell in zip(contents[0], cells, strict=True):
                 if cell.all("a") or header.text in {"S.No.", "Name"}:
@@ -41,6 +42,7 @@ def parse_peers(node: Node, context: ParseContext, final_url: str) -> PeerSnapsh
                     unit = FinancialUnit(
                         kind=UnitKind.MONEY, currency="INR", scale=Decimal("10000000")
                     )
+                context.charge(header.text, cell.text)
                 parsed = parse_value(cell.text, unit)
                 if parsed.status == ValueStatus.PARSE_ERROR:
                     context.issue(

@@ -11,6 +11,21 @@ import { States, deriveState, stageLabel, failureLabel } from "./state.js";
 import { storageActionsForJobUpdate, interpretJobFetchError, isReportForCurrentPage } from "./job_flow.js";
 import { clear } from "./report/dom.js";
 import { SummaryStatus, parseSummaryResult, renderSummaryResult, summaryErrorLabel } from "./summary.js";
+import {
+  FINAL_REPORT_LABELS,
+  FINAL_REPORT_POLL,
+  FinalReportState,
+  failureText,
+  finalReportFilename,
+  jobStageLabel,
+  latestFinalReport,
+  pageKey,
+  parseFinalReportJob,
+  parsePanel,
+  renderDetailedResearch,
+  renderRisks,
+  researchStatusLabel,
+} from "./final_report.js";
 import { findSection } from "./report/view_model.js";
 import {
   groupSections,
@@ -112,7 +127,42 @@ const els = {
   summaryLoading: document.getElementById("summary-loading"),
   summaryError: document.getElementById("summary-error"),
   summaryResult: document.getElementById("summary-result"),
+  tabs: {
+    SUMMARY: document.getElementById("tab-summary"),
+    DETAILED: document.getElementById("tab-detailed"),
+    RISKS: document.getElementById("tab-risks"),
+  },
+  views: {
+    SUMMARY: document.getElementById("view-summary"),
+    DETAILED: document.getElementById("view-detailed"),
+    RISKS: document.getElementById("view-risks"),
+  },
+  finalReportContent: document.getElementById("final-report-content"),
+  risksStatus: document.getElementById("risks-status"),
+  risksGenerateButton: document.getElementById("risks-generate-button"),
+  risksContent: document.getElementById("risks-content"),
+  finalReportButton: document.getElementById("final-report-button"),
+  finalReportStatus: document.getElementById("final-report-status"),
+  finalReportDownloads: document.getElementById("final-report-downloads"),
+  finalReportError: document.getElementById("final-report-error"),
+  finalReportFormats: {
+    PDF: document.getElementById("final-report-pdf"),
+    HTML: document.getElementById("final-report-html"),
+    MARKDOWN: document.getElementById("final-report-markdown"),
+    JSON: document.getElementById("final-report-json"),
+  },
 };
+
+// The three views. Detailed Research and Negatives / Risks are two views of the SAME
+// Box 14/15 final report for this page. Nothing is requested at boot; opening either view
+// looks the report up (and starts generation when none exists). Everything is bound to the
+// page URL it was requested for, like SUMMARY_V1.
+let activeView = "SUMMARY";
+const IDLE_FINAL_REPORT = Object.freeze({
+  sourceUrl: null, state: FinalReportState.IDLE, panel: null, job: null, failureCode: null,
+});
+let finalReport = IDLE_FINAL_REPORT;
+let finalReportSeq = 0;
 
 els.startCommand.textContent = START_COMMAND;
 els.pairingStartCommand.textContent = START_COMMAND;
@@ -151,7 +201,7 @@ function renderState(state, data = {}) {
   if (state === States.READY || state === States.LAUNCHING) {
     els.researchButton.disabled = state === States.LAUNCHING;
     els.researchButton.textContent =
-      state === States.LAUNCHING ? "Starting…" : "Research Company";
+      state === States.LAUNCHING ? "Starting…" : "Run legacy research";
     els.analystWarning.hidden = data.analysisAvailable !== false;
     if (data.analysisAvailable === false) {
       els.analystWarning.textContent =
@@ -159,6 +209,7 @@ function renderState(state, data = {}) {
     }
     els.viewLastResearchButton.hidden = !data.lastReportForThisPage;
     renderSummaryView();
+    renderFinalReportView();
   }
 
   if (state === States.RUNNING) {
@@ -235,6 +286,7 @@ async function boot() {
   await refreshPage(isCurrent);
   if (!isCurrent()) return;
   resetSummaryIfPageChanged();
+  resetFinalReportIfPageChanged();
 
   const facts = {
     serviceReachable: false,
@@ -421,6 +473,11 @@ async function onResearchClick() {
     });
     await handleJobUpdate(client, token, job, facts);
   } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      // Expired, revoked or replaced pairing: drop the stale token and ask to pair again.
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     renderState(States.FAILED, {
       job: {
         failure: {
@@ -429,6 +486,215 @@ async function onResearchClick() {
         },
       },
     });
+  }
+}
+
+function resetFinalReportIfPageChanged() {
+  if (finalReport.sourceUrl !== null && finalReport.sourceUrl !== page.sourceUrl) {
+    finalReport = IDLE_FINAL_REPORT;
+    finalReportSeq += 1; // any in-flight lookup / poll for the previous page is now stale
+    els.finalReportError.hidden = true;
+    renderFinalReportView();
+    if (activeView !== "SUMMARY") ensureFinalReport({ generate: false });
+  }
+}
+
+function showView(view) {
+  activeView = view;
+  for (const [name, tab] of Object.entries(els.tabs)) {
+    if (tab && typeof tab.setAttribute === "function") {
+      tab.setAttribute("aria-selected", String(name === view));
+    }
+  }
+  for (const [name, panel] of Object.entries(els.views)) {
+    if (panel) panel.hidden = name !== view;
+  }
+}
+
+function selectView(view) {
+  showView(view);
+  if (view !== "SUMMARY") ensureFinalReport({ generate: true });
+}
+
+function isCurrentFinalReport(requestId, requestedUrl) {
+  return requestId === finalReportSeq && page.sourceUrl === requestedUrl;
+}
+
+function setFinalReport(update) {
+  finalReport = { ...finalReport, ...update };
+  renderFinalReportView();
+}
+
+function renderFinalReportView() {
+  const current = finalReport.sourceUrl !== null && finalReport.sourceUrl === page.sourceUrl;
+  const state = current ? finalReport.state : FinalReportState.IDLE;
+  const panel = current ? finalReport.panel : null;
+  const busy = state === FinalReportState.LOOKING || state === FinalReportState.GENERATING;
+  let status = "";
+  if (state === FinalReportState.LOOKING) status = "Looking for Detailed Research…";
+  else if (state === FinalReportState.NOT_GENERATED) status = "Detailed Research has not been generated for this company yet.";
+  else if (state === FinalReportState.GENERATING) status = jobStageLabel(finalReport.job);
+  else if (panel) {
+    const partial = panel.failed.length
+      ? ` Partial: ${panel.failed.map(f => FINAL_REPORT_LABELS[f] || f).join(", ")} could not be produced.` : "";
+    status = `Ready — ${panel.companyName} — as of ${panel.asOf}. ${researchStatusLabel(panel)}.${partial}`;
+  }
+  els.finalReportStatus.textContent = status;
+  els.finalReportStatus.hidden = !status;
+  const failed = state === FinalReportState.FAILED;
+  els.finalReportError.textContent = failed ? failureText(finalReport.failureCode) : "";
+  els.finalReportError.hidden = !failed;
+  els.finalReportButton.disabled = busy || !page.pageIdentity;
+  els.finalReportButton.textContent = panel ? "Regenerate Detailed Research" : "Generate Detailed Research";
+  clear(els.finalReportContent);
+  clear(els.risksContent);
+  els.finalReportContent.hidden = !panel;
+  els.risksContent.hidden = !panel;
+  if (panel) {
+    els.finalReportContent.appendChild(renderDetailedResearch(document, panel));
+    els.risksContent.appendChild(renderRisks(document, panel));
+  }
+  els.finalReportDownloads.hidden = !panel;
+  for (const [format, button] of Object.entries(els.finalReportFormats)) {
+    button.disabled = !panel || !panel.formats.includes(format);
+  }
+  els.risksStatus.textContent = panel ? "" : failed ? failureText(finalReport.failureCode)
+    : status || "Negatives / Risks come from the Detailed Research report.";
+  els.risksGenerateButton.hidden = !(state === FinalReportState.NOT_GENERATED || failed);
+  els.risksGenerateButton.disabled = busy;
+}
+
+async function finalReportFailure(error, requestId, requestedUrl, fallbackCode) {
+  if (!isCurrentFinalReport(requestId, requestedUrl)) return;
+  if (error instanceof ApiError && error.status === 401) {
+    await requirePairingAfterUnauthorized();
+    return;
+  }
+  const code = error instanceof ApiError && error.code === "FINAL_REPORT_JOB_LIMIT_REACHED"
+    ? error.code : error instanceof ApiError && error.status !== 0 ? fallbackCode : "NETWORK";
+  setFinalReport({ state: FinalReportState.FAILED, failureCode: code, job: null });
+}
+
+async function loadFinalReportPanel(client, token, artifactId, requestId, requestedUrl) {
+  const panel = parsePanel(await client.getFinalReportView(token, artifactId));
+  if (!isCurrentFinalReport(requestId, requestedUrl)) return;
+  if (!panel) {
+    setFinalReport({ state: FinalReportState.FAILED, failureCode: "INVALID_VIEW", panel: null });
+    return;
+  }
+  setFinalReport({
+    state: panel.failed.length ? FinalReportState.PARTIAL : FinalReportState.READY,
+    panel, job: null, failureCode: null,
+  });
+}
+
+/** Look this page's report up; when none exists and `generate`, start generation. */
+async function ensureFinalReport({ generate }) {
+  if (!page.pageIdentity || !page.sourceUrl) return;
+  const key = pageKey(page.pageIdentity);
+  if (!key) return;
+  if (finalReport.sourceUrl === page.sourceUrl && finalReport.state !== FinalReportState.IDLE
+      && finalReport.state !== FinalReportState.NOT_GENERATED) return;
+  if (finalReport.sourceUrl === page.sourceUrl && finalReport.state === FinalReportState.NOT_GENERATED) {
+    if (generate) await generateFinalReport();
+    return;
+  }
+  const requestedUrl = page.sourceUrl;
+  const requestId = ++finalReportSeq;
+  finalReport = { ...IDLE_FINAL_REPORT, sourceUrl: requestedUrl };
+  setFinalReport({ state: FinalReportState.LOOKING });
+  const client = new ApiClient(await storage.getServiceBaseUrl());
+  const token = await storage.getToken();
+  try {
+    const report = latestFinalReport(await client.listFinalReportsForPage(token, key));
+    if (!isCurrentFinalReport(requestId, requestedUrl)) return;
+    if (report) {
+      await loadFinalReportPanel(client, token, report.artifactId, requestId, requestedUrl);
+      return;
+    }
+    setFinalReport({ state: FinalReportState.NOT_GENERATED });
+  } catch (error) {
+    await finalReportFailure(error, requestId, requestedUrl, "LOOKUP_FAILED");
+    return;
+  }
+  if (generate) await generateFinalReport();
+}
+
+/** Start (or join) backend generation for this page and follow it to a terminal state. */
+async function generateFinalReport() {
+  if (!page.pageIdentity || !page.sourceUrl || !pageKey(page.pageIdentity)) return;
+  if (finalReport.sourceUrl === page.sourceUrl && (finalReport.state === FinalReportState.GENERATING
+      || finalReport.state === FinalReportState.LOOKING)) return;
+  const requestedUrl = page.sourceUrl;
+  const requestId = ++finalReportSeq;
+  finalReport = { ...finalReport, sourceUrl: requestedUrl };
+  setFinalReport({ state: FinalReportState.GENERATING, job: null, failureCode: null });
+  const client = new ApiClient(await storage.getServiceBaseUrl());
+  const token = await storage.getToken();
+  let job;
+  try {
+    job = parseFinalReportJob(await client.createFinalReport(token, requestedUrl));
+  } catch (error) {
+    await finalReportFailure(error, requestId, requestedUrl, "GENERATION_REQUEST_FAILED");
+    return;
+  }
+  for (let polls = 0; job && polls < FINAL_REPORT_POLL.maxPolls; polls += 1) {
+    if (!isCurrentFinalReport(requestId, requestedUrl)) return;
+    setFinalReport({ job });
+    if (job.status === "READY" || job.status === "PARTIAL") {
+      try {
+        await loadFinalReportPanel(client, token, job.artifactId, requestId, requestedUrl);
+      } catch (error) {
+        await finalReportFailure(error, requestId, requestedUrl, "LOOKUP_FAILED");
+      }
+      return;
+    }
+    if (job.status === "FAILED") {
+      setFinalReport({ state: FinalReportState.FAILED, failureCode: job.failureCode, job: null });
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, FINAL_REPORT_POLL.ms));
+    if (!isCurrentFinalReport(requestId, requestedUrl)) return;
+    try {
+      job = parseFinalReportJob(await client.getFinalReportJob(token, job.jobId));
+    } catch (error) {
+      await finalReportFailure(error, requestId, requestedUrl,
+        error instanceof ApiError && error.status === 404 ? "JOB_LOST" : "GENERATION_REQUEST_FAILED");
+      return;
+    }
+  }
+  if (isCurrentFinalReport(requestId, requestedUrl)) {
+    setFinalReport({ state: FinalReportState.FAILED, failureCode: job ? "GENERATION_TIMEOUT" : "INVALID_JOB", job: null });
+  }
+}
+
+async function downloadFinalReport(format) {
+  const panel = finalReport.sourceUrl === page.sourceUrl ? finalReport.panel : null;
+  if (!panel || !panel.formats.includes(format)) return;
+  els.finalReportError.hidden = true;
+  const client = new ApiClient(await storage.getServiceBaseUrl());
+  const token = await storage.getToken();
+  try {
+    const { blob } = await client.getFinalReportFile(token, panel.artifactId, format);
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = finalReportFilename({ symbol: panel.symbol, asOf: panel.asOf }, format);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      await requirePairingAfterUnauthorized();
+      return;
+    }
+    els.finalReportError.textContent =
+      error instanceof ApiError ? "Could not retrieve this report file." : "The local service is not reachable.";
+    els.finalReportError.hidden = false;
   }
 }
 
@@ -670,6 +936,12 @@ async function downloadArtifact(artifactKind) {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
   } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      viewingReportId = null;
+      activeReport = null;
+      await requirePairingAfterUnauthorized();
+      return;
+    }
     els.artifactError.textContent =
       error instanceof ApiError ? "Could not retrieve this artifact." : "The local service is not reachable.";
     els.artifactError.hidden = false;
@@ -678,6 +950,15 @@ async function downloadArtifact(artifactKind) {
 
 els.researchButton.addEventListener("click", onResearchClick);
 els.generateSummaryButton.addEventListener("click", onGenerateSummaryClick);
+els.finalReportButton.addEventListener("click", () => generateFinalReport());
+els.risksGenerateButton.addEventListener("click", () => generateFinalReport());
+for (const [view, tab] of Object.entries(els.tabs)) {
+  tab.addEventListener("click", () => selectView(view));
+}
+showView("SUMMARY"); // the initial view; nothing is requested until a view is opened
+for (const [format, button] of Object.entries(els.finalReportFormats)) {
+  button.addEventListener("click", () => downloadFinalReport(format));
+}
 els.viewLastResearchButton.addEventListener("click", async () => {
   const report = await storage.getLastReport();
   if (report && report.reportId) {

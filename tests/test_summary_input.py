@@ -84,7 +84,9 @@ async def test_infy_standalone_projection(tmp_path, fixture_dir):
 
     quarterly = rows(summary.quarterly)
     assert list(quarterly) == ["sales", "operating_profit", "net_profit", "eps"]
+    # five quarters: the latest one and the same quarter a year earlier (year on year)
     assert [v.period for v in quarterly["sales"].values] == [
+        "Jun 2025",
         "Sep 2025",
         "Dec 2025",
         "Mar 2026",

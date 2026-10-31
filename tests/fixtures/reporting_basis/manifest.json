@@ -1,0 +1,48 @@
+{
+  "fixtures": [
+    {
+      "file": "hudco_standalone.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/HUDCO/",
+      "retrieved_at": "2026-10-18T05:37:29.419470Z",
+      "raw_artifact_id": "857540a3-b8f7-4bf4-be51-06f9ef5ce840",
+      "extraction_id": "bb3daa23-c933-4592-95fc-6d3db34fec5a",
+      "capture_sha256": "bc7d431247f54e2a1139ce8aaa1ceeb93474ec7e15afd4cfd3bbea5de72baa1e",
+      "sha256": "db3cdebc4f453248b4dd9f9414f30cfebded0bedc01333634d294b822d06d3c0",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    },
+    {
+      "file": "hudco_consolidated.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/HUDCO/consolidated/",
+      "retrieved_at": "2026-10-06T05:34:29.378265Z",
+      "raw_artifact_id": "92e27e85-ead2-4031-bc9d-c45194899970",
+      "extraction_id": "d377e2c8-bfbc-4746-a752-7adff34b6a42",
+      "capture_sha256": "93dce1e7780e9fd06d0afdc7fcd86d13e4aa75b1056e2eda7287fefdec43fa6b",
+      "sha256": "34678e81dd11a88250d33c75e9a8266bacf0952e9a8a782d9b4f387ee0b95482",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    },
+    {
+      "file": "tfci_consolidated.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/TFCILTD/consolidated/",
+      "retrieved_at": "2026-10-22T03:20:44.888132Z",
+      "raw_artifact_id": "7a9a9aa2-cd2c-4044-8fea-fe5f232b6909",
+      "extraction_id": "2a5a7958-c92b-4e60-8f62-a8031a3d5f09",
+      "capture_sha256": "32d1cafc8f8b546ead303936caa53e2363cf27c6e29a3f39b9e853ba40a21361",
+      "sha256": "3b2e6309e58f0dc9784c9f609b319f745a8ef02c1e1f253d90d45300c6d4e155",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    },
+    {
+      "file": "tfci_standalone.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/company/TFCILTD/",
+      "retrieved_at": "2026-10-22T03:20:45.043829Z",
+      "raw_artifact_id": "9efedffb-d9d2-4821-87d8-e6625246ec0f",
+      "extraction_id": "27e78355-6571-41ca-af22-83367c4aba6f",
+      "capture_sha256": "496807b71b4eeaacc6d05d514830fcdfeba67e58ba4abfb1744389d92d1826f4",
+      "sha256": "7e74aed256ad3d59e76a4d14ddffce2572176eb1b6c43a9e1e03daea5e0d44d5",
+      "sanitization": "Removed script/style/form blocks, input tags, inline event attributes by byte slicing. Tables and hrefs retained. No authenticated capture."
+    }
+  ]
+}

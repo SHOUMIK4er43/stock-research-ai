@@ -101,8 +101,8 @@ def test_keychain_separate_slot_and_env_precedence():
 def test_platform_keychain_slot_roundtrip_with_fake_runner():
     calls = []
 
-    def runner(argv):
-        calls.append(argv)
+    def runner(argv, stdin=None):
+        calls.append(argv + ([stdin] if stdin else []))
         return subprocess.CompletedProcess(argv, 0, "ai-key\n", "")
 
     keychain = MacOSKeychainSecretStore(runner=runner)
@@ -110,7 +110,8 @@ def test_platform_keychain_slot_roundtrip_with_fake_runner():
     assert resolve_analyst_api_key(
         Settings(_env_file=None, analyst_provider="aicredits"), keychain
     ) == ("ai-key", "keychain")
-    assert all(c[c.index("-a") + 1] == "aicredits-api-key" for c in calls)
+    assert '-a "aicredits-api-key"' in calls[0][-1]
+    assert calls[1][calls[1].index("-a") + 1] == "aicredits-api-key"
 
 
 def test_cli_provider_configuration_is_hidden_and_separate(monkeypatch, capsys):
@@ -155,7 +156,7 @@ def test_keychain_failure_traceback_does_not_disclose_value():
 
     secret = "p1-sensitive-keychain-value"
 
-    def runner(argv):
+    def runner(argv, stdin=None):
         raise subprocess.TimeoutExpired(argv, 10, stderr=secret)
 
     with pytest.raises(SecretStoreUnavailableError) as exc:
@@ -170,3 +171,25 @@ async def test_unknown_provider_refused_before_credential_lookup():
     with pytest.raises(RuntimeError, match="Unsupported"):
         await live_analyst_model(Settings(_env_file=None, analyst_provider="unknown"), store)
     assert store.lookups == []
+
+
+async def test_browser_service_starts_when_the_selected_provider_has_no_credential(tmp_path):
+    """Release smoke test (2026-10-23): with STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits
+    selected but no key yet, `serve-http` failed at startup ("Selected analyst provider
+    aicredits has no configured credential") - the whole service, Detailed Research and
+    pairing included, went down. The browser engine now starts without analyst services;
+    the CLI full-research path still fails closed (live_analyst_model still raises)."""
+    from stock_research_ai.bootstrap import (
+        AnalystConfigurationError,
+        browser_engine,
+        initialize_database,
+    )
+
+    settings = Settings(_env_file=None, analyst_provider="aicredits", aicredits_model="m",
+                        database_path=tmp_path / "db.sqlite3", artifact_path=tmp_path / "a")
+    await initialize_database(settings)
+    store = MemorySecrets()
+    with pytest.raises(AnalystConfigurationError):
+        await live_analyst_model(settings, store)
+    async with browser_engine(settings, store) as (engine, _artifacts, _industry):
+        assert (await engine.get_capabilities()).analysis_available is False

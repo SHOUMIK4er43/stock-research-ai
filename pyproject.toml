@@ -14,8 +14,9 @@ dependencies = [
     "mcp[cli]>=2.1.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
-    "pypdf>=6.18.0",
+    "pypdf>=6.19.0",
     "python-dotenv>=1.2.3",
+    "reportlab>=5.0.1",
     "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.52.4",
 ]
@@ -27,12 +28,22 @@ stock-research-ai = "stock_research_ai:main"
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# uv_build packages every file under the module directory and does not read .gitignore:
+# a local tool cache there (mypy writes SQLite files holding absolute local paths) would
+# otherwise ship inside the wheel and sdist.
+source-exclude = [".mypy_cache", ".ruff_cache", ".pytest_cache"]
+
 [dependency-groups]
+audit = [
+    "pip-audit==2.10.1",
+]
 dev = [
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.6",
+    "types-reportlab>=5.0.0.20261008",
 ]
 
 [tool.pytest.ini_options]

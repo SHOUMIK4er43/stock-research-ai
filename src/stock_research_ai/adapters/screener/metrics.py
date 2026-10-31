@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from stock_research_ai.adapters.screener.html import Node
+from stock_research_ai.adapters.screener.html import Node, owned
 from stock_research_ai.adapters.screener.values import parse_period, parse_value
 from stock_research_ai.domain.extraction import CoverageIssue, Section
 from stock_research_ai.domain.financial import (
@@ -84,6 +84,45 @@ LABELS = {
 }
 
 
+#: The node cap does not bound output: one cell is one observation, one row label or
+#: column header is copied into every observation of its row or column, and nested
+#: elements repeat their inner text. So every record kept from a page - observation,
+#: coverage issue, document or source link examined, peer row and peer value - is charged
+#: to one budget, with the source text it copies, before it is built. The largest of the
+#: 38 distinct real pages (fixtures and every stored artifact) charges 864 records (563
+#: statement observations); a full peers table adds ~110 and a layout change leaving every
+#: label unmapped would add an issue per observation. 4,000 is ~4.6x the largest page.
+MAX_EXTRACTION_RECORDS = 4_000
+#: Characters of source text (labels, headers, values, link text and targets) all records
+#: of one page may copy. The largest real page charges 77,160 (most of it the whitespace
+#: around cell values); 400,000 is ~5.2x that and keeps the stored extraction to MBs.
+MAX_EXTRACTION_TEXT = 400_000
+
+
+class ExtractionLimitExceeded(ValueError):
+    """The page yields more output than any real page could; nothing is kept from it."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"Extraction output limit exceeded: over {MAX_EXTRACTION_RECORDS} records or "
+            f"{MAX_EXTRACTION_TEXT} characters of source text"
+        )
+
+
+@dataclass
+class OutputBudget:
+    """One page's record and copied-text budget, charged before each record is built."""
+
+    records: int = 0
+    text: int = 0
+
+    def charge(self, *texts: str | None) -> None:
+        self.records += 1
+        self.text += sum(len(t) for t in texts if t)
+        if self.records > MAX_EXTRACTION_RECORDS or self.text > MAX_EXTRACTION_TEXT:
+            raise ExtractionLimitExceeded()
+
+
 def clean_label(label: str) -> str:
     return label.rstrip(" +\xa0").strip()
 
@@ -95,6 +134,12 @@ class ParseContext:
     scope: ReportingScope
     issues: list[CoverageIssue] = field(default_factory=list)
     definitions: dict[str, MetricDefinition] = field(default_factory=dict)
+    budget: OutputBudget = field(default_factory=OutputBudget)
+
+    def charge(self, *texts: str | None) -> None:
+        """Count one more record, and the source text it copies, before it is built;
+        past the budget, raise instead."""
+        self.budget.charge(*texts)
 
     def issue(
         self,
@@ -106,6 +151,7 @@ class ParseContext:
         value: str | None = None,
         error: bool = False,
     ) -> None:
+        self.charge(label, value)
         self.issues.append(
             CoverageIssue(
                 code=code,
@@ -131,9 +177,11 @@ class ParseContext:
         text: str | None = None,
         component: str = "",
     ) -> FinancialObservation:
+        source = cell.raw_text if text is None else text
+        self.charge(label, source, period.fiscal_label, period.original_date_key)
         cleaned = clean_label(label)
         metric = LABELS.get(cleaned)
-        parsed = parse_value(cell.raw_text if text is None else text, unit)
+        parsed = parse_value(source, unit)
         locator = cell.location(section.value)
         if component:
             locator = locator.model_copy(update={"locator": locator.locator + "/" + component})
@@ -190,7 +238,7 @@ def parse_top(node: Node, context: ParseContext) -> tuple[FinancialObservation, 
         PeriodFrequency.POINT_IN_TIME,
         instant=True,
     )
-    for item in node.all("li"):
+    for item in owned(node, "li"):
         label, value = item.by_class("name"), item.by_class("value")
         if label is None or value is None:
             context.issue(

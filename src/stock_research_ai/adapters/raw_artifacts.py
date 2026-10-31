@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from stock_research_ai.domain.provenance import AcquiredPayload, RawArtifact
+from stock_research_ai.private_files import ensure_private_dir
 
 
 class FileRawArtifactStore:
@@ -19,7 +20,7 @@ class FileRawArtifactStore:
         digest = hashlib.sha256(payload.content).hexdigest()
         relative = Path("sha256") / digest[:2] / f"{digest}.{payload.file_extension}"
         destination = self.root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(destination.parent)
         fd, name = tempfile.mkstemp(dir=destination.parent, prefix=".pending-")
         try:
             with os.fdopen(fd, "wb") as handle:

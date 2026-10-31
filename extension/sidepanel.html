@@ -51,22 +51,61 @@
 
       <section id="panel-ready" class="panel" hidden>
         <p id="current-page-label" class="muted"></p>
-        <div class="button-row">
-          <button id="research-button" type="button">Research Company</button>
-          <button id="view-last-research-button" type="button" class="secondary" hidden>
-            View last research
-          </button>
+        <nav class="view-tabs" role="tablist" aria-label="Research views">
+          <button id="tab-summary" type="button" role="tab" aria-selected="true">Summary</button>
+          <button id="tab-detailed" type="button" role="tab" aria-selected="false">Detailed Research</button>
+          <button id="tab-risks" type="button" role="tab" aria-selected="false">Negatives / Risks</button>
+        </nav>
+
+        <div id="view-summary" role="tabpanel">
+          <div class="button-row">
+            <button id="generate-summary-button" type="button">Generate Summary</button>
+          </div>
+          <div id="summary-view" aria-live="polite">
+            <p id="summary-loading" class="muted" hidden>
+              Generating summary… this usually takes 10–30 seconds.
+            </p>
+            <p id="summary-error" class="error-text" role="alert" hidden></p>
+            <div id="summary-result" hidden></div>
+          </div>
         </div>
-        <p id="analyst-warning" class="warning-text" hidden></p>
-        <div class="button-row">
-          <button id="generate-summary-button" type="button">Generate Summary</button>
+
+        <div id="view-detailed" role="tabpanel" hidden>
+          <div id="final-report-view">
+            <p id="final-report-status" class="muted" aria-live="polite" hidden></p>
+            <div class="button-row">
+              <button id="final-report-button" type="button">Generate Detailed Research</button>
+            </div>
+            <p id="final-report-error" class="error-text" role="alert" hidden></p>
+            <div id="final-report-content" hidden></div>
+            <div id="final-report-downloads" class="button-row" hidden>
+              <span class="muted">Download:</span>
+              <button id="final-report-pdf" type="button" class="secondary">PDF</button>
+              <button id="final-report-html" type="button" class="secondary">HTML</button>
+              <button id="final-report-markdown" type="button" class="secondary">Markdown</button>
+              <button id="final-report-json" type="button" class="secondary">JSON</button>
+            </div>
+          </div>
+          <details id="legacy-research" class="legacy">
+            <summary>Legacy full research (FULL_RESEARCH_V1, superseded)</summary>
+            <p class="muted">The earlier research pipeline, kept for compatibility. It is not the
+              Detailed Research report.</p>
+            <div class="button-row">
+              <button id="research-button" type="button" class="secondary">Run legacy research</button>
+              <button id="view-last-research-button" type="button" class="secondary" hidden>
+                View last legacy research
+              </button>
+            </div>
+            <p id="analyst-warning" class="warning-text" hidden></p>
+          </details>
         </div>
-        <div id="summary-view" aria-live="polite">
-          <p id="summary-loading" class="muted" hidden>
-            Generating summary… this usually takes 10–30 seconds.
-          </p>
-          <p id="summary-error" class="error-text" role="alert" hidden></p>
-          <div id="summary-result" hidden></div>
+
+        <div id="view-risks" role="tabpanel" hidden>
+          <p id="risks-status" class="muted" aria-live="polite"></p>
+          <div class="button-row">
+            <button id="risks-generate-button" type="button" hidden>Generate Detailed Research</button>
+          </div>
+          <div id="risks-content" hidden></div>
         </div>
       </section>
 

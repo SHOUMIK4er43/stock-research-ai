@@ -32,6 +32,32 @@
       "file": "peers_fragment.html",
       "kind": "synthetic_structural_fixture",
       "sha256": "90826714003b91efa4684ec4cd53c2f9e2d33de583d4ad52c3b803c622d71298"
+    },
+    {
+      "file": "peers_infy.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/api/company/1143/peers/",
+      "retrieved_at": "2026-10-06T06:12:31+00:00",
+      "headers": {
+        "date": "Tue, 06 Oct 2026 06:12:31 GMT",
+        "content-type": "text/html; charset=utf-8"
+      },
+      "capture_sha256": "284be60ea9ccf8378e036f09e0175d7252946e1e4b411e5b59e4e2baac76ebc3",
+      "sha256": "4a064235f2d20ca7f21bdfad525155f6cba37ffc74a2a67e3aa03972a323f0f7",
+      "sanitization": "Removed the single script block and trailing line whitespace by byte slicing. Table cells, row data attributes and hrefs retained. Anonymous request, no cookies or authentication."
+    },
+    {
+      "file": "peers_yesbank.html",
+      "kind": "sanitized_public_capture",
+      "url": "https://www.screener.in/api/company/6599833/peers/",
+      "retrieved_at": "2026-10-06T06:12:31+00:00",
+      "headers": {
+        "date": "Tue, 06 Oct 2026 06:12:31 GMT",
+        "content-type": "text/html; charset=utf-8"
+      },
+      "capture_sha256": "f076740726b9e38abf3ac4677b00f98ba87af9cc48b74e47cab328a84481bea0",
+      "sha256": "60c314bdb5874d46fbca162972da14645d64eb5015f61ff0c5065522c6810f2d",
+      "sanitization": "Removed the single script block and trailing line whitespace by byte slicing. Table cells, row data attributes and hrefs retained. Anonymous request, no cookies or authentication."
     }
   ]
 }

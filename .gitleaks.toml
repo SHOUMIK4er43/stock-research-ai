@@ -1,0 +1,17 @@
+# Secret scanning (gitleaks) - the default ruleset plus ONE narrow false-positive exception.
+title = "stock-research-ai gitleaks config"
+
+[extend]
+useDefault = true
+
+# Report-snapshot fixtures cite evidence by `item_key`: random UUIDs and snake_case ids
+# (verified: 48 UUIDs + 2 ids), which the generic-api-key heuristic mistakes for keys.
+# Only that rule, only an `item_key` match, only these two fixtures (both the current
+# extension copy and the historical v2/ copy) - every other rule and path still applies.
+[[allowlists]]
+description = "report fixture item_key identifiers are not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "match"
+regexes = ['''^item_key"?\s*:''']
+paths = ['''^(v2/)?extension/tests/fixtures/(real_yesbank_report\.json|report_fixtures\.js)$''']

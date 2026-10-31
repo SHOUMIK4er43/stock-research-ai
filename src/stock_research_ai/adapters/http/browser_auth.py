@@ -5,27 +5,48 @@ A security domain completely separate from Anthropic/AnalystModel credentials
 database, is never committed (it lives under the user's home directory, matching
 Settings.database_path's own convention), and no research endpoint can read or alter
 it. Only a token's SHA-256 hash is ever persisted - never the raw token or pairing code.
+
+Token lifecycle (file version 2): every bearer carries a server-side `issued_at` /
+`expires_at` (timezone-aware UTC, server clock only - nothing from the client is
+trusted) and stops verifying at expiry; the default lifetime is 30 days. `revoke()` (CLI
+`revoke-pairing`) erases both the paired and any pending record, so the bearer fails on
+the very next request; re-pairing likewise replaces the previous token at once. A
+pairing file from an older version (no expiry metadata) or one that cannot be read is
+treated as "not paired": the old token fails and the user pairs again - it is never
+granted a fresh lifetime.
 """
 
 import hashlib
 import hmac
-import os
 import secrets
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
+
+from stock_research_ai.logging_setup import register_secret
+from stock_research_ai.private_files import write_private_file
 
 DEFAULT_PAIRING_CODE_TTL_SECONDS = 300
+#: Bearer lifetime. Long enough that a single local user re-runs `pair-code` about once
+#: a month, short enough that a token copied out of extension storage (or forgotten on
+#: an old browser profile) does not stay valid indefinitely.
+DEFAULT_TOKEN_TTL = timedelta(days=30)
+_FILE_VERSION = 2
 
-#: Part 6C-A pairing brute-force hardening. In-memory only (no new DB table, no
-#: persisted state) - a restart clears any active cooldown, and this protects only
-#: against accidental/brute-force local guessing of a short-lived pairing code, not
-#: internet-scale abuse (there is no internet-facing surface to abuse: loopback only).
+#: Part 6C-A pairing brute-force hardening, kept per attempted Origin. In-memory only (no
+#: persisted state) - a restart clears every cooldown. It contains guessing of a
+#: short-lived pairing code and stops failures from one Origin locking out another; it
+#: cannot tell a local process forging the configured extension's Origin header from the
+#: real extension (any local process can send any header). Lockout never affects an
+#: already-paired token: `verify()` does not consult it.
 _MAX_FAILED_PAIRING_ATTEMPTS = 5
 _FAILED_ATTEMPT_WINDOW_SECONDS = 60.0
 _COOLDOWN_SECONDS = 60.0
+_MAX_TRACKED_ORIGINS = 32
 
 
 class PairingError(ValueError):
@@ -52,13 +73,14 @@ class _PairedExtension(BaseModel):
 
     origin: str
     token_hash: str
-    paired_at: AwareDatetime
+    issued_at: AwareDatetime
+    expires_at: AwareDatetime
 
 
 class _PairingFile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: int = _FILE_VERSION
     pending: _PendingPairing | None = None
     paired: _PairedExtension | None = None
 
@@ -67,30 +89,51 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _normalize_origin(origin: str) -> str:
+    return origin.strip().lower()
+
+
+@dataclass
+class _FailureBucket:
+    attempts: list[float] = field(default_factory=list)
+    locked_out_until: float | None = None
+    last_seen: float = 0.0
+
+
 class PairingStore:
     """Exactly one paired extension at a time (V1: a single local user running a single
     extension instance). Re-pairing replaces the previous paired record entirely - the
     old token stops verifying immediately."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        token_ttl: timedelta = DEFAULT_TOKEN_TTL,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        monotonic: Callable[[], float] | None = None,
+    ) -> None:
+        if token_ttl <= timedelta(0):
+            raise ValueError("token_ttl must be positive")
         self._path = path
-        # Part 6C-A: in-memory brute-force state - deliberately never persisted (see
-        # module docstring above the constants).
-        self._failed_attempt_times: list[float] = []
-        self._locked_out_until: float | None = None
+        self._token_ttl = token_ttl
+        self._now = now
+        self._monotonic = monotonic or (lambda: time.monotonic())
+        # Part 6C-A: in-memory brute-force state per attempted Origin - deliberately
+        # never persisted (see the module constants). Bounded to _MAX_TRACKED_ORIGINS.
+        self._failures: dict[str, _FailureBucket] = {}
 
     def _read(self) -> _PairingFile:
-        if not self._path.exists():
+        """Fail closed: a missing, unreadable or older-version file reads as unpaired."""
+        try:
+            data = _PairingFile.model_validate_json(self._path.read_text())
+        except (OSError, ValueError, ValidationError):
             return _PairingFile()
-        return _PairingFile.model_validate_json(self._path.read_text())
+        return data if data.version == _FILE_VERSION else _PairingFile()
 
     def _write(self, data: _PairingFile) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(data.model_dump_json())
-        try:
-            os.chmod(self._path, 0o600)
-        except OSError:
-            pass  # best-effort: not every filesystem/OS supports POSIX permission bits
+        # Token hashes are never on disk wider than 0600, and never half-written.
+        write_private_file(self._path, data.model_dump_json())
 
     def issue_pairing_code(self, ttl_seconds: int = DEFAULT_PAIRING_CODE_TTL_SECONDS) -> str:
         """Generates a cryptographically random, short-lived, single-use pairing code
@@ -99,43 +142,52 @@ class PairingStore:
         must receive this initial code through some out-of-band channel, e.g. a future
         CLI command)."""
         code = secrets.token_urlsafe(16)
+        register_secret(code)
         data = self._read()
         self._write(
             data.model_copy(
                 update={
                     "pending": _PendingPairing(
                         code_hash=_hash(code),
-                        expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+                        expires_at=self._now() + timedelta(seconds=ttl_seconds),
                     )
                 }
             )
         )
         return code
 
-    def _check_not_locked_out(self) -> None:
-        if self._locked_out_until is None:
+    def _check_not_locked_out(self, origin: str) -> None:
+        bucket = self._failures.get(origin)
+        if bucket is None or bucket.locked_out_until is None:
             return
-        remaining = self._locked_out_until - time.monotonic()
+        remaining = bucket.locked_out_until - self._monotonic()
         if remaining <= 0:
-            self._locked_out_until = None
-            self._failed_attempt_times = []
+            del self._failures[origin]
             return
         raise PairingLockedOutError(
             f"Too many failed pairing attempts. Try again in {remaining:.0f}s."
         )
 
-    def _record_failed_attempt(self) -> None:
-        now = time.monotonic()
-        self._failed_attempt_times = [
-            t for t in self._failed_attempt_times if now - t < _FAILED_ATTEMPT_WINDOW_SECONDS
-        ]
-        self._failed_attempt_times.append(now)
-        if len(self._failed_attempt_times) >= _MAX_FAILED_PAIRING_ATTEMPTS:
-            self._locked_out_until = now + _COOLDOWN_SECONDS
+    def _record_failed_attempt(self, origin: str) -> None:
+        now = self._monotonic()
+        bucket = self._failures.get(origin)
+        if bucket is None:
+            if len(self._failures) >= _MAX_TRACKED_ORIGINS:
+                # Evict the least recently seen origin that is not locked out right now;
+                # if every tracked origin is locked out, the least recently seen one.
+                def eviction_order(item: tuple[str, _FailureBucket]) -> tuple[bool, float]:
+                    locked = (item[1].locked_out_until or 0) > now
+                    return locked, item[1].last_seen
 
-    def _reset_failed_attempts(self) -> None:
-        self._failed_attempt_times = []
-        self._locked_out_until = None
+                del self._failures[min(self._failures.items(), key=eviction_order)[0]]
+            bucket = self._failures[origin] = _FailureBucket()
+        bucket.attempts = [
+            t for t in bucket.attempts if now - t < _FAILED_ATTEMPT_WINDOW_SECONDS
+        ]
+        bucket.attempts.append(now)
+        bucket.last_seen = now
+        if len(bucket.attempts) >= _MAX_FAILED_PAIRING_ATTEMPTS:
+            bucket.locked_out_until = now + _COOLDOWN_SECONDS
 
     def complete_pairing(self, origin: str, pairing_code: str) -> str:
         """Validates a one-time pairing code against the CURRENT request's own Origin
@@ -144,9 +196,10 @@ class PairingStore:
         with (origin, new token). Returns the new token in plaintext exactly once.
 
         Part 6C-A: raises PairingLockedOutError (never attempting validation at all)
-        if too many attempts have failed recently - see the module-level constants.
-        A successful pairing resets the failure counter entirely."""
-        self._check_not_locked_out()
+        if too many attempts from this Origin have failed recently - see the module-level
+        constants. A successful pairing clears this Origin's failure state."""
+        bucket_key = _normalize_origin(origin)
+        self._check_not_locked_out(bucket_key)
         try:
             if not origin.startswith("chrome-extension://"):
                 raise PairingError("Pairing is only permitted for a chrome-extension:// origin")
@@ -154,25 +207,36 @@ class PairingStore:
             pending = data.pending
             if pending is None or pending.used:
                 raise PairingError("No pairing is currently pending")
-            if datetime.now(UTC) > pending.expires_at:
+            if self._now() > pending.expires_at:
                 raise PairingError("Pairing code has expired")
             if not hmac.compare_digest(pending.code_hash, _hash(pairing_code)):
                 raise PairingError("Invalid pairing code")
         except PairingError:
-            self._record_failed_attempt()
+            self._record_failed_attempt(bucket_key)
             raise
         token = secrets.token_urlsafe(32)
+        register_secret(token)
+        issued_at = self._now()
         self._write(
             _PairingFile(
-                version=data.version,
                 pending=pending.model_copy(update={"used": True}),
                 paired=_PairedExtension(
-                    origin=origin, token_hash=_hash(token), paired_at=datetime.now(UTC)
+                    origin=origin,
+                    token_hash=_hash(token),
+                    issued_at=issued_at,
+                    expires_at=issued_at + self._token_ttl,
                 ),
             )
         )
-        self._reset_failed_attempts()
+        self._failures.pop(bucket_key, None)
         return token
+
+    def revoke(self) -> None:
+        """Erase the paired extension and any pending pairing code. The previous bearer
+        fails on its next request; nothing secret is left behind (only hashes were ever
+        stored). Needs no provider credential."""
+        self._write(_PairingFile())
+        self._failures.clear()
 
     def verify(self, origin: str | None, token: str | None) -> bool:
         """Require the paired bearer; reject an explicitly different Origin.
@@ -187,7 +251,12 @@ class PairingStore:
             return False
         if origin is not None and origin != paired.origin:
             return False
-        return hmac.compare_digest(paired.token_hash, _hash(token))
+        if self._now() >= paired.expires_at:
+            return False
+        if not hmac.compare_digest(paired.token_hash, _hash(token)):
+            return False
+        register_secret(token)  # only a valid bearer: callers cannot grow the registry
+        return True
 
     def paired_origin(self) -> str | None:
         paired = self._read().paired

@@ -1,32 +1,95 @@
 """Bounded anonymous HTTP acquisition; replay never constructs an HTTP client."""
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
 
 import httpx
 
-from stock_research_ai.domain.extraction import ExtractionRequest
+from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
+from stock_research_ai.domain.financial import PeriodFrequency
 from stock_research_ai.domain.provenance import AcquiredPayload, RetrievalStatus, SourceRetrieval
 
 MAX_BYTES = 5_000_000
 
 
 def validate_url(url: str) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # urlsplit's own ValueError (e.g. a netloc invalid under NFKC normalization) quotes
+        # the raw netloc: replace it with the fixed text below (P2-6).
+        raise ValueError("Expected a public https://www.screener.in/company/.../ URL") from None
+    # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
+    # it reach an error message (P2-6). -1 is refused below like any other port.
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
     if (
         parts.scheme != "https"
         or parts.hostname != "www.screener.in"
         or parts.username
         or parts.password
-        or parts.port not in {None, 443}
+        or port not in {None, 443}
         or parts.query
         or parts.fragment
         or not re.fullmatch(r"/company/[A-Za-z0-9_-]+/(?:consolidated/)?", parts.path)
     ):
         raise ValueError("Expected a public https://www.screener.in/company/.../ URL")
     return url
+
+
+def analytical_page_urls(source_url: str) -> tuple[str, str]:
+    """(consolidated, standalone) pages of the URL's company, in acquisition order: the
+    first page that yields the company is the primary (analytical-basis) page. Summary and
+    Detailed Research both acquire through this one order, so a company page opened in
+    either view gives both products the same reporting basis."""
+    url = validate_url(source_url)
+    slug = urlsplit(url).path.split("/")[2]
+    base = f"https://www.screener.in/company/{slug}/"
+    return base + "consolidated/", base
+
+
+def carries_statements(extraction: CompanyExtractionResult) -> bool:
+    """A page can be the analytical-basis page only when it carries statement values on its
+    own basis - the page-level form of select_analytical_basis (CONSOLIDATED only when Box 4
+    holds consolidated statement values). A consolidated view that names the company but
+    holds no consolidated statements (only security-level snapshot metrics) never makes a
+    Summary 'consolidated' while Detailed Research is standalone."""
+    company = extraction.company
+    if company is None:
+        return False
+    return any(
+        o.value is not None and o.reporting_scope == company.reporting_scope
+        for o in (*extraction.profit_loss, *extraction.balance_sheet, *extraction.cashflow,
+                  *extraction.quarterly)
+    )
+
+
+def latest_annual_end(extraction: CompanyExtractionResult) -> date | None:
+    """The latest annual statement period end the page carries on its own basis."""
+    company = extraction.company
+    if company is None:
+        return None
+    return max((o.period.end_date for o in (*extraction.profit_loss, *extraction.balance_sheet)
+                if o.value is not None and o.period.end_date is not None
+                and o.period.frequency in (PeriodFrequency.ANNUAL, PeriodFrequency.POINT_IN_TIME)
+                and o.reporting_scope == company.reporting_scope), default=None)
+
+
+def analytical_order(extractions: list[CompanyExtractionResult]) -> list[int]:
+    """Indexes in analytical-basis order (acquisition order = consolidated first): a page
+    carrying statements beats one that does not, and a consolidated page whose latest annual
+    statements are older than the standalone page's is never primary - the page-level form
+    of financial_analytics.select_analytical_basis."""
+    order = sorted(range(len(extractions)), key=lambda i: not carries_statements(extractions[i]))
+    if len(order) > 1 and carries_statements(extractions[order[1]]):
+        first, second = (latest_annual_end(extractions[i]) for i in order[:2])
+        if first is not None and second is not None and first < second:
+            order[0], order[1] = order[1], order[0]
+    return order
 
 
 class ScreenerSource:

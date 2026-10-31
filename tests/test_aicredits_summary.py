@@ -137,7 +137,7 @@ async def test_exact_request_body_and_headers():
     body = json.loads(request.content)
     assert body == {
         "model": MODEL,
-        "max_tokens": 1500,
+        "max_tokens": 4000,
         "messages": [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": USER},
@@ -340,7 +340,7 @@ def test_construction_rejects_unusable_configuration():
         ({"api_key": SECRET, "model": " "}, SummaryErrorCode.PROVIDER_NOT_CONFIGURED),
         ({"api_key": SECRET, "model": MODEL + " "}, SummaryErrorCode.PROVIDER_NOT_CONFIGURED),
         (
-            {"api_key": SECRET, "model": MODEL, "max_output_tokens": 1501},
+            {"api_key": SECRET, "model": MODEL, "max_output_tokens": 4001},
             SummaryErrorCode.PROVIDER_NOT_CONFIGURED,
         ),
     ):
@@ -405,7 +405,8 @@ def test_from_settings_failures_are_typed(overrides, stored, code):
 async def test_generate_summary_through_the_adapter_with_mock_transport(tmp_path, fixture_dir):
     value = project_summary_input(await replay(tmp_path, fixture_dir, INFY))
     system, user = build_summary_messages(value)
-    handler = ok(payload())
+    catalog = json.loads(user.split("\n", 1)[1])
+    handler = ok(payload(json.dumps({"claim_ids": [item["id"] for item in catalog["claims"]]})))
     result = await generate_summary(
         value,
         model_for(handler),
@@ -420,6 +421,7 @@ async def test_generate_summary_through_the_adapter_with_mock_transport(tmp_path
     ]
     assert len(request.content) < adapter.MAX_REQUEST_BYTES
     assert result.company.name == "Infosys Ltd"
-    assert result.summary_text == TEXT
+    assert "Infosys Ltd — Standalone figures from the Screener page" in result.summary_text
+    assert result.grounding_claims
     assert result.reported_model == "claude-sonnet-5"
     assert result.provider == "aicredits"

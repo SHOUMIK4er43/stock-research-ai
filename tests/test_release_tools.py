@@ -19,6 +19,7 @@ from stock_research_ai.release_tools import (
     render_launch_agent_plist,
     scan_for_forbidden_markers,
     sha256_of_file,
+    validate_backend_archive,
     validate_extension_zip,
     validate_launch_agent_plist,
     write_release_manifest,
@@ -263,6 +264,56 @@ def test_validate_extension_zip_flags_an_embedded_secret_marker(tmp_path) -> Non
     assert any("sk-ant-" in p for p in problems)
 
 
+# --- Backend wheel / sdist -----------------------------------------------------------
+
+
+def test_validate_backend_archive_flags_a_tool_cache_database_in_a_wheel(tmp_path) -> None:
+    """Release smoke test (2026-10-23): uv_build does not read .gitignore, so a stray
+    src/stock_research_ai/.mypy_cache (SQLite files holding absolute local paths) shipped
+    inside the wheel and sdist."""
+    wheel = tmp_path / "pkg-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("stock_research_ai/__init__.py", "")
+        archive.writestr("stock_research_ai/.mypy_cache/3.12/cache.0.db", b"SQLite")
+        archive.writestr("stock_research_ai/data/research.sqlite3", b"SQLite")
+    problems = validate_backend_archive(wheel)
+    assert any(".mypy_cache/3.12/cache.0.db" in p for p in problems)
+    assert any("research.sqlite3" in p for p in problems)
+
+
+def test_validate_backend_archive_flags_an_env_file_in_an_sdist(tmp_path) -> None:
+    import io
+    import tarfile
+
+    sdist = tmp_path / "pkg-0.1.0.tar.gz"
+    with tarfile.open(sdist, "w:gz") as archive:
+        for name in ("pkg-0.1.0/src/stock_research_ai/__init__.py", "pkg-0.1.0/.env.local"):
+            info = tarfile.TarInfo(name)
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+    problems = validate_backend_archive(sdist)
+    assert problems == ["forbidden file present in pkg-0.1.0.tar.gz: pkg-0.1.0/.env.local"]
+
+
+def test_validate_backend_archive_accepts_code_fonts_and_metadata(tmp_path) -> None:
+    wheel = tmp_path / "pkg-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name in ("stock_research_ai/__init__.py",
+                     "stock_research_ai/adapters/rendering/fonts/DejaVuSansCondensed.ttf",
+                     "stock_research_ai-0.1.0.dist-info/METADATA"):
+            archive.writestr(name, "x")
+    assert validate_backend_archive(wheel) == []
+
+
+def test_pyproject_excludes_tool_caches_from_the_build_backend() -> None:
+    import tomllib
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text())
+    excluded = set(config["tool"]["uv"]["build-backend"]["source-exclude"])
+    assert {".mypy_cache", ".ruff_cache", ".pytest_cache"} <= excluded
+
+
 # --- LaunchAgent plist ---------------------------------------------------------------
 
 
@@ -382,3 +433,20 @@ def test_forbidden_marker_scan_does_not_flag_legitimate_authorization_header_cod
     assert client_js.is_file()
     assert "Authorization" in client_js.read_text()
     assert scan_for_forbidden_markers([client_js]) == {}
+
+
+def test_launch_agent_plist_refuses_a_non_allowlisted_environment_key(tmp_path) -> None:
+    with pytest.raises(ReleaseValidationError):
+        render_launch_agent_plist(
+            label=LAUNCH_AGENT_LABEL,
+            program_arguments=["/x/stock-research-ai", "serve-http"],
+            stdout_path=tmp_path / "out.log",
+            stderr_path=tmp_path / "err.log",
+            environment={"STOCK_RESEARCH_AI_AICREDITS_API_KEY": "planted"},
+        )
+    smuggled = plistlib.dumps({"Label": LAUNCH_AGENT_LABEL, "ProgramArguments": ["x"],
+                               "RunAtLoad": True, "StandardOutPath": "o",
+                               "StandardErrorPath": "e",
+                               "EnvironmentVariables": {"STOCK_RESEARCH_AI_ANALYST_API_KEY": "v"}})
+    assert any("non-allowlisted" in p
+               for p in validate_launch_agent_plist(smuggled, LAUNCH_AGENT_LABEL))

@@ -221,3 +221,47 @@ def test_render_launchagent_cli_defaults_executable_to_argv0(tmp_path, monkeypat
     data = plistlib.loads(plist_path.read_bytes())
     assert data["ProgramArguments"][1] == "serve-http"
     assert data["ProgramArguments"][0]  # some resolved executable path, non-empty
+
+
+def test_render_launchagent_carries_the_non_secret_service_settings(tmp_path, monkeypatch) -> None:
+    """Release smoke test (2026-10-23): launchd starts the service with an empty
+    environment, so a clean install had no approved extension origin and a valid pairing
+    code was rejected (POST /v1/pair 401). The installer's non-secret selectors now reach
+    the LaunchAgent; API keys never do."""
+    import plistlib
+
+    monkeypatch.setenv("STOCK_RESEARCH_AI_DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("STOCK_RESEARCH_AI_BROWSER_AUTH_PATH", str(tmp_path / "auth.json"))
+    monkeypatch.setenv("STOCK_RESEARCH_AI_LOG_PATH", str(tmp_path / "logs" / "service.log"))
+    origin = "chrome-extension://" + "a" * 32
+    monkeypatch.setenv("STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN", origin)
+    monkeypatch.setenv("STOCK_RESEARCH_AI_ANALYST_PROVIDER", "aicredits")
+    monkeypatch.setenv("STOCK_RESEARCH_AI_AICREDITS_MODEL", "some-model")
+    monkeypatch.setenv("STOCK_RESEARCH_AI_HTTP_PORT", "8765")
+    monkeypatch.setenv("STOCK_RESEARCH_AI_AICREDITS_API_KEY", "planted-aicredits-value")
+    monkeypatch.setenv("STOCK_RESEARCH_AI_ANALYST_API_KEY", "planted-anthropic-value")
+    plist_path = tmp_path / "out.plist"
+
+    main(["render-launchagent", "--output", str(plist_path), "--executable", "/x/srai"])
+
+    data = plistlib.loads(plist_path.read_bytes())
+    assert data["EnvironmentVariables"] == {
+        "STOCK_RESEARCH_AI_AICREDITS_MODEL": "some-model",
+        "STOCK_RESEARCH_AI_ANALYST_PROVIDER": "aicredits",
+        "STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN": origin,
+        "STOCK_RESEARCH_AI_HTTP_PORT": "8765",
+    }
+    assert "planted" not in plist_path.read_text()
+
+
+def test_render_launchagent_without_settings_has_no_environment(tmp_path, monkeypatch) -> None:
+    import plistlib
+
+    from stock_research_ai.release_tools import LAUNCH_AGENT_ENVIRONMENT_KEYS
+
+    for key in LAUNCH_AGENT_ENVIRONMENT_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("STOCK_RESEARCH_AI_LOG_PATH", str(tmp_path / "logs" / "service.log"))
+    plist_path = tmp_path / "out.plist"
+    main(["render-launchagent", "--output", str(plist_path), "--executable", "/x/srai"])
+    assert "EnvironmentVariables" not in plistlib.loads(plist_path.read_bytes())

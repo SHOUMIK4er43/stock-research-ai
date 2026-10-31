@@ -51,7 +51,12 @@ def parse_statements(
                 continue
             label = row[0].text
             if clean_label(label) == "Raw PDF":
-                continue  # References, not numeric financial observations.
+                # References, not numeric financial observations - but evidence discovery
+                # reads each link (with its column header), so each is charged.
+                for header, cell in zip(headers, row[1:], strict=False):
+                    for anchor in (a for a in cell.all("a") if "href" in a.attrs):
+                        context.charge(header.text, anchor.attrs["href"])
+                continue
             if len(row) != len(headers) + 1 or not label:
                 context.issue(
                     section,

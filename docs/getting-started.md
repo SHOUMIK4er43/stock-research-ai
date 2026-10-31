@@ -8,8 +8,8 @@ Stock Research AI has two parts that work together:
 - a small **local backend service** that runs on your own Mac and does the research
 - a **Chrome extension side panel** you use to trigger and read research
 
-Nothing about your research ever leaves your Mac except the one request your backend
-sends to Anthropic when you click "Research Company" (see
+Research runs on your Mac. The backend fetches public pages and filings, and the Summary
+view sends a bounded set of the page's figures to the AI provider you configured (see
 [`privacy-disclosure.md`](privacy-disclosure.md) for the exact details).
 
 ## 1. Obtain the release bundle
@@ -29,6 +29,7 @@ stock-research-ai-release/
     SHA256SUMS
     getting-started.md
     privacy-disclosure.md
+    v1-user-guide.md
 ```
 
 If it arrived as a ZIP, double-click it in Finder to extract the folder, then open a
@@ -71,17 +72,18 @@ You'll see a confirmation message once it's healthy. **Running this same command
 later upgrades you in place** — your existing research is never touched (see
 [Upgrading](#12-upgrading)).
 
-## 4. Configure your Anthropic credential
+## 4. Configure the Summary provider
 
-Stock Research AI uses Anthropic's API to run the analytical part of each research
-run. Store your API key securely in your Mac's own Keychain (never in a plain text
-file):
+Detailed Research and Negatives need no AI credential: they are computed locally and
+deterministically. The **Summary** view uses the AI Credits provider. Store the key in your
+Mac's Keychain (never in a plain text file):
 
 ```sh
-stock-research-ai configure-analyst
+stock-research-ai configure-analyst --provider aicredits
 ```
 
 You'll be prompted to paste your key — it will not be displayed on screen as you type.
+The provider and model are selected in step 7, together with the extension.
 
 ## 5. Confirm everything is set up
 
@@ -113,6 +115,20 @@ manually from the extracted folder:
 3. Turn on **Developer mode** (top-right toggle).
 4. Click **Load unpacked** and select the folder you just extracted.
 5. You should see "Stock Research AI" appear in your extensions list with its icon.
+6. Copy its **ID** (32 letters, shown on the extension's card), then, in Terminal from inside
+   the release folder, record the service settings and re-run the installer:
+
+   ```sh
+   export STOCK_RESEARCH_AI_BROWSER_EXTENSION_ORIGIN=chrome-extension://<the ID you copied>
+   export STOCK_RESEARCH_AI_ANALYST_PROVIDER=aicredits
+   export STOCK_RESEARCH_AI_AICREDITS_MODEL=<model id>
+   ./install-macos.sh
+   ```
+
+   The background service starts without your Terminal's settings, so the installer writes
+   these (never your key) into it and restarts it. Only this extension can pair; without
+   the origin, pairing always fails. Re-run it the same way if you ever move the extension
+   folder (Chrome derives the ID from the folder) or change the model.
 
 ## 8. Generate a pairing code
 
@@ -138,20 +154,24 @@ Navigate to a company page on Screener, for example:
 https://www.screener.in/company/INFY/
 ```
 
-The side panel will show a "Research Company" button once it recognizes the page.
+The side panel shows the **Summary** and **Detailed Research** tabs once it recognizes the page.
 
-## 11. Research Company
+## 11. Summary, Detailed Research and Negatives
 
-Click **Research Company**. You'll see real progress stages (preparing, evidence,
-analysis, challenge, report) — never a fake percentage. This step is the one point
-where your backend sends data to Anthropic's API to run the analysis.
+- **Summary** — click **Generate Summary** for a short summary grounded in the page's cited
+  figures (the only step that calls the AI provider).
+- **Detailed Research** — click **Generate Detailed Research**. The report runs locally and
+  opens in the panel when ready; download it as PDF, HTML, Markdown or JSON.
+- **Negatives / Risks** — the same report's company risks, kept apart from data limitations.
 
-## 12. View the report
+## 12. Reading the report
 
-Once complete, click **View Research** to open the full institutional report inside
-the side panel — sections, evidence, the independent challenger's findings, and more.
-You can also download the Institutional Report, Investor Brief, or Research JSON from
-inside the report view.
+The top of each report states the analytical basis, the control basis, the business
+classification, and **Research completeness** (Complete / Partial / Unavailable) — separate
+from the panel's "Ready" message, which only means the report was produced. See the
+[V1 user guide](v1-user-guide.md) for what each status means and the known V1 limitations
+(for example, valuation needs explicitly supplied multiples and is otherwise *Data
+unavailable*).
 
 ## 13. Back up your research
 
@@ -159,7 +179,10 @@ inside the report view.
 stock-research-ai backup --output ~/Desktop/stock-research-ai-backup
 ```
 
-This safely copies your research database and evidence (never your Anthropic key).
+This safely copies your research database and evidence (never your AI provider key).
+Generated Detailed Research report files (`~/.stock-research-ai/final-reports/`) are **not**
+included; to keep past reports, copy that folder as well, or download the ones you need
+(PDF / HTML / Markdown / JSON).
 
 ## 14. Upgrading
 
@@ -186,8 +209,10 @@ undone).
   `stock-research-ai diagnostics`.
 - **Extension shows "not paired"** — run `stock-research-ai pair-code` again and pair
   once more.
-- **Port already in use** — set `STOCK_RESEARCH_AI_HTTP_PORT` to a different port
-  before installing, or stop whatever else is using port 8000.
+- **Port already in use** — the extension connects to port 8000; stop whatever else is
+  using port 8000, then restart the service (below).
+- **"Pairing failed" with a fresh code** — the service has no (or another) extension
+  origin: repeat step 7.6 with the ID shown in `chrome://extensions`.
 - **"uv was not found"** — install `uv` from https://astral.sh/uv first.
 
 ## Restart the service manually (rarely needed)

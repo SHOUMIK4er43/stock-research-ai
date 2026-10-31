@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -26,6 +27,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         "pair-code",
         help="Issue a one-time browser-extension pairing code (Part 6B-A); printed once, "
         "used with POST /v1/pair",
+    )
+    commands.add_parser(
+        "revoke-pairing",
+        help="Revoke the paired browser extension and any pending pairing code; its token "
+        "stops working immediately (pair again with `pair-code`)",
     )
     configure_analyst_cmd = commands.add_parser(
         "configure-analyst",
@@ -183,6 +189,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     full_research_cmd.add_argument("--source-url", required=True)
     full_research_cmd.add_argument("--output", type=Path, required=True)
+    from stock_research_ai.adapters.rendering import cli as final_report_cli
+
+    final_report_cli.add_parser(commands)
+    final_report_cli.add_stage_parser(commands)
     args = parser.parse_args(argv)
 
     # Normal Python logging defaults to stderr, preserving MCP's protocol stdout.
@@ -296,6 +306,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(f"warning [{warning.stage}] {warning.code}: {warning.message}", file=sys.stderr)
         print(f"Full research exported: {args.output}")
         raise SystemExit(0)
+    elif args.command == "detailed-research-stage":
+        try:
+            exit_code = final_report_cli.run_stage(args)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        raise SystemExit(exit_code)
+    elif args.command == "detailed-research":
+        try:
+            exit_code = final_report_cli.run(args, settings)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        raise SystemExit(exit_code)
     elif args.command == "evaluate-valuation":
         from stock_research_ai.bootstrap import evaluate_valuation
         from stock_research_ai.domain.valuation import ValuationRequest
@@ -481,7 +503,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         from stock_research_ai.interfaces.http import create_app
         from stock_research_ai.logging_setup import configure_logging
 
-        service_logger = configure_logging(settings.log_path)
+        service_logger = configure_logging(
+            settings.log_path,
+            known_secrets=[
+                secret.get_secret_value()
+                for secret in (settings.analyst_api_key, settings.aicredits_api_key)
+                if secret is not None
+            ],
+        )
         # Part 6C-A single-process/single-worker invariant: BrowserJobManager holds
         # in-flight research jobs in memory, so a second worker process would never
         # see (and could never resolve) jobs launched against the first - there is
@@ -516,6 +545,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         code = PairingStore(settings.browser_auth_path).issue_pairing_code()
         print(code)
+    elif args.command == "revoke-pairing":
+        from stock_research_ai.adapters.http.browser_auth import PairingStore
+
+        PairingStore(settings.browser_auth_path).revoke()
+        print("Browser extension pairing revoked. Run `stock-research-ai pair-code` to pair again.")
     elif args.command == "configure-analyst":
         import getpass
 
@@ -530,7 +564,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("No API key entered.")
         try:
             store_analyst_api_key_in_keychain(api_key, provider=args.provider)
-        except SecretStoreUnavailableError as exc:
+        except (SecretStoreUnavailableError, ValueError) as exc:
             parser.error(f"Could not store the key in Keychain: {exc}")
         variable = (
             "STOCK_RESEARCH_AI_AICREDITS_API_KEY" if args.provider == "aicredits"
@@ -563,6 +597,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif args.command == "render-launchagent":
         from stock_research_ai.release_tools import (
             LAUNCH_AGENT_LABEL,
+            launch_agent_environment,
             render_launch_agent_plist,
             validate_launch_agent_plist,
         )
@@ -574,6 +609,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             program_arguments=[executable, "serve-http"],
             stdout_path=log_dir / "launchd-stdout.log",
             stderr_path=log_dir / "launchd-stderr.log",
+            environment=launch_agent_environment(os.environ),
         )
         problems = validate_launch_agent_plist(plist_bytes, LAUNCH_AGENT_LABEL)
         if problems:

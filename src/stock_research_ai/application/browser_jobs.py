@@ -8,9 +8,23 @@ prevention, and mapping a raised exception to a typed, browser-facing failure co
 No DB table: jobs live purely in process memory. A backend restart loses every in-flight
 job by design (see docs/part6b-a-proof.md) - completed ResearchReportSnapshots remain
 persisted normally via the existing, unrelated report repository.
+
+Resource bounds (single local user, single worker process):
+- At most `max_active_jobs` (default 2) jobs are QUEUED/RUNNING at once. Each job runs
+  evidence retrieval (2 concurrent downloads), sequential isolated document parsing (one
+  child of up to 1 GiB at a time) and several AI calls; two jobs leave room to research a
+  second company without letting a caller stack unbounded work. A further launch raises
+  `ResearchJobLimitError` immediately (HTTP 429) - nothing is queued.
+- At most `max_retained_jobs` (default 100) job records are kept. When a new job would
+  exceed it, terminal (COMPLETED/FAILED) jobs are evicted oldest-finished first. Active
+  jobs are never evicted; since the history bound always exceeds the active bound, room
+  for a new job can always be made from terminal jobs.
 """
 
 import asyncio
+import logging
+import re
+from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -53,12 +67,43 @@ class JobFailureCode(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
+#: P2-6: what a browser sees for a failed job. Fixed text per code - never the raw
+#: exception, which can carry local paths, SQL, provider responses or input echoes. The
+#: exception itself is logged (redacted) to the local service log under the job id.
+_PUBLIC_FAILURE_MESSAGES: dict[JobFailureCode, str] = {
+    JobFailureCode.UNSUPPORTED_PORTAL: "This portal is not supported",
+    JobFailureCode.UNSUPPORTED_SOURCE_URL: "This page is not a supported company page",
+    JobFailureCode.LOCAL_CONFIGURATION_ERROR: "The local service is not configured correctly",
+    JobFailureCode.ANALYST_UNAVAILABLE: "Analyst services are not configured",
+    JobFailureCode.EVIDENCE_ACQUISITION_FAILED: "Company evidence could not be acquired",
+    JobFailureCode.ANALYSIS_FAILED: "The analysis stage failed",
+    JobFailureCode.CHALLENGE_FAILED: "The challenge stage failed",
+    JobFailureCode.REPORT_GENERATION_FAILED: "The report could not be generated",
+    JobFailureCode.INTEGRITY_FAILURE: "A research integrity check failed",
+    JobFailureCode.INTERNAL_ERROR: "An internal error occurred",
+}
+_logger = logging.getLogger("stock_research_ai.jobs")
+
+
+def public_failure_message(code: JobFailureCode, job_id: UUID) -> str:
+    return f"{_PUBLIC_FAILURE_MESSAGES[code]}. Details are in the local service log (job {job_id})."
+
+
 class UnsupportedPortalError(ValueError):
     """Raised synchronously by `launch()`, before any job is created."""
 
 
 class UnsupportedResearchPlanError(ValueError):
     """Raised synchronously by `launch()`, before any job is created."""
+
+
+class ResearchJobLimitError(RuntimeError):
+    """Raised synchronously by `launch()` when `max_active_jobs` jobs are already
+    QUEUED/RUNNING; no job is created and nothing is queued."""
+
+
+DEFAULT_MAX_ACTIVE_JOBS = 2
+DEFAULT_MAX_RETAINED_JOBS = 100
 
 
 class JobFailure(BaseModel):
@@ -87,15 +132,45 @@ class BrowserResearchJob(BaseModel):
     warnings: tuple[FullResearchWarning, ...] = ()
 
 
+_SCREENER_PATH = re.compile(r"/company/([A-Za-z0-9_-]+)/(consolidated/)?")
+
+
+def _canonical_url(source_url: str) -> str:
+    """Canonical form of a Screener company URL for duplicate detection. Only dimensions
+    Screener itself treats as equivalent are folded: host case and an explicit default
+    port (443), and company slug case - Screener serves /company/infy/ as the INFY page
+    (its rel=canonical is /company/INFY/...). The consolidated/standalone view stays
+    distinct: they are different financial bases. Anything else (not a Screener company
+    URL) keeps the previous scheme/host-lowercased, slash-trimmed form, never merged."""
+    try:
+        parts = urlsplit(source_url.strip())
+    except ValueError:
+        # urlsplit's ValueError quotes the raw netloc (P2-6). An unparseable URL keeps its
+        # own key: it can never equal a canonical Screener form, which always parses.
+        return source_url.strip()
+    match = _SCREENER_PATH.fullmatch(parts.path)
+    # A malformed port raises a stdlib ValueError that quotes the raw port text: never let
+    # it reach an error message (P2-6). -1 never matches the Screener form below.
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    if (
+        parts.scheme.lower() == "https"
+        and parts.hostname == "www.screener.in"
+        and port in (None, 443)
+        and not (parts.username or parts.password or parts.query or parts.fragment)
+        and match
+    ):
+        return f"https://www.screener.in/company/{match.group(1).upper()}/{match.group(2) or ''}"
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), "", ""))
+
+
 def _canonical_key(portal: str, source_url: str, research_plan: str) -> tuple[str, str, str]:
     """URL-based dedup key. V1 limitation (documented in docs/part6b-a-proof.md): this
     key is never upgraded to a resolved canonical company identity mid-run - it is
     computed once, before extraction, from the source URL alone."""
-    parts = urlsplit(source_url.strip())
-    normalized = urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), "", "")
-    )
-    return portal, normalized, research_plan
+    return portal, _canonical_url(source_url), research_plan
 
 
 def _classify_failure(current_stage: ProgressStage | None, exc: Exception) -> JobFailureCode:
@@ -137,7 +212,14 @@ class BrowserJobManager:
         artifacts: RawArtifactStore,
         broad_industry: BroadIndustrySource,
         execution_factory: Callable[[], AnalystExecutionSpec],
+        *,
+        max_active_jobs: int = DEFAULT_MAX_ACTIVE_JOBS,
+        max_retained_jobs: int = DEFAULT_MAX_RETAINED_JOBS,
     ) -> None:
+        if not 1 <= max_active_jobs < max_retained_jobs:
+            raise ValueError("Require 1 <= max_active_jobs < max_retained_jobs")
+        self._max_active_jobs = max_active_jobs
+        self._max_retained_jobs = max_retained_jobs
         self._engine = engine
         self._artifacts = artifacts
         self._broad_industry = broad_industry
@@ -145,6 +227,8 @@ class BrowserJobManager:
         self._jobs: dict[UUID, BrowserResearchJob] = {}
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._running_by_key: dict[tuple[str, str, str], UUID] = {}
+        self._active: set[UUID] = set()
+        self._finished: deque[UUID] = deque()  # terminal job ids, oldest-finished first
 
     @property
     def engine(self) -> ResearchEngine:
@@ -157,15 +241,20 @@ class BrowserJobManager:
 
     def launch(self, portal: str, source_url: str, research_plan: str) -> BrowserResearchJob:
         if portal != "SCREENER":
-            raise UnsupportedPortalError(portal)
+            raise UnsupportedPortalError("Unsupported portal")
         if research_plan != "FULL_RESEARCH_V1":
-            raise UnsupportedResearchPlanError(research_plan)
+            raise UnsupportedResearchPlanError("Unsupported research plan")
         key = _canonical_key(portal, source_url, research_plan)
         existing_id = self._running_by_key.get(key)
         if existing_id is not None:
             existing = self._jobs.get(existing_id)
             if existing is not None and existing.status in (JobStatus.QUEUED, JobStatus.RUNNING):
                 return existing
+        if len(self._active) >= self._max_active_jobs:
+            raise ResearchJobLimitError(
+                f"At most {self._max_active_jobs} research jobs can run at once"
+            )
+        self._evict_finished(room_for=1)
         now = datetime.now(UTC)
         job_id = uuid4()
         job = BrowserResearchJob(
@@ -179,8 +268,35 @@ class BrowserJobManager:
         )
         self._jobs[job_id] = job
         self._running_by_key[key] = job_id
-        self._tasks[job_id] = asyncio.create_task(self._run(job_id, key))
+        self._active.add(job_id)
+        task = asyncio.create_task(self._run(job_id, key))
+        self._tasks[job_id] = task
+        # A done-callback, not only _run's finally: a task cancelled before its first
+        # step never enters _run, and its slot must still be released.
+        task.add_done_callback(lambda _: self._release(job_id, key))
         return job
+
+    def _release(self, job_id: UUID, key: tuple[str, str, str]) -> None:
+        if job_id not in self._active:
+            return
+        if self._jobs[job_id].status in (JobStatus.QUEUED, JobStatus.RUNNING):
+            self._update(
+                job_id,
+                status=JobStatus.FAILED,
+                failure=JobFailure(
+                    code=JobFailureCode.INTERNAL_ERROR, message="Research job was cancelled"
+                ),
+                completed_at=datetime.now(UTC),
+            )
+        if self._running_by_key.get(key) == job_id:
+            del self._running_by_key[key]
+        self._active.discard(job_id)
+        self._tasks.pop(job_id, None)
+        self._finished.append(job_id)
+
+    def _evict_finished(self, room_for: int) -> None:
+        while len(self._jobs) + room_for > self._max_retained_jobs and self._finished:
+            self._jobs.pop(self._finished.popleft(), None)
 
     def get(self, job_id: UUID) -> BrowserResearchJob | None:
         return self._jobs.get(job_id)
@@ -225,10 +341,14 @@ class BrowserJobManager:
         except Exception as exc:  # classified into a typed failure immediately below
             current_stage = self._jobs[job_id].current_stage
             code = _classify_failure(current_stage, exc)
+            _logger.warning(
+                "research job %s failed: %s at stage %s", job_id, code, current_stage,
+                exc_info=exc,
+            )
             self._update(
                 job_id,
                 status=JobStatus.FAILED,
-                failure=JobFailure(code=code, message=str(exc)),
+                failure=JobFailure(code=code, message=public_failure_message(code, job_id)),
                 completed_at=datetime.now(UTC),
             )
         else:
@@ -241,5 +361,4 @@ class BrowserJobManager:
                 completed_at=datetime.now(UTC),
             )
         finally:
-            if self._running_by_key.get(key) == job_id:
-                del self._running_by_key[key]
+            self._release(job_id, key)

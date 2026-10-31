@@ -5,9 +5,20 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from stock_research_ai.adapters.screener.documents import parse_documents
-from stock_research_ai.adapters.screener.html import Node, Page, data_tables, rows
+from stock_research_ai.adapters.screener.html import (
+    MAX_SCREENER_NODES,
+    HtmlLimitExceeded,
+    Node,
+    Page,
+    data_tables,
+    rows,
+)
 from stock_research_ai.adapters.screener.identity import parse_identity
-from stock_research_ai.adapters.screener.metrics import ParseContext, parse_top
+from stock_research_ai.adapters.screener.metrics import (
+    ExtractionLimitExceeded,
+    ParseContext,
+    parse_top,
+)
 from stock_research_ai.adapters.screener.peers import parse_peers
 from stock_research_ai.adapters.screener.shareholding import parse_shareholding
 from stock_research_ai.adapters.screener.statements import parse_statements
@@ -22,6 +33,8 @@ from stock_research_ai.domain.extraction import (
     SectionCoverage,
 )
 from stock_research_ai.domain.financial import FinancialObservation, ReportingScope
+from stock_research_ai.domain.financial_business import classify_business, has_business_evidence
+from stock_research_ai.domain.financial_canonical import Industry
 from stock_research_ai.domain.peers import PeerSnapshot
 from stock_research_ai.domain.provenance import RawArtifact, RetrievalStatus, SourceRetrieval
 from stock_research_ai.domain.shareholding import ShareholdingSnapshot
@@ -38,6 +51,19 @@ IDS = {
     Section.PEERS: "peers",
     Section.DOCUMENTS: "documents",
 }
+#: Ids a real page holds exactly once: the parsed sections and the identity attributes.
+UNIQUE_IDS = frozenset(IDS.values()) | {"company-info"}
+
+
+def _duplicate_section(root: Node) -> str | None:
+    seen: set[str] = set()
+    for node in root.descendants():
+        identifier = node.attrs.get("id")
+        if identifier in UNIQUE_IDS:
+            if identifier in seen:
+                return identifier
+            seen.add(identifier)
+    return None
 
 
 class ScreenerNormalizer:
@@ -46,11 +72,9 @@ class ScreenerNormalizer:
     ) -> SourceCompanyIdentity | None:
         if retrieval.status != RetrievalStatus.SUCCESS:
             return None
-        try:
-            root = Page(content.decode(artifact.encoding, errors="strict")).root
-        except (UnicodeError, LookupError):
-            return None
-        return parse_identity(root, artifact, retrieval, company_id)
+        # The identity a company is bound by is the one a full (bounded) normalization
+        # keeps, so a page that fails closed below never registers a company either.
+        return self.normalize(content, artifact, retrieval, company_id).company
 
     def normalize(
         self,
@@ -62,18 +86,56 @@ class ScreenerNormalizer:
         identity = None
         root = Node("document")
         failure = retrieval.error
+        code = "ACQUISITION_FAILED"
         if (
             artifact is not None
             and content is not None
             and retrieval.status == RetrievalStatus.SUCCESS
         ):
             try:
-                root = Page(content.decode(artifact.encoding, errors="strict")).root
-                identity = parse_identity(root, artifact, retrieval, company_id)
+                root = Page(
+                    content.decode(artifact.encoding, errors="strict"), MAX_SCREENER_NODES
+                ).root
+                duplicate = _duplicate_section(root)
+                if duplicate is not None:
+                    # Fail closed: real pages hold each section once; two make it ambiguous
+                    # which one (or both) the records come from.
+                    root, code = Node("document"), "AMBIGUOUS_SECTION"
+                    failure = f"Duplicate section id: {duplicate}"
+                else:
+                    identity = parse_identity(root, artifact, retrieval, company_id)
             except (UnicodeError, LookupError) as exc:
                 failure = f"HTML decoding failed: {exc}"
+            except HtmlLimitExceeded as exc:
+                # Fail closed: no section is read from a page past the structural bounds.
+                root, identity, failure = Node("document"), None, str(exc)
         else:
             failure = failure or "No usable acquired HTML"
+        try:
+            return self._build(root, identity, failure, code, artifact, retrieval, company_id)
+        except ExtractionLimitExceeded as exc:
+            # Fail closed: nothing from a page past the output bound is kept, not even part
+            # of a statement or the identity (the raw artifact itself stays preserved).
+            return self._build(
+                Node("document"),
+                None,
+                str(exc),
+                "EXTRACTION_LIMIT_EXCEEDED",
+                artifact,
+                retrieval,
+                company_id,
+            )
+
+    def _build(
+        self,
+        root: Node,
+        identity: SourceCompanyIdentity | None,
+        failure: str | None,
+        code: str,
+        artifact: RawArtifact | None,
+        retrieval: SourceRetrieval,
+        company_id: UUID,
+    ) -> CompanyExtractionResult:
         statements: dict[Section, tuple[FinancialObservation, ...]] = {}
         top: tuple[FinancialObservation, ...] = ()
         holdings = ShareholdingSnapshot()
@@ -99,7 +161,7 @@ class ScreenerNormalizer:
                         parse_status="NOT_ATTEMPTED",
                         issues=(
                             CoverageIssue(
-                                code="ACQUISITION_FAILED" if failure else "MISSING_SECTION",
+                                code=code if failure else "MISSING_SECTION",
                                 severity="error",
                                 section=section,
                                 message=failure or "Section not found",
@@ -182,6 +244,7 @@ class ScreenerNormalizer:
                 id=uuid4(), provider=retrieval.provider, created_at=datetime.now(UTC)
             ),
             company=identity,
+            business_classification=_business_classification(root),
             metric_definitions=tuple(context.definitions[k] for k in sorted(context.definitions))
             if context
             else (),
@@ -198,3 +261,20 @@ class ScreenerNormalizer:
             raw_artifacts=(artifact,) if artifact else (),
             coverage=CoverageReport(overall=overall, sections=tuple(coverage)),
         )
+
+
+def _business_classification(root: Node) -> Industry | None:
+    peers, top = root.by_id("peers"), root.by_id("top")
+    about = top.by_class("about") if top else None
+    names = [a.text for a in peers.all("a") if a.attrs.get("title") in
+             {"Broad Sector", "Sector", "Broad Industry", "Industry"}] if peers else []
+    labels: list[str] = []
+    for identifier in ("profit-loss", "quarters", "balance-sheet", "ratios"):
+        section = root.by_id(identifier)
+        if section:
+            for table in data_tables(section):
+                labels.extend(row[0].text.rstrip(" +") for row in rows(table) if row)
+    description = about.text if about else ""
+    if not has_business_evidence(names, description, labels):
+        return None
+    return classify_business(names, description=description, labels=labels)

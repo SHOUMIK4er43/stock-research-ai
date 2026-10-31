@@ -4,14 +4,25 @@ The explicitly selected provider uses its own environment setting first, then it
 own account under the stock-research-ai Keychain service. An unset selector keeps
 the legacy Anthropic account; an AI Credits key never implicitly selects AI Credits.
 No plaintext-file fallback or cross-provider credential lookup is performed.
+
+Kite market-data credentials (Box 12) keep the pre-existing KiteSource convention - the
+process environment, then the project's git-ignored `.env` - and then fall back to their own
+Keychain accounts; they never share an account with the analyst keys.
 """
 
+import os
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
 
+from dotenv import dotenv_values
+from pydantic import SecretStr
+
 from stock_research_ai.config import Settings
+from stock_research_ai.logging_setup import register_secret
 
 #: The exact (account, service) pair the Keychain item is filed under. `service` is
 #: namespaced to this application so it can never collide with, or be confused for,
@@ -19,6 +30,8 @@ from stock_research_ai.config import Settings
 _KEYCHAIN_SERVICE = "stock-research-ai"
 _ANALYST_API_KEY_ACCOUNT = "analyst-api-key"
 _AICREDITS_API_KEY_ACCOUNT = "aicredits-api-key"
+_KITE_API_KEY_ACCOUNT = "kite-api-key"
+_KITE_ACCESS_TOKEN_ACCOUNT = "kite-access-token"
 
 
 def _account(provider: str) -> str:
@@ -30,6 +43,20 @@ def _account(provider: str) -> str:
 
 
 CredentialSource = Literal["environment", "keychain", "none"]
+
+
+class KeychainRunner(Protocol):
+    """Runs `security` with an argv list and optional stdin text (never a shell)."""
+
+    def __call__(
+        self, argv: list[str], stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+def _interactive_quote(value: str) -> str:
+    """Quotes one word for `security -i`, whose tokenizer honours double quotes and
+    backslash escapes (verified against macOS `security`)."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 class SecretStoreUnavailableError(RuntimeError):
@@ -73,23 +100,25 @@ class EnvironmentSecretStore:
 
 class MacOSKeychainSecretStore:
     """Stores secrets in the current user's macOS login Keychain via the platform's
-    own built-in `/usr/bin/security` CLI - no third-party dependency. Every value
-    round-trips through a subprocess argv list, never a shell string, so no value is
-    ever exposed to shell interpretation.
+    own built-in `/usr/bin/security` CLI - no third-party dependency. Subprocesses
+    take an argv list, never a shell string. A secret being stored never appears in
+    argv (which other local processes can read via `ps`): `set` runs `security -i`
+    and writes the quoted command to its stdin instead.
 
     `runner` is injectable so tests can prove behavior (including "Keychain
     unavailable") without touching a real Keychain or requiring macOS at all.
     """
 
-    def __init__(
-        self,
-        runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
-    ) -> None:
+    def __init__(self, runner: KeychainRunner | None = None) -> None:
         self._run = runner or self._default_runner
 
     @staticmethod
-    def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
+    def _default_runner(
+        argv: list[str], stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            argv, input=stdin, capture_output=True, text=True, timeout=10, check=False
+        )
 
     def _security_path(self) -> str:
         path = shutil.which("security") or "/usr/bin/security"
@@ -120,19 +149,24 @@ class MacOSKeychainSecretStore:
         return value or None
 
     def set(self, name: str, value: str) -> None:
-        argv = [
-            self._security_path(),
-            "add-generic-password",
-            "-a",
-            name,
-            "-s",
-            _KEYCHAIN_SERVICE,
-            "-w",
-            value,
-            "-U",  # update in place if an item already exists, rather than erroring
-        ]
+        if any(ord(c) < 32 or ord(c) == 127 for c in value + name):
+            # `security -i` reads one command per line; a control character could end
+            # the command early. Never echo the value itself.
+            raise ValueError("The credential must not contain control characters.")
+        command = " ".join(
+            [
+                "add-generic-password",
+                "-a",
+                _interactive_quote(name),
+                "-s",
+                _interactive_quote(_KEYCHAIN_SERVICE),
+                "-U",  # update in place if an item already exists, rather than erroring
+                "-w",
+                _interactive_quote(value),
+            ]
+        )
         try:
-            result = self._run(argv)
+            result = self._run([self._security_path(), "-i"], command + "\n")
         except (OSError, subprocess.SubprocessError):
             raise SecretStoreUnavailableError(
                 "macOS Keychain is unavailable (`/usr/bin/security` could not be run)."
@@ -176,6 +210,7 @@ def resolve_analyst_api_key(
     environment = EnvironmentSecretStore(settings)
     value = environment.get(account)
     if value:
+        register_secret(value)
         return value, "environment"
     store = keychain if keychain is not None else MacOSKeychainSecretStore()
     try:
@@ -183,6 +218,7 @@ def resolve_analyst_api_key(
     except SecretStoreUnavailableError:
         return None, "none"
     if value:
+        register_secret(value)
         return value, "keychain"
     return None, "none"
 
@@ -197,12 +233,60 @@ def store_analyst_api_key_in_keychain(
     store.set(_account(provider), value)
 
 
+@dataclass(frozen=True)
+class KiteCredentials:
+    """Kite Connect market-data credentials. Values are SecretStr: never shown by repr/str."""
+
+    api_key: SecretStr
+    access_token: SecretStr
+    source: CredentialSource
+
+
+def resolve_kite_credentials(
+    *,
+    environ: Mapping[str, str] | None = None,
+    dotenv_path: Path | None = Path(".env"),
+    keychain: SecretStore | None = None,
+) -> KiteCredentials | None:
+    """KITE_API_KEY + KITE_ACCESS_TOKEN from the process environment, else the project `.env`
+    (the existing KiteSource convention), else the Keychain accounts `kite-api-key` /
+    `kite-access-token`. Both values must come from the same source - a pair is never mixed.
+    KITE_API_SECRET is never read: market-data calls do not need it."""
+    env = os.environ if environ is None else environ
+    candidates: list[tuple[CredentialSource, str | None, str | None]] = [
+        ("environment", env.get("KITE_API_KEY"), env.get("KITE_ACCESS_TOKEN"))
+    ]
+    if dotenv_path is not None and dotenv_path.is_file():
+        values = dotenv_values(dotenv_path)
+        candidates.append(
+            ("environment", values.get("KITE_API_KEY"), values.get("KITE_ACCESS_TOKEN"))
+        )
+    for source, key, token in candidates:
+        if key and token:
+            register_secret(key)
+            register_secret(token)
+            return KiteCredentials(SecretStr(key), SecretStr(token), source)
+    store = keychain if keychain is not None else MacOSKeychainSecretStore()
+    try:
+        key = store.get(_KITE_API_KEY_ACCOUNT)
+        token = store.get(_KITE_ACCESS_TOKEN_ACCOUNT)
+    except SecretStoreUnavailableError:
+        return None
+    if key and token:
+        register_secret(key)
+        register_secret(token)
+        return KiteCredentials(SecretStr(key), SecretStr(token), "keychain")
+    return None
+
+
 __all__ = [
     "CredentialSource",
+    "KiteCredentials",
     "EnvironmentSecretStore",
     "MacOSKeychainSecretStore",
     "SecretStore",
     "SecretStoreUnavailableError",
     "resolve_analyst_api_key",
+    "resolve_kite_credentials",
     "store_analyst_api_key_in_keychain",
 ]

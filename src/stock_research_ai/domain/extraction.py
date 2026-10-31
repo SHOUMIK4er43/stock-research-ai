@@ -10,6 +10,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 from stock_research_ai.domain.company import SourceCompanyIdentity
 from stock_research_ai.domain.documents import DocumentReference
 from stock_research_ai.domain.financial import FinancialObservation
+from stock_research_ai.domain.financial_canonical import Industry
 from stock_research_ai.domain.metrics import MetricDefinition
 from stock_research_ai.domain.peers import PeerSnapshot
 from stock_research_ai.domain.provenance import RawArtifact, SourceLocation, SourceRetrieval
@@ -102,6 +103,7 @@ class CompanyExtractionResult(BaseModel):
     schema_version: Literal["2.0"] = "2.0"
     metadata: ExtractionMetadata
     company: SourceCompanyIdentity | None
+    business_classification: Industry | None = None
     metric_definitions: tuple[MetricDefinition, ...] = ()
     top_metrics: tuple[FinancialObservation, ...] = ()
     quarterly: tuple[FinancialObservation, ...] = ()

@@ -30,14 +30,20 @@ class _FakeRunner:
     def __init__(self, results: list[subprocess.CompletedProcess[str]]) -> None:
         self._results = list(results)
         self.calls: list[list[str]] = []
+        self.stdins: list[str | None] = []
 
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+    def __call__(
+        self, argv: list[str], stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
+        self.stdins.append(stdin)
         return self._results.pop(0)
 
 
 class _RaisingRunner:
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+    def __call__(
+        self, argv: list[str], stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         raise FileNotFoundError("no such file: security")
 
 
@@ -83,21 +89,17 @@ def test_keychain_get_returns_none_when_item_is_absent() -> None:
     assert store.get("analyst-api-key") is None
 
 
-def test_keychain_set_updates_in_place() -> None:
+def test_keychain_set_updates_in_place_with_the_secret_on_stdin_only() -> None:
+    """P2-2: the value goes to `security -i` on stdin, never into argv (readable by any
+    local process via `ps`)."""
     runner = _FakeRunner([_completed(0)])
     store = MacOSKeychainSecretStore(runner=runner)
     store.set("analyst-api-key", "sk-new-value")
-    argv = runner.calls[0]
-    assert argv[1:] == [
-        "add-generic-password",
-        "-a",
-        "analyst-api-key",
-        "-s",
-        "stock-research-ai",
-        "-w",
-        "sk-new-value",
-        "-U",
-    ]
+    assert runner.calls[0][1:] == ["-i"]
+    assert all("sk-new-value" not in part for part in runner.calls[0])
+    assert runner.stdins[0] == (
+        'add-generic-password -a "analyst-api-key" -s "stock-research-ai" -U -w "sk-new-value"\n'
+    )
 
 
 def test_keychain_set_failure_raises_unavailable() -> None:
@@ -120,14 +122,49 @@ def test_missing_security_binary_is_reported_as_unavailable_not_a_crash() -> Non
 
 
 def test_no_secret_value_ever_appears_in_the_constructed_argv_by_accident() -> None:
-    """The value is passed as its own argv element (never interpolated into a shell
-    string), so a value containing shell metacharacters cannot break out."""
+    """The value never reaches argv, and on stdin it is one quoted word: quotes and
+    backslashes are escaped so a hostile value cannot add options or commands."""
     runner = _FakeRunner([_completed(0)])
     store = MacOSKeychainSecretStore(runner=runner)
-    secret = "sk-'; rm -rf ~ #"
+    secret = 'sk-\'; rm -rf ~ # " -A \\'
     store.set("analyst-api-key", secret)
-    assert secret in runner.calls[0]
-    assert all(";" not in part or part == secret for part in runner.calls[0])
+    assert all(secret not in part and "rm -rf" not in part for part in runner.calls[0])
+    assert runner.stdins[0] == (
+        'add-generic-password -a "analyst-api-key" -s "stock-research-ai" -U '
+        '-w "sk-\'; rm -rf ~ # \\" -A \\\\"\n'
+    )
+
+
+@pytest.mark.parametrize("value", ["sk-a\nadd-generic-password -a x", "sk\r", "sk\x00", "sk\x7f"])
+def test_keychain_set_refuses_control_characters_without_echoing_them(value: str) -> None:
+    runner = _FakeRunner([])
+    store = MacOSKeychainSecretStore(runner=runner)
+    with pytest.raises(ValueError) as exc:
+        store.set("analyst-api-key", value)
+    assert value not in str(exc.value) and "sk" not in str(exc.value)
+    assert runner.calls == []
+
+
+def test_keychain_set_failure_does_not_echo_the_secret_or_stderr() -> None:
+    secret = "sk-p2-never-echoed"
+    runner = _FakeRunner([_completed(128, stderr=f"add-generic-password -w {secret}")])
+    with pytest.raises(SecretStoreUnavailableError) as exc:
+        MacOSKeychainSecretStore(runner=runner).set("analyst-api-key", secret)
+    assert secret not in str(exc.value) and secret not in repr(exc.value)
+
+
+def test_default_runner_passes_stdin_without_a_shell(monkeypatch) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        recorded.update(kwargs, argv=argv)
+        return _completed(0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    MacOSKeychainSecretStore._default_runner(["/usr/bin/security", "-i"], "cmd\n")
+    assert recorded["argv"] == ["/usr/bin/security", "-i"]
+    assert recorded["input"] == "cmd\n"
+    assert recorded.get("shell", False) is False
 
 
 # --- Precedence -----------------------------------------------------------------------

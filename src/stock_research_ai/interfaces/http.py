@@ -5,6 +5,8 @@ sole execution authority - this module owns no research/financial/valuation/sect
 semantics; it only translates HTTP <-> the existing application layer.
 """
 
+import json
+import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -12,7 +14,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from stock_research_ai import __version__
 from stock_research_ai.adapters.aicredits.summary import AICreditsSummaryModel
@@ -30,23 +35,34 @@ from stock_research_ai.adapters.http.browser_schemas import (
     PairingCompleteResponse,
     VersionResponse,
 )
+from stock_research_ai.adapters.http.final_reports import register_final_report_routes
+from stock_research_ai.adapters.http.rate_limit import RateLimited, SummaryRateLimiter
 from stock_research_ai.adapters.raw_artifacts import FileRawArtifactStore
+from stock_research_ai.adapters.rendering.generate import LiveFinalReportGenerator
+from stock_research_ai.adapters.rendering.store import FileFinalReportStore, final_report_root
 from stock_research_ai.adapters.screener.sector import ScreenerBroadIndustrySource
-from stock_research_ai.adapters.screener.source import validate_url
+from stock_research_ai.adapters.screener.source import (
+    analytical_order,
+    analytical_page_urls,
+    carries_statements,
+    validate_url,
+)
 from stock_research_ai.application.browser_jobs import (
     BrowserJobManager,
     BrowserResearchJob,
+    ResearchJobLimitError,
     UnsupportedPortalError,
     UnsupportedResearchPlanError,
 )
 from stock_research_ai.application.engine import Capabilities, ResearchEngine
+from stock_research_ai.application.final_report_jobs import FinalReportJobManager
 from stock_research_ai.application.ports import ReportRepository
 from stock_research_ai.application.summary import project_summary_input
 from stock_research_ai.application.summary_generation import SummaryModel, generate_summary
 from stock_research_ai.bootstrap import browser_engine, browser_execution_spec, research_engine
-from stock_research_ai.config import Settings
+from stock_research_ai.config import LOOPBACK_BIND_HOSTS, Settings
 from stock_research_ai.domain.company import Company, CompanyRegistration
-from stock_research_ai.domain.extraction import ExtractionRequest
+from stock_research_ai.domain.extraction import CompanyExtractionResult, ExtractionRequest
 from stock_research_ai.domain.report import ResearchReportSnapshot
 from stock_research_ai.domain.summary import (
     SummaryErrorCode,
@@ -58,6 +74,15 @@ from stock_research_ai.domain.summary import (
 
 _PAIRING_PATH = "/v1/pair"
 
+#: The server binds IPv4 loopback only (Settings refuses any other http_host); any other
+#: Host (e.g. a DNS-rebinding name) is refused.
+LOOPBACK_HOSTS = LOOPBACK_BIND_HOSTS
+
+#: Every request body here is a small JSON control message (pairing code, page URL, company
+#: registration - at most ~85 KB even with every field at its limit and fully \u-escaped).
+#: Responses (reports, artifacts) are not bounded by this.
+MAX_REQUEST_BODY_BYTES = 128 * 1024
+
 # SUMMARY_V1 error code -> HTTP status. Bodies carry only the fixed code/message.
 _SUMMARY_ERROR_STATUS: dict[SummaryErrorCode, int] = {
     SummaryErrorCode.PROVIDER_NOT_CONFIGURED: status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -66,6 +91,44 @@ _SUMMARY_ERROR_STATUS: dict[SummaryErrorCode, int] = {
     SummaryErrorCode.SUMMARY_INPUT_TOO_LARGE: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SummaryErrorCode.SUMMARY_REQUEST_TOO_LARGE: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
+
+
+#: P2-6: a 422 keeps each error's location, message and type (the extension shows the
+#: first `msg`), but never `input`, `ctx` or `url` - those echo the submitted value (a
+#: pairing code, a pasted token, 100 KB of text) back. A `loc` part is shown only when it
+#: is a plain field name: a client-chosen key (an unexpected extra field could itself be
+#: a path or a token) is replaced. Messages are bounded and stripped of control characters.
+_MAX_VALIDATION_ERRORS = 10
+_MAX_VALIDATION_TEXT = 120
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _bounded_text(value: object) -> str:
+    text = str(value)
+    bounded = "".join(c if c.isprintable() else "?" for c in text[:_MAX_VALIDATION_TEXT])
+    return bounded + ("..." if len(text) > _MAX_VALIDATION_TEXT else "")
+
+
+def _public_loc(error: Any) -> list[int | str]:
+    loc = list(error.get("loc", ()))
+    if error.get("type") == "extra_forbidden" and loc:
+        loc[-1] = "(unexpected field)"
+    return [
+        part if isinstance(part, int) or part == "(unexpected field)"
+        or (isinstance(part, str) and _FIELD_NAME.fullmatch(part)) else "(field)"
+        for part in loc
+    ]
+
+
+def public_validation_errors(errors: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "loc": _public_loc(error),
+            "msg": _bounded_text(error.get("msg", "Invalid value")),
+            "type": _bounded_text(error.get("type", "value_error")),
+        }
+        for error in list(errors)[:_MAX_VALIDATION_ERRORS]
+    ]
 
 
 def _summary_http_error(error: SummaryGenerationError) -> HTTPException:
@@ -81,6 +144,81 @@ def _summary_http_error(error: SummaryGenerationError) -> HTTPException:
 
 
 _READINESS_PATHS = frozenset({"/health", "/v1/version"})
+
+
+class _RequestBodyLimitMiddleware:
+    """Refuse a request body over `max_bytes` with 413, counting the bytes actually
+    received - a missing, false or chunked Content-Length cannot bypass the bound. The
+    bounded body is buffered and replayed so the application never sees a partial one."""
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self.app = app
+        self._max_bytes = max_bytes
+
+    async def _reject(self, send: Any, status_code: int, code: str, message: str) -> None:
+        body = json.dumps({"detail": {"code": code, "message": message}}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                    (b"connection", b"close"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    async def _too_large(self, send: Any) -> None:
+        await self._reject(
+            send,
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            "REQUEST_TOO_LARGE",
+            f"Request body exceeds {self._max_bytes} bytes",
+        )
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = [v for k, v in scope.get("headers", []) if k.lower() == b"content-length"]
+        if declared:
+            if len(declared) > 1 or not declared[0].isdigit():
+                await self._reject(
+                    send,
+                    status.HTTP_400_BAD_REQUEST,
+                    "INVALID_CONTENT_LENGTH",
+                    "Invalid Content-Length",
+                )
+                return
+            if int(declared[0]) > self._max_bytes:
+                await self._too_large(send)
+                return
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                return  # client disconnected before sending the whole body
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > self._max_bytes:
+                await self._too_large(send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        replayed = False
+
+        async def replay() -> Any:
+            nonlocal replayed
+            if replayed:
+                return await receive()
+            replayed = True
+            return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
+
+        await self.app(scope, replay, send)
 
 
 class _BrowserCORSMiddleware:
@@ -150,6 +288,9 @@ def create_app(
     pairing_store: PairingStore | None = None,
     report_repository: ReportRepository | None = None,
     summary_model_factory: Callable[[], SummaryModel] | None = None,
+    summary_rate_limiter: SummaryRateLimiter | None = None,
+    final_report_store: FileFinalReportStore | None = None,
+    final_report_jobs: FinalReportJobManager | None = None,
 ) -> FastAPI:
     """Create an HTTP adapter, owning resources only when none are supplied.
 
@@ -165,6 +306,13 @@ def create_app(
         active_report_repository = report_services.repository if report_services else None
     runtime_settings = settings if settings is not None else Settings()
     active_pairing_store = pairing_store or PairingStore(runtime_settings.browser_auth_path)
+    summary_limiter = summary_rate_limiter or SummaryRateLimiter()
+    # Box 15 Detailed Research: the report store and the generation jobs (the live
+    # generator acquires through the existing adapters; tests inject their own manager)
+    reports_store = final_report_store or FileFinalReportStore(
+        final_report_root(runtime_settings))
+    final_jobs = final_report_jobs or FinalReportJobManager(LiveFinalReportGenerator(
+        reports_store, runtime_settings.database_path.parent / "final-report-work"))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -182,6 +330,8 @@ def create_app(
             try:
                 yield
             finally:
+                if final_report_jobs is None:
+                    await final_jobs.aclose()
                 if engine is None:
                     active_engine = None
                 if job_manager is None and owned is not None:
@@ -242,10 +392,22 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": public_validation_errors(exc.errors())},
+        )
+
+    # Added last = outermost: Host check, then body bound, then CORS/origin.
     app.add_middleware(
         _BrowserCORSMiddleware,
         pairing_store=active_pairing_store,
         approved_origin=runtime_settings.browser_extension_origin,
+    )
+    app.add_middleware(_RequestBodyLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=list(LOOPBACK_HOSTS), www_redirect=False
     )
 
     def current_engine() -> ResearchEngine:
@@ -291,7 +453,12 @@ def create_app(
     async def get_capabilities() -> Capabilities:
         return await current_job_manager().engine.get_capabilities()
 
-    @app.post("/v1/companies", response_model=Company, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/v1/companies",
+        response_model=Company,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=protected,
+    )
     async def register_company(registration: CompanyRegistration) -> Company:
         return await current_engine().register_company(registration)
 
@@ -352,15 +519,25 @@ def create_app(
         if payload.portal == "SCREENER":
             try:
                 validate_url(payload.source_url)
-            except ValueError as exc:
+            except ValueError:
+                # Fixed text, never str(exc): a parser ValueError can quote the submitted
+                # URL (e.g. urlsplit's NFKC netloc check) (P2-6).
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={"code": "UNSUPPORTED_SOURCE_URL", "message": str(exc)},
-                ) from exc
+                    detail={
+                        "code": "UNSUPPORTED_SOURCE_URL",
+                        "message": "Not a supported Screener company page",
+                    },
+                ) from None
         try:
             return current_job_manager().launch(
                 payload.portal, payload.source_url, payload.research_plan
             )
+        except ResearchJobLimitError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": "RESEARCH_JOB_LIMIT_REACHED", "message": str(exc)},
+            ) from exc
         except UnsupportedPortalError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -433,9 +610,65 @@ def create_app(
             model = new_summary_model()
         except SummaryGenerationError as exc:
             raise _summary_http_error(exc) from None
-        extraction = await current_job_manager().engine.extract_company(
-            ExtractionRequest(provider="screener", url=payload.source_url)
-        )
+        # Rate limit only past auth (the route dependency), URL validation and provider
+        # configuration - none of those spend anything. From here on every request
+        # counts, whatever its outcome: the provider may have been charged.
+        try:
+            summary_limiter.acquire()
+        except RateLimited as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "code": "SUMMARY_RATE_LIMITED",
+                    "message": exc.message,
+                    "retryable": True,
+                    "ambiguous": False,
+                },
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from None
+        try:
+            return await _generate_summary(payload, model)
+        finally:
+            summary_limiter.release()
+
+    async def _analytical_extraction(source_url: str) -> CompanyExtractionResult:
+        """The company's analytical-basis page, acquired in the SAME order Detailed Research
+        binds its primary page (consolidated, else standalone; a page that fails, names no
+        company or carries no statements on its own basis falls through, and a consolidated
+        view whose statements are older than the standalone view's is never chosen - the
+        page-level form of Detailed's select_analytical_basis), so Summary and Detailed never
+        silently differ in basis. With no usable page, the last page's outcome, failure
+        included, is returned / raised as before."""
+        urls = analytical_page_urls(source_url)
+        engine = current_job_manager().engine
+        acquired: list[CompanyExtractionResult] = []
+        for url in urls[:-1]:
+            try:
+                extraction = await engine.extract_company(
+                    ExtractionRequest(provider="screener", url=url)
+                )
+            except Exception:  # noqa: BLE001 - as Detailed: fall back to the next view
+                continue
+            if extraction.raw_artifacts and carries_statements(extraction):
+                acquired.append(extraction)
+        if not acquired:  # the last page's outcome, failure included, as before
+            return await engine.extract_company(
+                ExtractionRequest(provider="screener", url=urls[-1]))
+        try:  # compared, never required: a failed standalone view keeps the consolidated one
+            last = await engine.extract_company(
+                ExtractionRequest(provider="screener", url=urls[-1]))
+        except Exception:  # noqa: BLE001
+            return acquired[0]
+        if last.raw_artifacts and last.company is not None:
+            acquired.append(last)
+        # the same order Detailed binds (analytical_order): a stale consolidated view is
+        # never the Summary's basis over current standalone statements
+        return acquired[analytical_order(acquired)[0]]
+
+    async def _generate_summary(
+        payload: BrowserSummaryRequest, model: SummaryModel
+    ) -> SummaryResult:
+        extraction = await _analytical_extraction(payload.source_url)
         try:
             summary_input = project_summary_input(extraction)
         except SummaryInputBudgetExceeded:
@@ -464,5 +697,8 @@ def create_app(
         report = await _resolve_report(report_id)
         content = render_artifact(report, artifact_kind)
         return Response(content=content, media_type=media_type_for(artifact_kind))
+
+    # --- Box 15: Detailed Research generation + stored final reports (protected) ------
+    register_final_report_routes(app, lambda: reports_store, protected, lambda: final_jobs)
 
     return app

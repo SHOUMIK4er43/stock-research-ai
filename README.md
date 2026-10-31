@@ -1,5 +1,7 @@
 # Stock Research AI
 
+> **Using V1?** Start with [docs/getting-started.md](docs/getting-started.md) (install, pairing) and [docs/v1-user-guide.md](docs/v1-user-guide.md) (Summary / Detailed Research / Negatives, how to read a report, configuration, known limitations, release checklist). The rest of this README is the developer history of each part.
+
 A local-first foundation for an institutional-grade equity research system serving
 research heads, portfolio managers, professional analysts, family offices, and
 sophisticated investors. The intended product combines auditable evidence,
@@ -19,7 +21,10 @@ and its institutional research requirements are documented in
 
 ## Existing environment
 
-Use Python 3.12 and the existing uv-managed `.venv`. SQLAlchemy's `asyncio` extra
+Use Python 3.12 and the existing uv-managed `.venv`. The supported runtime is pinned to
+CPython **3.12.14** (the current patched 3.12 release) in `.python-version`; uv installs it
+on demand (`uv python install`), CI uses the same file, and `scripts/install-macos.sh`
+installs the application with `uv tool install --python 3.12.14`. SQLAlchemy's `asyncio` extra
 includes its required `greenlet` runtime dependency, including on Apple Silicon.
 The installed MCP SDK is **2.1.1**, using `from mcp.server import MCPServer`.
 The console entry point remains `stock-research-ai = "stock_research_ai:main"`.

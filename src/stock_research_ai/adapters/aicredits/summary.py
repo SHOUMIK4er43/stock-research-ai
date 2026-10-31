@@ -24,7 +24,7 @@ from stock_research_ai.domain.summary import (
 from stock_research_ai.logging_setup import get_logger
 
 _URL = "https://api.aicredits.in/v1/chat/completions"
-MAX_OUTPUT_TOKENS = 1500
+MAX_OUTPUT_TOKENS = 4000
 MAX_REQUEST_BYTES = 65_536
 MAX_RESPONSE_BYTES = 262_144
 DEFAULT_TIMEOUT_SECONDS = 90.0
